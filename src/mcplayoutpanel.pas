@@ -63,7 +63,8 @@ begin
     Proc.Parameters.Add('--mcp-config');
     Proc.Parameters.Add(ConfigPath);
     Proc.Parameters.Add('--strict-mcp-config');
-    Proc.Options := [poNewConsole];
+    Proc.Options        := [poNewConsole];
+    Proc.InheritHandles := False; // prevent MCP listening socket inheritance
     if Assigned(McpProject) and (McpProject.GetProjectDirectory <> '') then
       Proc.CurrentDirectory := McpProject.GetProjectDirectory;
     try
@@ -122,6 +123,23 @@ end;
 
 { ── Package registration ──────────────────────────────────────────────────── }
 
+type
+  TMcpAutoStarter = class
+    procedure Run(Data: PtrInt);
+  end;
+
+procedure TMcpAutoStarter.Run(Data: PtrInt);
+begin
+  try
+    if not IsServerRunning then
+      InitializeMcpServer;
+  except
+    on E: Exception do
+      DebugLn('[MCP Assistant] Auto-start error: ' + E.ClassName + ': ' + E.Message);
+  end;
+  Free;
+end;
+
 procedure Register;
 begin
   DebugLn('[MCP Assistant] Registering...');
@@ -130,6 +148,9 @@ begin
     InitializeIdeHooks;
     RegisterChatPanel;
     RegisterIDECloseHook;
+    // Defer auto-start until after the IDE message loop is running
+    if McpSettings.ServerToken <> '' then
+      Application.QueueAsyncCall(@TMcpAutoStarter.Create.Run, 0);
     RegisterIDEMenuCommand(
       itmSecondaryTools,
       'LaunchMcpAssistant',

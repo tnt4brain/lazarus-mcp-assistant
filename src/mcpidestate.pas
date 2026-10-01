@@ -17,6 +17,9 @@ type
     FQuietMode: Boolean;
     FApiKey: string;
     FModel: string;
+    FServerToken: string;
+    FServerPort: Word;
+    FLastConfigPath: string;
     procedure LoadDefaultSettings;
   public
     constructor Create;
@@ -29,6 +32,9 @@ type
     property QuietMode: Boolean read FQuietMode write FQuietMode;
     property ApiKey: string read FApiKey write FApiKey;
     property Model: string read FModel write FModel;
+    property ServerToken: string read FServerToken write FServerToken;
+    property ServerPort: Word read FServerPort write FServerPort;
+    property LastConfigPath: string read FLastConfigPath write FLastConfigPath;
   end;
 
   TMcpProjectState = class
@@ -92,6 +98,9 @@ begin
     FApiKey         := FXmlConfig.GetValue('Claude/ApiKey', '');
     FModel          := FXmlConfig.GetValue('Claude/Model', 'claude-opus-5-5');
     if FModel = '' then FModel := 'claude-opus-5-5';
+    FServerToken    := FXmlConfig.GetValue('Server/Token', '');
+    FServerPort     := FXmlConfig.GetValue('Server/Port', 0);
+    FLastConfigPath := FXmlConfig.GetValue('Server/LastConfigPath', '');
   except
     LoadDefaultSettings;
   end;
@@ -106,6 +115,9 @@ begin
     FXmlConfig.SetValue('System/QuietMode',      FQuietMode);
     FXmlConfig.SetValue('Claude/ApiKey',         FApiKey);
     FXmlConfig.SetValue('Claude/Model',          FModel);
+    FXmlConfig.SetValue('Server/Token',          FServerToken);
+    FXmlConfig.SetValue('Server/Port',           Integer(FServerPort));
+    FXmlConfig.SetValue('Server/LastConfigPath', FLastConfigPath);
     FXmlConfig.Flush;
   except
   end;

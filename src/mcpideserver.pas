@@ -24,8 +24,9 @@ type
     { Synchronize workspace — only valid during an active Synchronize call }
     FSyncToolName : string;
     FSyncParams   : TJSONObject; // borrowed reference, server thread owns it
-    FSyncResult   : string;      // output set by main thread
-    FSyncError    : Boolean;     // True when SyncCallTool encountered an error
+    FSyncResult          : string;      // output set by main thread
+    FSyncError           : Boolean;     // True when SyncCallTool encountered an error
+    FSyncConnectionClose : Boolean;     // True → add Connection: close to response
     FSyncFileList : string;      // JSON file list passed into two-phase tools
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
@@ -41,6 +42,7 @@ type
     procedure SyncCallTool; // runs on main thread via Synchronize
     function  DoSearchInProject(const FileListJSON, Query: string): string;
     function  GetUnitInterface(const FilePath: string; out IsError: Boolean): string;
+    function  RunLazbuild(const LpkPath: string; out IsError: Boolean): string;
   protected
     procedure Execute; override;
   public
@@ -65,8 +67,9 @@ function  WriteMcpConfig  : string; // returns temp config file path
 implementation
 
 uses
-  SrcEditorIntf, ProjectIntf, LazFileUtils, Sockets, fphttpclient,
-  Controls, CompOptsIntf, CodeToolManager, CodeCache, CodeTree, AVL_Tree;
+  SrcEditorIntf, ProjectIntf, LazFileUtils, FileUtil, Sockets, fphttpclient,
+  Controls, CompOptsIntf, CodeToolManager, CodeCache, CodeTree, AVL_Tree,
+  PackageIntf, Process, Contnrs;
 
 { ── Low-level socket helpers ────────────────────────────────────────────── }
 
@@ -101,6 +104,31 @@ begin
     if fpGetSockName(S, @Addr, @Len) = 0 then
       Result := Swap16(Addr.sin_port); // network → host
   end;
+  CloseSocket(S);
+end;
+
+{ Try to bind 127.0.0.1:APort; returns True if the port is usable.
+  Uses SO_REUSEADDR so TIME_WAIT sockets don't cause false negatives,
+  matching TInetServer's own bind behaviour. }
+function IsPortFree(APort: Word): Boolean;
+var
+  S      : LongInt;
+  Addr   : TInetSockAddr;
+  Enable : LongInt;
+begin
+  Result := False;
+  S := fpSocket(AF_INET, SOCK_STREAM, 0);
+  if S < 0 then Exit;
+  Enable := 1;
+  fpSetSockOpt(S, SOL_SOCKET, SO_REUSEADDR, @Enable, SizeOf(Enable));
+  FillChar(Addr, SizeOf(Addr), 0);
+  Addr.sin_family          := AF_INET;
+  Addr.sin_port            := Swap16(APort);
+  Addr.sin_addr.s_bytes[1] := 127;
+  Addr.sin_addr.s_bytes[2] := 0;
+  Addr.sin_addr.s_bytes[3] := 0;
+  Addr.sin_addr.s_bytes[4] := 1;
+  Result := fpBind(S, @Addr, SizeOf(Addr)) = 0;
   CloseSocket(S);
 end;
 
@@ -267,6 +295,10 @@ begin
     AResponse.ContentType := 'application/json';
     AResponse.Content     := ResponseBody;
   end;
+  // rebuild_ide causes the IDE to exit — close the TCP connection cleanly so
+  // the port is fully released before the new IDE instance tries to bind it.
+  if FSyncConnectionClose then
+    AResponse.SetCustomHeader('Connection', 'close');
 end;
 
 { ── JSON-RPC dispatch ─────────────────────────────────────────────────────── }
@@ -437,6 +469,12 @@ var
   CUReq                  : TJSONArray;
   AUProps, AUPf, AUPu, AUPi : TJSONObject;
   AUReq                      : TJSONArray;
+  CPProps, CPLpk             : TJSONObject;
+  CPReq                      : TJSONArray;
+  RIProps, RILpk             : TJSONObject;
+  RIReq                      : TJSONArray;
+  GPProps, GPName            : TJSONObject;
+  GPReq                      : TJSONArray;
 begin
   Tools := TJSONArray.Create;
 
@@ -636,6 +674,47 @@ begin
     'Set in_interface=false to target the implementation uses clause.',
     AUProps, AUReq));
 
+  // compile_plugin — lpk_path required
+  CPProps := TJSONObject.Create;
+  CPLpk   := TJSONObject.Create; CPLpk.Add('type', 'string'); CPLpk.Add('description', 'Absolute path to the .lpk package file to compile');
+  CPProps.Add('lpk_path', CPLpk);
+  CPReq := TJSONArray.Create; CPReq.Add('lpk_path');
+  Tools.Add(MakeTool('compile_plugin',
+    'Compile a Lazarus package (.lpk) using lazbuild and return the full ' +
+    'compiler output. Use this as a smoke-test before calling rebuild_ide. ' +
+    'Does not restart the IDE.',
+    CPProps, CPReq));
+
+  // rebuild_ide — lpk_path optional
+  RIProps := TJSONObject.Create;
+  RILpk   := TJSONObject.Create;
+  RILpk.Add('type', 'string');
+  RILpk.Add('description', 'Absolute path to the .lpk package file to install and ' +
+                            'rebuild with. Omit to rebuild with currently installed packages ' +
+                            '(e.g. after compile_plugin).');
+  RIProps.Add('lpk_path', RILpk);
+  Tools.Add(MakeTool('rebuild_ide',
+    'Rebuild and restart the Lazarus IDE. Pass lpk_path to install a package ' +
+    'before rebuilding; omit it to rebuild with currently installed packages. ' +
+    'The IDE exits immediately after this call; the MCP server will be ' +
+    'unavailable for ~60 s. Call compile_plugin first to catch errors early.',
+    RIProps, TJSONArray.Create));
+
+  // get_package_info — package_name required
+  GPProps := TJSONObject.Create;
+  GPName  := TJSONObject.Create; GPName.Add('type', 'string'); GPName.Add('description', 'Package name as registered in the IDE (e.g. LazMcpAssistant)');
+  GPProps.Add('package_name', GPName);
+  GPReq := TJSONArray.Create; GPReq.Add('package_name');
+  Tools.Add(MakeTool('get_package_info',
+    'Query a package''s load and install status in the running IDE.',
+    GPProps, GPReq));
+
+  // ping — no params
+  Tools.Add(MakeTool('ping',
+    'Returns {"status":"ok"} immediately. Use this to poll for the MCP server ' +
+    'coming back after rebuild_ide — retry until it succeeds.',
+    TJSONObject.Create, TJSONArray.Create));
+
   Res := TJSONObject.Create;
   Res.Add('tools', Tools);
   Result := RPCResult(ID, Res);
@@ -696,6 +775,17 @@ begin
     end else
       Text := GetUnitInterface(Args.Strings['file'], Err);
   end
+  else if ToolName = 'ping' then
+    Text := '{"status":"ok"}'
+  else if ToolName = 'compile_plugin' then
+  begin
+    if not Assigned(Args) or (Args.Get('lpk_path', '') = '') then
+    begin
+      Text := 'Error: lpk_path required';
+      Err  := True;
+    end else
+      Text := RunLazbuild(Args.Strings['lpk_path'], Err);
+  end
   else if (ToolName = 'get_active_file') or
           (ToolName = 'get_project_files') or
           (ToolName = 'get_compiler_errors') or
@@ -709,13 +799,16 @@ begin
           (ToolName = 'get_cursor_position') or
           (ToolName = 'get_selected_text') or
           (ToolName = 'create_unit') or
-          (ToolName = 'add_unit_to_uses') then
+          (ToolName = 'add_unit_to_uses') or
+          (ToolName = 'rebuild_ide') or
+          (ToolName = 'get_package_info') then
   begin
     // IDE APIs — must run on main thread
-    FSyncToolName := ToolName;
-    FSyncParams   := Args;
-    FSyncResult   := '';
-    FSyncError    := False;
+    FSyncToolName        := ToolName;
+    FSyncParams          := Args;
+    FSyncResult          := '';
+    FSyncError           := False;
+    FSyncConnectionClose := False;
     TThread.Synchronize(Self, @SyncCallTool);
     Text := FSyncResult;
     Err  := FSyncError;
@@ -834,6 +927,83 @@ begin
   end;
 end;
 
+{ ── lazbuild output filter ───────────────────────────────────────────────── }
+
+{ On success: keep only Error/Warning/Hint lines + the "N lines compiled" summary.
+  On failure: return everything so the full error context is visible. }
+function FilterLazbuildOutput(const Raw: string; IsError: Boolean): string;
+var
+  Lines : TStringList;
+  I     : Integer;
+  Line  : string;
+begin
+  if Raw = '' then begin Result := '(no output)'; Exit; end;
+  if IsError then begin Result := Raw; Exit; end;
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Raw;
+    Result := '';
+    for I := 0 to Lines.Count - 1 do
+    begin
+      Line := Lines[I];
+      if (Pos(') Error:',   Line) > 0) or
+         (Pos(') Warning:', Line) > 0) or
+         (Pos(') Hint:',    Line) > 0) or
+         (Pos('lines compiled', Line) > 0) then
+        Result := Result + Line + LineEnding;
+    end;
+    if Result = '' then Result := '(compiled clean, no diagnostics)';
+  finally
+    Lines.Free;
+  end;
+end;
+
+{ ── lazbuild runner (server thread) ─────────────────────────────────────── }
+
+function TMcpServerThread.RunLazbuild(const LpkPath: string;
+  out IsError: Boolean): string;
+var
+  LazbuildExe : string;
+  Proc        : TProcess;
+  Chunk       : string = '';
+  BytesRead   : LongInt;
+const
+  BufSize = 4096;
+begin
+  IsError := False;
+  LazbuildExe := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
+                 'lazbuild' + GetExeExt;
+  if not FileExists(LazbuildExe) then
+  begin
+    IsError := True;
+    Result  := 'lazbuild not found at: ' + LazbuildExe;
+    Exit;
+  end;
+
+  Result := '';
+  Proc   := TProcess.Create(nil);
+  try
+    Proc.Executable := LazbuildExe;
+    Proc.Parameters.Add(LpkPath);
+    Proc.Options    := [poUsePipes, poStdErrToOutput];
+    Proc.Execute;
+    repeat
+      SetLength(Chunk, BufSize);
+      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
+      if BytesRead > 0 then
+      begin
+        SetLength(Chunk, BytesRead);
+        Result := Result + Chunk;
+      end;
+    until (BytesRead = 0) and not Proc.Running;
+    Proc.WaitOnExit;
+    IsError := Proc.ExitCode <> 0;
+    Result  := FilterLazbuildOutput(Result, IsError);
+  finally
+    Proc.Free;
+  end;
+end;
+
 { ── Unit interface extractor (server thread) ─────────────────────────────── }
 
 function TMcpServerThread.GetUnitInterface(const FilePath: string;
@@ -912,6 +1082,12 @@ var
   SyncTreeNode   : TCodeTreeNode;
   SyncOutline    : TJSONArray;
   SyncEntry      : TJSONObject;
+  SyncPkgList    : TObjectList;
+  SyncIDEPkg     : TIDEPackage;
+  SyncIDEPkg2    : TIDEPackage;
+  SyncPkgID      : TLazPackageID;
+  SyncPollExe    : string;
+  SyncPasFile    : string;
   J              : Integer;
   I              : Integer;
 begin
@@ -1501,6 +1677,106 @@ begin
       finally
         Obj.Free;
       end;
+    end
+
+    else if FSyncToolName = 'rebuild_ide' then
+    begin
+      SyncFilePath := '';
+      if Assigned(FSyncParams) then
+        SyncFilePath := FSyncParams.Get('lpk_path', '');
+      // Build response before InstallPackages — IDE may exit immediately after.
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('status',  'rebuilding');
+        Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
+                           'command in poll_command until it succeeds.');
+        SyncPollExe := ExtractFilePath(LazarusIDE.GetFPCompilerFilename) +
+                       'instantfpc' + GetExeExt;
+        if SyncFilePath <> '' then
+          SyncPasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                           ExtractFilePath(SyncFilePath))) + 'wait_for_restart.pas'
+        else
+        begin
+          // No lpk_path — find wait_for_restart.pas via the installed package.
+          SyncIDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+          if Assigned(SyncIDEPkg) then
+            SyncPasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                             ExtractFilePath(SyncIDEPkg.Filename))) + 'wait_for_restart.pas'
+          else
+            SyncPasFile := '';
+        end;
+        if SyncPasFile <> '' then
+        begin
+          {$IFDEF WINDOWS}
+          Obj.Add('poll_command',
+            'cmd /c "SET PATH=' +
+            ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
+            ';%PATH% && "' + SyncPollExe + '" "' + SyncPasFile + '""');
+          {$ELSE}
+          Obj.Add('poll_command',
+            'sh -c ''PATH="' +
+            ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
+            ':$PATH" "' + SyncPollExe + '" "' + SyncPasFile + '"''');
+          {$ENDIF}
+        end;
+        FSyncResult          := Obj.AsJSON;
+        FSyncConnectionClose := True;
+      finally
+        Obj.Free;
+      end;
+      // Close all open source editors — prevents blocking dialog during rebuild.
+      while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
+        LazarusIDE.DoCloseEditorFile(
+          SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
+      // Release the listening socket now so the new IDE can bind the same port.
+      // The server thread is blocked in Synchronize and won't call Accept again
+      // until after this block returns; Active := False closes the OS socket
+      // cleanly before InstallPackages exits the process.
+      StopServer;
+      // Build the install list and trigger rebuild.
+      SyncPkgList := TObjectList.Create(True);
+      try
+        if SyncFilePath <> '' then
+        begin
+          PackageEditingInterface.DoOpenPackageFile(SyncFilePath, [pofDoNotOpenEditor], False);
+          SyncIDEPkg := PackageEditingInterface.FindPackageWithName(
+                          ExtractFileNameOnly(SyncFilePath));
+          if Assigned(SyncIDEPkg) then
+          begin
+            SyncPkgID := TLazPackageID.Create;
+            SyncPkgID.AssignID(SyncIDEPkg);
+            SyncPkgList.Add(SyncPkgID);
+          end;
+        end;
+        // Empty list = rebuild with currently installed packages.
+        PackageEditingInterface.InstallPackages(SyncPkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
+      finally
+        SyncPkgList.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_package_info' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('package_name', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'package_name required'; Exit;
+      end;
+      SyncSymbol := FSyncParams.Get('package_name', '');
+      SyncIDEPkg := PackageEditingInterface.IsPackageInstalled(SyncSymbol);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('package_name', SyncSymbol);
+        Obj.Add('is_installed', Assigned(SyncIDEPkg));
+        if Assigned(SyncIDEPkg) then
+          Obj.Add('package_file', SyncIDEPkg.Filename);
+        SyncIDEPkg2 := PackageEditingInterface.FindPackageWithName(SyncSymbol);
+        Obj.Add('is_loaded', Assigned(SyncIDEPkg2));
+        if Assigned(SyncIDEPkg2) then
+          Obj.Add('loaded_file', SyncIDEPkg2.Filename);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
 
   except
@@ -1542,18 +1818,28 @@ var
 begin
   if IsServerRunning then Exit;
 
-  Port := FindFreePort;
+  // Reuse persisted token so Claude Code sessions survive IDE restarts
+  Token := McpSettings.ServerToken;
+  if Token = '' then
+  begin
+    Token := GenerateToken;
+    McpSettings.ServerToken := Token;
+    McpSettings.SaveSettings;
+  end;
+
+  // Try to reuse the persisted port so the MCP URL stays identical
+  Port := McpSettings.ServerPort;
+  if (Port = 0) or not IsPortFree(Port) then
+    Port := FindFreePort;
   if Port = 0 then
   begin
     DebugLn('[MCP Server] Could not allocate a free port.');
     Exit;
   end;
 
-  Token           := GenerateToken;
   McpServerThread := TMcpServerThread.Create(Token, Port);
   McpServerThread.Start;
 
-  // Brief pause, then verify the server is reachable before declaring success
   Sleep(300);
   if not PingServer(Port, Token) then
   begin
@@ -1565,7 +1851,14 @@ begin
     Exit;
   end;
 
+  // Persist port so next restart reuses the same URL
+  McpSettings.ServerPort := Port;
+  McpSettings.SaveSettings;
+
   DebugLn(Format('[MCP Server] Listening on 127.0.0.1:%d.', [Port]));
+
+  if McpSettings.LastConfigPath <> '' then
+    WriteMcpConfig;
 end;
 
 procedure FinalizeMcpServer;
@@ -1590,8 +1883,12 @@ begin
   Result := '';
   if not IsServerRunning then Exit;
 
-  Path := IncludeTrailingPathDelimiter(GetTempDir) +
-          Format('lazarus-mcp-%d.json', [GetServerPort]);
+  // Use the same path Claude Code was launched with so it can re-read the URL
+  // after a rebuild without drifting to a new filename.
+  if McpSettings.LastConfigPath <> '' then
+    Path := McpSettings.LastConfigPath
+  else
+    Path := IncludeTrailingPathDelimiter(GetTempDir) + 'lazarus-mcp.json';
 
   Headers := TJSONObject.Create;
   Headers.Add('Authorization', 'Bearer ' + GetServerToken);
@@ -1613,6 +1910,8 @@ begin
     try
       SL.SaveToFile(Path);
       Result := Path;
+      McpSettings.LastConfigPath := Path;
+      McpSettings.SaveSettings;
       DebugLn('[MCP Server] Config written: ' + Path);
     except
       on E: Exception do

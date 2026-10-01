@@ -65,8 +65,14 @@ secondary safety net only.
 
 Bind to port 0 (OS assigns a free ephemeral port) using a raw `fpsocket` call; read
 back the port with `fpgetsockname`.  After the server binds, verify it is reachable
-by making a `ping` request via `TFPHTTPClient` before writing the config file.  Write
-the config to `GetTempDir + 'lazarus-mcp-<port>.json'` and pass it to `claude` as:
+by making a `ping` request via `TFPHTTPClient` before writing the config file.
+
+The config is written to a **stable anchor path** — `McpSettings.LastConfigPath` if
+it is already set (i.e. this is a subsequent start), or `GetTempDir +
+'lazarus-mcp-<port>.json'` on first start.  The path is persisted in
+`mcpassistantoptions.xml` so every future `WriteMcpConfig` call overwrites the
+same file.  This means Claude Code always reads the same filename; only the URL
+inside changes when the port changes.
 
 ```
 claude --mcp-config <file> --strict-mcp-config
