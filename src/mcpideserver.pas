@@ -26,6 +26,7 @@ type
     FSyncParams   : TJSONObject; // borrowed reference, server thread owns it
     FSyncResult   : string;      // output set by main thread
     FSyncError    : Boolean;     // True when SyncCallTool encountered an error
+    FSyncFileList : string;      // JSON file list passed into two-phase tools
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
                             var AResponse : TFPHTTPConnectionResponse);
@@ -65,7 +66,7 @@ implementation
 
 uses
   SrcEditorIntf, ProjectIntf, LazFileUtils, Sockets, fphttpclient,
-  Controls, CompOptsIntf, CodeToolManager, CodeCache;
+  Controls, CompOptsIntf, CodeToolManager, CodeCache, CodeTree, AVL_Tree;
 
 { ── Low-level socket helpers ────────────────────────────────────────────── }
 
@@ -381,7 +382,7 @@ begin
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
-  SrvInfo.Add('version', '0.3.0');
+  SrvInfo.Add('version', '0.4.0');
 
   Res := TJSONObject.Create;
   Res.Add('protocolVersion', ProtoVer);
@@ -427,8 +428,11 @@ var
   SProps   : TJSONObject;
   SReq2    : TJSONArray;
   PA, PB, PC : TJSONObject;
-  SC       : TJSONObject;
-  SR3      : TJSONArray;
+  SC         : TJSONObject;
+  SR3        : TJSONArray;
+  P3, P4     : TJSONObject;
+  S4         : TJSONObject;
+  R4         : TJSONArray;
 begin
   Tools := TJSONArray.Create;
 
@@ -540,6 +544,50 @@ begin
     'custom options, and project file path.',
     TJSONObject.Create, TJSONArray.Create));
 
+  // get_code_outline — requires file
+  PathDef := TJSONObject.Create;
+  PathDef.Add('type', 'string');
+  PathDef.Add('description', 'Absolute path to the .pas file');
+  SPath := TJSONObject.Create;
+  SPath.Add('file', PathDef);
+  SPReq := TJSONArray.Create;
+  SPReq.Add('file');
+  Tools.Add(MakeTool('get_code_outline',
+    'Return the structural outline of a Pascal unit: uses clauses, type ' +
+    'names, class members, and top-level routines with their line numbers. ' +
+    'Does not include method bodies.',
+    SPath, SPReq));
+
+  // find_all_references — requires symbol + file + line + col
+  PA := TJSONObject.Create; PA.Add('type', 'string');  PA.Add('description', 'Absolute path to the file containing the declaration');
+  PB := TJSONObject.Create; PB.Add('type', 'integer'); PB.Add('description', 'Line of the declaration (1-based)');
+  PC := TJSONObject.Create; PC.Add('type', 'integer'); PC.Add('description', 'Column of the declaration (1-based)');
+  SC := TJSONObject.Create;
+  SC.Add('file', PA); SC.Add('line', PB); SC.Add('col', PC);
+  SR3 := TJSONArray.Create;
+  SR3.Add('file'); SR3.Add('line'); SR3.Add('col');
+  Tools.Add(MakeTool('find_all_references',
+    'Find every reference to the identifier at the given declaration position ' +
+    'across all project files.',
+    SC, SR3));
+
+  // rename_identifier — requires file + line + col + new_name
+  Prop1 := TJSONObject.Create; Prop1.Add('type', 'string');  Prop1.Add('description', 'Absolute path to the file containing the declaration');
+  Prop2 := TJSONObject.Create; Prop2.Add('type', 'integer'); Prop2.Add('description', 'Line of the declaration (1-based)');
+  P3    := TJSONObject.Create; P3.Add('type', 'integer');    P3.Add('description', 'Column of the declaration (1-based)');
+  P4    := TJSONObject.Create; P4.Add('type', 'string');     P4.Add('description', 'New identifier name');
+  S4    := TJSONObject.Create;
+  S4.Add('file', Prop1); S4.Add('line', Prop2); S4.Add('col', P3); S4.Add('new_name', P4);
+  R4 := TJSONArray.Create;
+  R4.Add('file'); R4.Add('line'); R4.Add('col'); R4.Add('new_name');
+  Tools.Add(MakeTool('rename_identifier',
+    'Rename an identifier at the given declaration position across all ' +
+    'project files. WARNING: this operation writes directly to disk and ' +
+    'bypasses the IDE undo stack — it CANNOT be undone with Ctrl+Z. ' +
+    'Use git to revert if needed. Only call this after confirming the ' +
+    'new name with the user.',
+    S4, R4));
+
   Res := TJSONObject.Create;
   Res.Add('tools', Tools);
   Result := RPCResult(ID, Res);
@@ -608,7 +656,8 @@ begin
           (ToolName = 'get_symbol_declaration') or
           (ToolName = 'run_project') or
           (ToolName = 'get_identifier_context') or
-          (ToolName = 'get_project_settings') then
+          (ToolName = 'get_project_settings') or
+          (ToolName = 'get_code_outline') then
   begin
     // IDE APIs — must run on main thread
     FSyncToolName := ToolName;
@@ -621,7 +670,6 @@ begin
   end
   else if ToolName = 'search_in_project' then
   begin
-    // Fetch project file list on main thread, then search files in server thread
     FSyncToolName := 'get_project_files';
     FSyncParams   := nil;
     FSyncResult   := '';
@@ -638,6 +686,31 @@ begin
       else
         Text := DoSearchInProject(FSyncResult, '');
       Err  := False;
+    end;
+  end
+  else if (ToolName = 'find_all_references') or (ToolName = 'rename_identifier') then
+  begin
+    // Step 1: get project file list on main thread
+    FSyncToolName := 'get_project_files';
+    FSyncParams   := nil;
+    FSyncResult   := '';
+    FSyncError    := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    if FSyncError then
+    begin
+      Text := FSyncResult;
+      Err  := True;
+    end else
+    begin
+      // Step 2: run Codetools on main thread; pass file list in FSyncFileList
+      FSyncFileList := FSyncResult;
+      FSyncToolName := ToolName;
+      FSyncParams   := Args;
+      FSyncResult   := '';
+      FSyncError    := False;
+      TThread.Synchronize(Self, @SyncCallTool);
+      Text := FSyncResult;
+      Err  := FSyncError;
     end;
   end
   else
@@ -766,15 +839,29 @@ var
   Errors       : TJSONArray;
   PasName      : string;
   BuildRes     : Integer;
-  SyncSymbol   : string;
-  SyncFilePath : string;
-  SyncCodeBuf  : TCodeBuffer;
-  SyncNewCode  : TCodeBuffer;
-  SyncNewX     : Integer;
-  SyncNewY     : Integer;
+  SyncSymbol     : string;
+  SyncFilePath   : string;
+  SyncCodeBuf    : TCodeBuffer;
+  SyncNewCode    : TCodeBuffer;
+  SyncNewX       : Integer;
+  SyncNewY       : Integer;
   SyncNewTopLine : Integer;
-  SyncSnippet  : string;
-  I            : Integer;
+  SyncSnippet    : string;
+  SyncNewName    : string;
+  SyncDeclPt     : TPoint;
+  SyncFileNames  : TStringList;
+  SyncRefTree    : TAVLTree;
+  SyncRefNode    : TAVLTreeNode;
+  SyncRefPos     : PCodeXYPosition;
+  SyncRefArr     : TJSONArray;
+  SyncRefObj     : TJSONObject;
+  SyncFileListJ  : TJSONArray;
+  SyncTool       : TCodeTool;
+  SyncTreeNode   : TCodeTreeNode;
+  SyncOutline    : TJSONArray;
+  SyncEntry      : TJSONObject;
+  J              : Integer;
+  I              : Integer;
 begin
   FSyncError := False;
   try
@@ -969,6 +1056,215 @@ begin
         FSyncResult := Obj.AsJSON;
       finally
         Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_code_outline' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('file', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'file argument required'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('file', '');
+      SyncCodeBuf  := CodeToolBoss.LoadFile(SyncFilePath, False, False);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not load: ' + SyncFilePath; Exit;
+      end;
+      if not CodeToolBoss.Explore(SyncCodeBuf, SyncTool, False, True) then
+      begin
+        FSyncError := True; FSyncResult := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
+      end;
+      SyncOutline := TJSONArray.Create;
+      try
+        SyncTreeNode := SyncTool.Tree.Root;
+        while Assigned(SyncTreeNode) do
+        begin
+          // Emit interesting structural nodes
+          if SyncTreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition,
+                                   ctnProcedure, ctnUseUnit] then
+          begin
+            SyncCodeBuf.AbsoluteToLineCol(SyncTreeNode.StartPos, SyncNewY, SyncNewX);
+            SyncEntry := TJSONObject.Create;
+            SyncEntry.Add('kind', NodeDescriptionAsString(SyncTreeNode.Desc));
+            SyncEntry.Add('line', SyncNewY);
+            SyncEntry.Add('name', SyncTool.ExtractIdentifier(SyncTreeNode.StartPos));
+            SyncOutline.Add(SyncEntry);
+          end;
+          // Descend into structural containers; skip procedure bodies and leaves
+          if Assigned(SyncTreeNode.FirstChild) and
+             (SyncTreeNode.Desc in [ctnUnit, ctnInterface, ctnImplementation,
+                                    ctnTypeSection, ctnVarSection, ctnConstSection,
+                                    ctnUsesSection, ctnTypeDefinition,
+                                    ctnClass, ctnRecordType, ctnObject]) then
+            SyncTreeNode := SyncTreeNode.FirstChild
+          else if Assigned(SyncTreeNode.NextBrother) then
+            SyncTreeNode := SyncTreeNode.NextBrother
+          else
+          begin
+            // Pop up until a node with a next sibling
+            SyncTreeNode := SyncTreeNode.Parent;
+            while Assigned(SyncTreeNode) and not Assigned(SyncTreeNode.NextBrother) do
+              SyncTreeNode := SyncTreeNode.Parent;
+            if Assigned(SyncTreeNode) then
+              SyncTreeNode := SyncTreeNode.NextBrother;
+          end;
+        end;
+        FSyncResult := SyncOutline.AsJSON;
+      finally
+        SyncOutline.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'find_all_references' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'Missing params'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('file', '');
+      SyncNewX     := FSyncParams.Get('col',  0);
+      SyncNewY     := FSyncParams.Get('line', 0);
+      if SyncFilePath = '' then
+      begin
+        FSyncError := True; FSyncResult := 'file argument required'; Exit;
+      end;
+      SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not load: ' + SyncFilePath; Exit;
+      end;
+      SyncFileListJ := TJSONArray(GetJSON(FSyncFileList));
+      SyncFileNames := TStringList.Create;
+      SyncRefTree   := nil;
+      try
+        for J := 0 to SyncFileListJ.Count - 1 do
+          SyncFileNames.Add(SyncFileListJ.Strings[J]);
+        SyncDeclPt := Point(SyncNewX, SyncNewY);
+        if not CodeToolBoss.FindReferencesInFiles(SyncFileNames, SyncCodeBuf,
+               SyncDeclPt, False, SyncRefTree) then
+        begin
+          FSyncError := True;
+          FSyncResult := 'FindReferences failed: ' + CodeToolBoss.ErrorMessage;
+          Exit;
+        end;
+        SyncRefArr := TJSONArray.Create;
+        try
+          if Assigned(SyncRefTree) then
+          begin
+            SyncRefNode := SyncRefTree.FindLowest;
+            while Assigned(SyncRefNode) do
+            begin
+              SyncRefPos := PCodeXYPosition(SyncRefNode.Data);
+              SyncRefObj := TJSONObject.Create;
+              SyncRefObj.Add('file', SyncRefPos^.Code.Filename);
+              SyncRefObj.Add('line', SyncRefPos^.Y);
+              SyncRefObj.Add('col',  SyncRefPos^.X);
+              SyncRefArr.Add(SyncRefObj);
+              SyncRefNode := SyncRefNode.Successor;
+            end;
+          end;
+          FSyncResult := SyncRefArr.AsJSON;
+        finally
+          SyncRefArr.Free;
+        end;
+      finally
+        SyncFileNames.Free;
+        SyncFileListJ.Free;
+        if Assigned(SyncRefTree) then
+          CodeToolBoss.FreeTreeOfPCodeXYPosition(SyncRefTree);
+      end;
+    end
+
+    else if FSyncToolName = 'rename_identifier' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'Missing params'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('file',     '');
+      SyncNewX     := FSyncParams.Get('col',       0);
+      SyncNewY     := FSyncParams.Get('line',      0);
+      SyncNewName  := FSyncParams.Get('new_name', '');
+      if (SyncFilePath = '') or (SyncNewName = '') then
+      begin
+        FSyncError := True; FSyncResult := 'file and new_name required'; Exit;
+      end;
+      SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not load: ' + SyncFilePath; Exit;
+      end;
+      // Extract old identifier name directly from source line
+      SyncSnippet := SyncCodeBuf.GetLine(SyncNewY - 1, False);
+      I := SyncNewX;
+      while (I > 1) and (SyncSnippet[I - 1] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
+        Dec(I);
+      SyncSymbol := '';
+      while (I <= Length(SyncSnippet)) and (SyncSnippet[I] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
+      begin
+        SyncSymbol := SyncSymbol + SyncSnippet[I];
+        Inc(I);
+      end;
+      if SyncSymbol = '' then
+      begin
+        FSyncError := True; FSyncResult := 'No identifier at line ' + IntToStr(SyncNewY) + ' col ' + IntToStr(SyncNewX); Exit;
+      end;
+      SyncFileListJ := TJSONArray(GetJSON(FSyncFileList));
+      SyncFileNames := TStringList.Create;
+      SyncRefTree   := nil;
+      try
+        for J := 0 to SyncFileListJ.Count - 1 do
+          SyncFileNames.Add(SyncFileListJ.Strings[J]);
+        SyncDeclPt := Point(SyncNewX, SyncNewY);
+        if not CodeToolBoss.FindReferencesInFiles(SyncFileNames, SyncCodeBuf,
+               SyncDeclPt, False, SyncRefTree) then
+        begin
+          FSyncError := True;
+          FSyncResult := 'FindReferences failed: ' + CodeToolBoss.ErrorMessage;
+          Exit;
+        end;
+        if not CodeToolBoss.RenameIdentifier(SyncRefTree, SyncSymbol, SyncNewName,
+               SyncCodeBuf, @SyncDeclPt, False) then
+        begin
+          FSyncError := True;
+          FSyncResult := 'RenameIdentifier failed: ' + CodeToolBoss.ErrorMessage;
+          Exit;
+        end;
+        if not CodeToolBoss.ApplyChanges then
+        begin
+          FSyncError := True; FSyncResult := 'ApplyChanges failed'; Exit;
+        end;
+        // Save modified buffers and reload any open editors
+        SyncRefArr := TJSONArray.Create;
+        try
+          for J := 0 to SyncFileNames.Count - 1 do
+          begin
+            SyncNewCode := CodeToolBoss.SourceCache.FindFile(SyncFileNames[J]);
+            if Assigned(SyncNewCode) and SyncNewCode.Modified then
+            begin
+              SyncNewCode.Save;
+              LazarusIDE.DoRevertEditorFile(SyncNewCode.Filename);
+              SyncRefArr.Add(SyncNewCode.Filename);
+            end;
+          end;
+          Obj := TJSONObject.Create;
+          try
+            Obj.Add('renamed_to',    SyncNewName);
+            Obj.Add('files_changed', SyncRefArr.Count);
+            Obj.Add('files',         SyncRefArr.Clone as TJSONArray);
+            FSyncResult := Obj.AsJSON;
+          finally
+            Obj.Free;
+          end;
+        finally
+          SyncRefArr.Free;
+        end;
+      finally
+        SyncFileNames.Free;
+        SyncFileListJ.Free;
+        if Assigned(SyncRefTree) then
+          CodeToolBoss.FreeTreeOfPCodeXYPosition(SyncRefTree);
       end;
     end
 

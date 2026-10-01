@@ -8,3 +8,4 @@ ADR-007 was never assigned; no document is missing.
 |---|----------|
 | [0001](0001-mcp-server-transport-and-lifecycle.md) | # ADR-001 — MCP Server Transport and Lifecycle |
 | [0002](0002-embedded-terminal-for-claude-code.md) | # ADR-002 — Embedded Terminal for Claude Code |
+| [0003](0003-undo-redo-for-rename-identifier.md) | # ADR-003 — Undo/Redo Integration for rename_identifier |
