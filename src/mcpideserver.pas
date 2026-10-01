@@ -38,6 +38,7 @@ type
     function  RPCError(ID: TJSONData; ErrCode: Integer;
                        const Msg: string): string;
     procedure SyncCallTool; // runs on main thread via Synchronize
+    function  DoSearchInProject(const FileListJSON, Query: string): string;
   protected
     procedure Execute; override;
   public
@@ -62,7 +63,8 @@ function  WriteMcpConfig  : string; // returns temp config file path
 implementation
 
 uses
-  SrcEditorIntf, ProjectIntf, LazFileUtils, Sockets, fphttpclient;
+  SrcEditorIntf, ProjectIntf, LazFileUtils, Sockets, fphttpclient,
+  Controls, CompOptsIntf;
 
 { ── Low-level socket helpers ────────────────────────────────────────────── }
 
@@ -449,6 +451,30 @@ begin
     'Return the current build compiler errors and warnings.',
     TJSONObject.Create, TJSONArray.Create));
 
+  // build_project — no args
+  Tools.Add(MakeTool('build_project',
+    'Trigger an incremental build of the active project and return ' +
+    'success/failure with any compiler errors.',
+    TJSONObject.Create, TJSONArray.Create));
+
+  // get_open_editors — no args
+  Tools.Add(MakeTool('get_open_editors',
+    'Return the list of all currently open editor tabs (file names).',
+    TJSONObject.Create, TJSONArray.Create));
+
+  // search_in_project — requires query (reuse SPath/PathDef/SPReq variables)
+  PathDef := TJSONObject.Create;
+  PathDef.Add('type',        'string');
+  PathDef.Add('description', 'Text or substring to search for (case-insensitive)');
+  SPath := TJSONObject.Create;
+  SPath.Add('query', PathDef);
+  SPReq := TJSONArray.Create;
+  SPReq.Add('query');
+  Tools.Add(MakeTool('search_in_project',
+    'Search for a text substring across all project source files. ' +
+    'Returns matching file, line number, and line content.',
+    SPath, SPReq));
+
   Res := TJSONObject.Create;
   Res.Add('tools', Tools);
   Result := RPCResult(ID, Res);
@@ -503,7 +529,9 @@ begin
   end
   else if (ToolName = 'get_active_file') or
           (ToolName = 'get_project_files') or
-          (ToolName = 'get_compiler_errors') then
+          (ToolName = 'get_compiler_errors') or
+          (ToolName = 'build_project') or
+          (ToolName = 'get_open_editors') then
   begin
     // IDE APIs — must run on main thread
     FSyncToolName := ToolName;
@@ -513,6 +541,27 @@ begin
     TThread.Synchronize(Self, @SyncCallTool);
     Text := FSyncResult;
     Err  := FSyncError;
+  end
+  else if ToolName = 'search_in_project' then
+  begin
+    // Fetch project file list on main thread, then search files in server thread
+    FSyncToolName := 'get_project_files';
+    FSyncParams   := nil;
+    FSyncResult   := '';
+    FSyncError    := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    if FSyncError then
+    begin
+      Text := FSyncResult;
+      Err  := True;
+    end else
+    begin
+      if Assigned(Args) then
+        Text := DoSearchInProject(FSyncResult, Args.Get('query', ''))
+      else
+        Text := DoSearchInProject(FSyncResult, '');
+      Err  := False;
+    end;
   end
   else
   begin
@@ -532,17 +581,69 @@ begin
   Result := RPCResult(ID, Res);
 end;
 
+{ ── Project-wide text search (runs in server thread) ─────────────────────── }
+
+function TMcpServerThread.DoSearchInProject(const FileListJSON,
+  Query: string): string;
+var
+  FileList : TJSONArray;
+  Results  : TJSONArray;
+  Match    : TJSONObject;
+  Lines    : TStringList;
+  FilePath : string;
+  Q        : string;
+  I, J     : Integer;
+begin
+  if Query = '' then
+    Exit('{"error":"query argument required"}');
+
+  Q       := LowerCase(Query);
+  Results := TJSONArray.Create;
+  Lines   := TStringList.Create;
+  try
+    FileList := TJSONArray(GetJSON(FileListJSON));
+    try
+      for I := 0 to FileList.Count - 1 do
+      begin
+        FilePath := FileList.Strings[I];
+        if not FileExists(FilePath) then Continue;
+        try
+          Lines.LoadFromFile(FilePath);
+          for J := 0 to Lines.Count - 1 do
+            if Pos(Q, LowerCase(Lines[J])) > 0 then
+            begin
+              Match := TJSONObject.Create;
+              Match.Add('file', FilePath);
+              Match.Add('line', J + 1);
+              Match.Add('text', Trim(Lines[J]));
+              Results.Add(Match);
+            end;
+        except
+          // skip unreadable files
+        end;
+      end;
+    finally
+      FileList.Free;
+    end;
+    Result := Results.AsJSON;
+  finally
+    Lines.Free;
+    Results.Free;
+  end;
+end;
+
 { ── Main-thread tool dispatcher ──────────────────────────────────────────── }
 
 procedure TMcpServerThread.SyncCallTool;
 var
-  Ed      : TSourceEditorInterface;
-  Obj     : TJSONObject;
-  Files   : TJSONArray;
-  Proj    : TLazProject;
-  Errors  : TJSONArray;
-  PasName : string;
-  I       : Integer;
+  Ed       : TSourceEditorInterface;
+  Obj      : TJSONObject;
+  Files    : TJSONArray;
+  Proj     : TLazProject;
+  Errors   : TJSONArray;
+  PasName  : string;
+  BuildRes : Integer;
+  I        : Integer;
 begin
   FSyncError := False;
   try
@@ -620,6 +721,44 @@ begin
         FSyncResult := Errors.AsJSON
       else
         FSyncResult := '[]';
+    end
+
+    else if FSyncToolName = 'build_project' then
+    begin
+      if not Assigned(LazarusIDE) then
+      begin
+        FSyncError  := True;
+        FSyncResult := 'No IDE available';
+        Exit;
+      end;
+      BuildRes := LazarusIDE.DoBuildProject(crCompile, []);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('success', BuildRes = mrOK);
+        if Assigned(McpHookManager) then
+          Errors := McpHookManager.CurrentCompilerErrors
+        else
+          Errors := nil;
+        if Assigned(Errors) then
+          Obj.Add('errors', Errors.Clone as TJSONArray)
+        else
+          Obj.Add('errors', TJSONArray.Create);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_open_editors' then
+    begin
+      Files := TJSONArray.Create;
+      try
+        for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+          Files.Add(SourceEditorManagerIntf.SourceEditors[I].FileName);
+        FSyncResult := Files.AsJSON;
+      finally
+        Files.Free;
+      end;
     end;
 
   except
