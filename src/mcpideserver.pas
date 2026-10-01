@@ -380,7 +380,7 @@ begin
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
-  SrvInfo.Add('version', '0.1.0');
+  SrvInfo.Add('version', '0.2.0');
 
   Res := TJSONObject.Create;
   Res.Add('protocolVersion', ProtoVer);
