@@ -541,6 +541,7 @@ var
   Files   : TJSONArray;
   Proj    : TLazProject;
   Errors  : TJSONArray;
+  PasName : string;
   I       : Integer;
 begin
   FSyncError := False;
@@ -552,6 +553,31 @@ begin
       begin
         FSyncError  := True;
         FSyncResult := 'No active editor';
+        Exit;
+      end;
+      { Form designer is active: return both .lfm and .pas so Claude can pick }
+      if CompareFileExt(Ed.FileName, '.lfm', False) = 0 then
+      begin
+        PasName := ChangeFileExt(Ed.FileName, '.pas');
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('note', 'The active editor is a form file. ' +
+                          'Both the form definition and its Pascal unit are provided.');
+          Obj.Add('form_filename', Ed.FileName);
+          Obj.Add('form_content',  Ed.Lines.Text);
+          for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+            if CompareFilenames(SourceEditorManagerIntf.SourceEditors[I].FileName,
+                                PasName) = 0 then
+            begin
+              Obj.Add('unit_filename', PasName);
+              Obj.Add('unit_content',
+                      SourceEditorManagerIntf.SourceEditors[I].Lines.Text);
+              Break;
+            end;
+          FSyncResult := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
         Exit;
       end;
       Obj := TJSONObject.Create;
