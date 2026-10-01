@@ -1,0 +1,21 @@
+# Compiled output
+lib/
+*.o
+*.ppu
+*.a
+*.compiled
+*.exe
+
+# Lazarus backups and sessions
+backup/
+*.bak
+*.lps
+
+# Logs
+*.log
+
+# Local notes and IDE/assistant state
+/FR.md
+/INPUT.md
+packagefiles.xml
+.claude/

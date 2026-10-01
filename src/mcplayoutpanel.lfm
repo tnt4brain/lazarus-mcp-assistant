@@ -1,0 +1,50 @@
+object McpChatForm: TMcpChatForm
+  Left = 320
+  Height = 400
+  Top = 200
+  Width = 300
+  Caption = 'MCP AI Assistant'
+  ClientHeight = 400
+  ClientWidth = 300
+  object memChatLog: TMemo
+    Left = 0
+    Height = 280
+    Top = 0
+    Width = 300
+    Align = alClient
+    ReadOnly = True
+    ScrollBars = ssAutoVertical
+    TabOrder = 0
+  end
+  object pnlBottom: TPanel
+    Left = 0
+    Height = 120
+    Top = 280
+    Width = 300
+    Align = alBottom
+    ClientHeight = 120
+    ClientWidth = 300
+    TabOrder = 1
+    object memPrompt: TMemo
+      Left = 4
+      Height = 75
+      Top = 4
+      Width = 292
+      Align = alClient
+      BorderSpacing.Around = 4
+      ScrollBars = ssAutoVertical
+      TabOrder = 0
+    end
+    object btnSend: TButton
+      Left = 4
+      Height = 33
+      Top = 83
+      Width = 292
+      Align = alBottom
+      BorderSpacing.Around = 4
+      Caption = 'Send Prompt'
+      OnClick = btnSendClick
+      TabOrder = 1
+    end
+  end
+end
