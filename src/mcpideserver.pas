@@ -433,6 +433,10 @@ var
   P3, P4     : TJSONObject;
   S4         : TJSONObject;
   R4         : TJSONArray;
+  CUProps, CUPfn, CUPct : TJSONObject;
+  CUReq                  : TJSONArray;
+  AUProps, AUPf, AUPu, AUPi : TJSONObject;
+  AUReq                      : TJSONArray;
 begin
   Tools := TJSONArray.Create;
 
@@ -588,6 +592,50 @@ begin
     'new name with the user.',
     S4, R4));
 
+  // get_cursor_position — no required params
+  Tools.Add(MakeTool('get_cursor_position',
+    'Return the active editor''s current cursor position: file path, ' +
+    'line and column (both 1-based).',
+    TJSONObject.Create, TJSONArray.Create));
+
+  // get_selected_text — no required params
+  Tools.Add(MakeTool('get_selected_text',
+    'Return the text currently selected in the active editor, together ' +
+    'with the selection start/end positions. Returns an empty string if ' +
+    'nothing is selected.',
+    TJSONObject.Create, TJSONArray.Create));
+
+  // create_unit — filename required, content optional
+  CUProps := TJSONObject.Create;
+  CUPfn   := TJSONObject.Create; CUPfn.Add('type', 'string'); CUPfn.Add('description', 'Absolute path for the new .pas file');
+  CUPct   := TJSONObject.Create; CUPct.Add('type', 'string'); CUPct.Add('description', 'Full source content; omit for a blank unit skeleton');
+  CUProps.Add('filename', CUPfn);
+  CUProps.Add('content',  CUPct);
+  CUReq := TJSONArray.Create;
+  CUReq.Add('filename');
+  Tools.Add(MakeTool('create_unit',
+    'Create a new Pascal unit file on disk, add it to the active project, ' +
+    'and open it in the editor. Provide content or receive a blank ' +
+    'unit skeleton.',
+    CUProps, CUReq));
+
+  // add_unit_to_uses — file + unit_name required, in_interface optional
+  AUProps := TJSONObject.Create;
+  AUPf    := TJSONObject.Create; AUPf.Add('type',  'string');  AUPf.Add('description', 'Absolute path to the Pascal file to modify');
+  AUPu    := TJSONObject.Create; AUPu.Add('type',  'string');  AUPu.Add('description', 'Unit name to add to the uses clause');
+  AUPi    := TJSONObject.Create; AUPi.Add('type',  'boolean'); AUPi.Add('description', 'Add to interface uses (true, default) or implementation uses (false)');
+  AUProps.Add('file',         AUPf);
+  AUProps.Add('unit_name',    AUPu);
+  AUProps.Add('in_interface', AUPi);
+  AUReq := TJSONArray.Create;
+  AUReq.Add('file');
+  AUReq.Add('unit_name');
+  Tools.Add(MakeTool('add_unit_to_uses',
+    'Add a unit to the uses clause of a Pascal file using Codetools. ' +
+    'Writes directly to disk (not undoable via Ctrl+Z; use git to revert). ' +
+    'Set in_interface=false to target the implementation uses clause.',
+    AUProps, AUReq));
+
   Res := TJSONObject.Create;
   Res.Add('tools', Tools);
   Result := RPCResult(ID, Res);
@@ -657,7 +705,11 @@ begin
           (ToolName = 'run_project') or
           (ToolName = 'get_identifier_context') or
           (ToolName = 'get_project_settings') or
-          (ToolName = 'get_code_outline') then
+          (ToolName = 'get_code_outline') or
+          (ToolName = 'get_cursor_position') or
+          (ToolName = 'get_selected_text') or
+          (ToolName = 'create_unit') or
+          (ToolName = 'add_unit_to_uses') then
   begin
     // IDE APIs — must run on main thread
     FSyncToolName := ToolName;
@@ -1053,6 +1105,163 @@ begin
       Obj := TJSONObject.Create;
       try
         Obj.Add('success', BuildRes = mrOK);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_cursor_position' then
+    begin
+      Ed := SourceEditorManagerIntf.ActiveEditor;
+      if not Assigned(Ed) then
+      begin
+        FSyncError := True; FSyncResult := 'No active editor'; Exit;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file', Ed.FileName);
+        Obj.Add('line', Ed.CursorTextXY.Y);
+        Obj.Add('col',  Ed.CursorTextXY.X);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_selected_text' then
+    begin
+      Ed := SourceEditorManagerIntf.ActiveEditor;
+      if not Assigned(Ed) then
+      begin
+        FSyncError := True; FSyncResult := 'No active editor'; Exit;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file', Ed.FileName);
+        if Ed.SelectionAvailable then
+        begin
+          Obj.Add('text',       Ed.Selection);
+          Obj.Add('start_line', Ed.BlockBegin.Y);
+          Obj.Add('start_col',  Ed.BlockBegin.X);
+          Obj.Add('end_line',   Ed.BlockEnd.Y);
+          Obj.Add('end_col',    Ed.BlockEnd.X);
+        end
+        else
+        begin
+          Obj.Add('text', '');
+          Obj.Add('note', 'No text selected');
+        end;
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'create_unit' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('filename', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'filename required'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('filename', '');
+      // Expand relative paths against the project directory
+      if not FilenameIsAbsolute(SyncFilePath) then
+      begin
+        if McpProject.IsProjectOpen then
+          SyncFilePath := AppendPathDelim(McpProject.GetProjectDirectory) + SyncFilePath
+        else begin
+          FSyncError := True; FSyncResult := 'No active project to resolve relative path'; Exit;
+        end;
+      end;
+      if FileExists(SyncFilePath) then
+      begin
+        FSyncError := True; FSyncResult := 'File already exists: ' + SyncFilePath; Exit;
+      end;
+      // Build content: use provided content or generate a blank unit skeleton
+      SyncNewName := FSyncParams.Get('content', '');
+      if SyncNewName = '' then
+      begin
+        PasName := ChangeFileExt(ExtractFileName(SyncFilePath), '');
+        SyncNewName :=
+          'unit ' + PasName + ';' + LineEnding +
+          LineEnding +
+          '{$mode objfpc}{$H+}' + LineEnding +
+          LineEnding +
+          'interface' + LineEnding +
+          LineEnding +
+          'implementation' + LineEnding +
+          LineEnding +
+          'end.' + LineEnding;
+      end;
+      SyncCodeBuf := CodeToolBoss.CreateFile(SyncFilePath);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not create buffer for: ' + SyncFilePath; Exit;
+      end;
+      SyncCodeBuf.Source := SyncNewName;
+      if not SyncCodeBuf.Save then
+      begin
+        FSyncError := True; FSyncResult := 'Could not save: ' + SyncFilePath; Exit;
+      end;
+      // Add to project
+      Proj := LazarusIDE.ActiveProject;
+      if Assigned(Proj) then
+        Proj.AddFile(Proj.CreateProjectFile(SyncFilePath), False);
+      // Open in editor
+      LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1, [ofRegularFile]);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('filename', SyncFilePath);
+        Obj.Add('created',  True);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'add_unit_to_uses' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'Missing params'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('file',      '');
+      SyncSymbol   := FSyncParams.Get('unit_name', '');
+      if (SyncFilePath = '') or (SyncSymbol = '') then
+      begin
+        FSyncError := True; FSyncResult := 'file and unit_name required'; Exit;
+      end;
+      SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not load: ' + SyncFilePath; Exit;
+      end;
+      if FSyncParams.Get('in_interface', True) then
+      begin
+        if not CodeToolBoss.AddUnitToMainUsesSection(SyncCodeBuf, SyncSymbol, '') then
+        begin
+          FSyncError := True; FSyncResult := 'AddUnitToMainUsesSection failed: ' + CodeToolBoss.ErrorMessage; Exit;
+        end;
+      end
+      else
+      begin
+        if not CodeToolBoss.AddUnitToImplementationUsesSection(SyncCodeBuf, SyncSymbol, '') then
+        begin
+          FSyncError := True; FSyncResult := 'AddUnitToImplementationUsesSection failed: ' + CodeToolBoss.ErrorMessage; Exit;
+        end;
+      end;
+      if not CodeToolBoss.ApplyChanges then
+      begin
+        FSyncError := True; FSyncResult := 'ApplyChanges failed'; Exit;
+      end;
+      SyncCodeBuf.Save;
+      LazarusIDE.DoRevertEditorFile(SyncFilePath);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',          SyncFilePath);
+        Obj.Add('unit_added',    SyncSymbol);
+        Obj.Add('in_interface',  FSyncParams.Get('in_interface', True));
         FSyncResult := Obj.AsJSON;
       finally
         Obj.Free;
