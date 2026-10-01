@@ -15,7 +15,7 @@
     </CompilerOptions>
     <Description Value="A completely generic, brand-agnostic Model Context Protocol (MCP) IDE Assistant client for the Lazarus RAD IDE and Free Pascal ecosystem."/>
     <License Value="BSD-3-Clause"/>
-    <Version Major="0" Minor="2"/>
+    <Version Major="0" Minor="3"/>
     <Files Count="6">
       <Item1>
         <Filename Value="lazmcpassistant.pas"/>
@@ -44,7 +44,7 @@
       </Item6>
     </Files>
     <CompatibilityMode Value="True"/>
-    <RequiredPkgs Count="3">
+    <RequiredPkgs Count="4">
       <Item1>
         <PackageName Value="SynEdit"/>
       </Item1>
@@ -54,6 +54,9 @@
       <Item3>
         <PackageName Value="FCL"/>
       </Item3>
+      <Item4>
+        <PackageName Value="CodeTools"/>
+      </Item4>
     </RequiredPkgs>
     <UsageOptions>
       <UnitPath Value="$(PkgOutDir)"/>

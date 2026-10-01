@@ -39,6 +39,7 @@ type
                        const Msg: string): string;
     procedure SyncCallTool; // runs on main thread via Synchronize
     function  DoSearchInProject(const FileListJSON, Query: string): string;
+    function  GetUnitInterface(const FilePath: string; out IsError: Boolean): string;
   protected
     procedure Execute; override;
   public
@@ -64,7 +65,7 @@ implementation
 
 uses
   SrcEditorIntf, ProjectIntf, LazFileUtils, Sockets, fphttpclient,
-  Controls, CompOptsIntf;
+  Controls, CompOptsIntf, CodeToolManager, CodeCache;
 
 { ── Low-level socket helpers ────────────────────────────────────────────── }
 
@@ -380,7 +381,7 @@ begin
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
-  SrvInfo.Add('version', '0.2.0');
+  SrvInfo.Add('version', '0.3.0');
 
   Res := TJSONObject.Create;
   Res.Add('protocolVersion', ProtoVer);
@@ -421,6 +422,13 @@ var
   SPath    : TJSONObject;
   PathDef  : TJSONObject;
   SPReq    : TJSONArray;
+  Prop1    : TJSONObject;
+  Prop2    : TJSONObject;
+  SProps   : TJSONObject;
+  SReq2    : TJSONArray;
+  PA, PB, PC : TJSONObject;
+  SC       : TJSONObject;
+  SR3      : TJSONArray;
 begin
   Tools := TJSONArray.Create;
 
@@ -462,7 +470,7 @@ begin
     'Return the list of all currently open editor tabs (file names).',
     TJSONObject.Create, TJSONArray.Create));
 
-  // search_in_project — requires query (reuse SPath/PathDef/SPReq variables)
+  // search_in_project — requires query
   PathDef := TJSONObject.Create;
   PathDef.Add('type',        'string');
   PathDef.Add('description', 'Text or substring to search for (case-insensitive)');
@@ -474,6 +482,63 @@ begin
     'Search for a text substring across all project source files. ' +
     'Returns matching file, line number, and line content.',
     SPath, SPReq));
+
+  // get_symbol_declaration — requires symbol + file
+  Prop1 := TJSONObject.Create;
+    Prop1.Add('type', 'string');
+    Prop1.Add('description', 'Identifier name to look up');
+    Prop2 := TJSONObject.Create;
+    Prop2.Add('type', 'string');
+    Prop2.Add('description', 'Absolute path of the file containing the identifier');
+    SProps := TJSONObject.Create;
+    SProps.Add('symbol', Prop1);
+    SProps.Add('file',   Prop2);
+    SReq2 := TJSONArray.Create;
+    SReq2.Add('symbol');
+    SReq2.Add('file');
+    Tools.Add(MakeTool('get_symbol_declaration',
+      'Find where an identifier is declared using Codetools. ' +
+      'Returns declaration file, line, column and a short context snippet.',
+      SProps, SReq2));
+
+  // get_unit_interface — requires file
+  PathDef := TJSONObject.Create;
+  PathDef.Add('type',        'string');
+  PathDef.Add('description', 'Absolute path to the .pas file');
+  SPath := TJSONObject.Create;
+  SPath.Add('file', PathDef);
+  SPReq := TJSONArray.Create;
+  SPReq.Add('file');
+  Tools.Add(MakeTool('get_unit_interface',
+    'Return only the interface section of a Pascal unit ' +
+    '(everything above the implementation keyword).',
+    SPath, SPReq));
+
+  // run_project — no args
+  Tools.Add(MakeTool('run_project',
+    'Build (if needed) and run the active project without the debugger.',
+    TJSONObject.Create, TJSONArray.Create));
+
+  // get_identifier_context — requires file, line, col
+  PA := TJSONObject.Create;  PA.Add('type', 'string');  PA.Add('description', 'Absolute path to the file');
+  PB := TJSONObject.Create;  PB.Add('type', 'integer'); PB.Add('description', 'Line number (1-based)');
+  PC := TJSONObject.Create;  PC.Add('type', 'integer'); PC.Add('description', 'Column number (1-based)');
+  SC := TJSONObject.Create;
+  SC.Add('file', PA);
+  SC.Add('line', PB);
+  SC.Add('col',  PC);
+  SR3 := TJSONArray.Create;
+  SR3.Add('file'); SR3.Add('line'); SR3.Add('col');
+  Tools.Add(MakeTool('get_identifier_context',
+    'Return type, declaration location, and hint text for the identifier ' +
+    'at a given file/line/col using Codetools FindSmartHint.',
+    SC, SR3));
+
+  // get_project_settings — no args
+  Tools.Add(MakeTool('get_project_settings',
+    'Return active project compiler options: target OS/CPU, output directory, ' +
+    'custom options, and project file path.',
+    TJSONObject.Create, TJSONArray.Create));
 
   Res := TJSONObject.Create;
   Res.Add('tools', Tools);
@@ -503,7 +568,6 @@ begin
 
   if ToolName = 'get_file_content' then
   begin
-    // Disk read — safe to do in server thread
     if not Assigned(Args) or (Args.Get('path', '') = '') then
     begin
       Text := 'Error: path argument required';
@@ -527,11 +591,24 @@ begin
       end;
     end;
   end
+  else if ToolName = 'get_unit_interface' then
+  begin
+    if not Assigned(Args) or (Args.Get('file', '') = '') then
+    begin
+      Text := 'Error: file argument required';
+      Err  := True;
+    end else
+      Text := GetUnitInterface(Args.Strings['file'], Err);
+  end
   else if (ToolName = 'get_active_file') or
           (ToolName = 'get_project_files') or
           (ToolName = 'get_compiler_errors') or
           (ToolName = 'build_project') or
-          (ToolName = 'get_open_editors') then
+          (ToolName = 'get_open_editors') or
+          (ToolName = 'get_symbol_declaration') or
+          (ToolName = 'run_project') or
+          (ToolName = 'get_identifier_context') or
+          (ToolName = 'get_project_settings') then
   begin
     // IDE APIs — must run on main thread
     FSyncToolName := ToolName;
@@ -632,18 +709,72 @@ begin
   end;
 end;
 
+{ ── Unit interface extractor (server thread) ─────────────────────────────── }
+
+function TMcpServerThread.GetUnitInterface(const FilePath: string;
+  out IsError: Boolean): string;
+var
+  Lines   : TStringList;
+  I       : Integer;
+  ULine   : string;
+begin
+  IsError := False;
+  if not FileExists(FilePath) then
+  begin
+    IsError := True;
+    Result  := 'Error: file not found: ' + FilePath;
+    Exit;
+  end;
+  Lines := TStringList.Create;
+  try
+    try
+      Lines.LoadFromFile(FilePath);
+      for I := 0 to Lines.Count - 1 do
+      begin
+        ULine := Trim(LowerCase(Lines[I]));
+        if (ULine = 'implementation') or
+           (Copy(ULine, 1, 15) = 'implementation ') or
+           (Copy(ULine, 1, 15) = 'implementation{') then
+        begin
+          while Lines.Count > I do
+            Lines.Delete(Lines.Count - 1);
+          Result := Lines.Text;
+          Exit;
+        end;
+      end;
+      Result := Lines.Text; // no implementation keyword — return everything
+    except
+      on E: Exception do
+      begin
+        IsError := True;
+        Result  := 'Error reading file: ' + E.Message;
+      end;
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
 { ── Main-thread tool dispatcher ──────────────────────────────────────────── }
 
 procedure TMcpServerThread.SyncCallTool;
 var
-  Ed       : TSourceEditorInterface;
-  Obj      : TJSONObject;
-  Files    : TJSONArray;
-  Proj     : TLazProject;
-  Errors   : TJSONArray;
-  PasName  : string;
-  BuildRes : Integer;
-  I        : Integer;
+  Ed           : TSourceEditorInterface;
+  Obj          : TJSONObject;
+  Files        : TJSONArray;
+  Proj         : TLazProject;
+  Errors       : TJSONArray;
+  PasName      : string;
+  BuildRes     : Integer;
+  SyncSymbol   : string;
+  SyncFilePath : string;
+  SyncCodeBuf  : TCodeBuffer;
+  SyncNewCode  : TCodeBuffer;
+  SyncNewX     : Integer;
+  SyncNewY     : Integer;
+  SyncNewTopLine : Integer;
+  SyncSnippet  : string;
+  I            : Integer;
 begin
   FSyncError := False;
   try
@@ -758,6 +889,112 @@ begin
         FSyncResult := Files.AsJSON;
       finally
         Files.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_symbol_declaration' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'Missing params'; Exit;
+      end;
+      SyncSymbol   := FSyncParams.Get('symbol', '');
+      SyncFilePath := FSyncParams.Get('file',   '');
+      if (SyncSymbol = '') or (SyncFilePath = '') then
+      begin
+        FSyncError := True; FSyncResult := 'symbol and file arguments required'; Exit;
+      end;
+      SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not load file: ' + SyncFilePath; Exit;
+      end;
+      if CodeToolBoss.FindDeclarationInInterface(SyncCodeBuf, SyncSymbol,
+           SyncNewCode, SyncNewX, SyncNewY, SyncNewTopLine) then
+      begin
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('declaration_file', SyncNewCode.Filename);
+          Obj.Add('line',  SyncNewY);
+          Obj.Add('col',   SyncNewX);
+          if SyncNewY >= 1 then
+          begin
+            SyncSnippet := SyncNewCode.GetLine(SyncNewY - 1, False);
+            Obj.Add('context', Trim(SyncSnippet));
+          end;
+          FSyncResult := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+      end else
+      begin
+        FSyncError  := True;
+        FSyncResult := 'Declaration not found for: ' + SyncSymbol +
+                       ' (' + CodeToolBoss.ErrorMessage + ')';
+      end;
+    end
+
+    else if FSyncToolName = 'get_identifier_context' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'Missing params'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('file', '');
+      SyncNewX     := FSyncParams.Get('col',  0);
+      SyncNewY     := FSyncParams.Get('line', 0);
+      if SyncFilePath = '' then
+      begin
+        FSyncError := True; FSyncResult := 'file argument required'; Exit;
+      end;
+      SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not load file: ' + SyncFilePath; Exit;
+      end;
+      SyncSnippet := CodeToolBoss.FindSmartHint(SyncCodeBuf, SyncNewX, SyncNewY);
+      FSyncResult := '{"hint":' + TJSONString.Create(SyncSnippet).AsJSON + '}';
+    end
+
+    else if FSyncToolName = 'run_project' then
+    begin
+      if not Assigned(LazarusIDE) then
+      begin
+        FSyncError := True; FSyncResult := 'No IDE available'; Exit;
+      end;
+      BuildRes := LazarusIDE.DoRunProjectWithoutDebug;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('success', BuildRes = mrOK);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_project_settings' then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
+        begin
+          Proj := LazarusIDE.ActiveProject;
+          Obj.Add('project_file',    Proj.ProjectInfoFile);
+          Obj.Add('target_os_cpu',   LazarusIDE.GetFPCFrontEndOptions);
+          if Assigned(Proj.LazCompilerOptions) then
+          begin
+            Obj.Add('custom_options',
+              Proj.LazCompilerOptions.CustomOptions);
+            Obj.Add('output_dir',
+              Proj.LazCompilerOptions.UnitOutputDirectory);
+            Obj.Add('target_os',
+              Proj.LazCompilerOptions.TargetOS);
+          end;
+        end else
+          Obj.Add('error', 'No active project');
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
       end;
     end;
 
