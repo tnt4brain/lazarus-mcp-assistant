@@ -414,7 +414,7 @@ begin
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
-  SrvInfo.Add('version', '0.4.0');
+  SrvInfo.Add('version', '0.5.0');
 
   Res := TJSONObject.Create;
   Res.Add('protocolVersion', ProtoVer);
@@ -825,7 +825,16 @@ begin
       Text := GetUnitInterface(Args.Strings['file'], Err);
   end
   else if ToolName = 'ping' then
-    Text := '{"status":"ok"}'
+  begin
+    FSyncToolName := 'ping';
+    FSyncParams   := nil;
+    FSyncResult   := '';
+    FSyncError    := False;
+    FSyncConnectionClose := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    Text := FSyncResult;
+    Err  := FSyncError;
+  end
   else if ToolName = 'compile_plugin' then
   begin
     if not Assigned(Args) or (Args.Get('lpk_path', '') = '') then
@@ -1144,7 +1153,21 @@ var
 begin
   FSyncError := False;
   try
-    if FSyncToolName = 'get_active_file' then
+    if FSyncToolName = 'ping' then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('status', 'ok');
+        SyncIDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+        if Assigned(SyncIDEPkg) then
+          Obj.Add('version', SyncIDEPkg.Version.AsString);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_active_file' then
     begin
       Ed := SourceEditorManagerIntf.ActiveEditor;
       if not Assigned(Ed) then
