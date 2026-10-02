@@ -471,6 +471,10 @@ var
   AUReq                      : TJSONArray;
   CPProps, CPLpk             : TJSONObject;
   CPReq                      : TJSONArray;
+  SCPProps, SCPFile, SCPLine, SCPCol : TJSONObject;
+  SCPReq                             : TJSONArray;
+  RTProps, RTFile, RTSLine, RTSCol, RTELine, RTECol, RTText : TJSONObject;
+  RTReq                                                      : TJSONArray;
   RIProps, RILpk             : TJSONObject;
   RIReq                      : TJSONArray;
   GPProps, GPName            : TJSONObject;
@@ -643,6 +647,51 @@ begin
     'nothing is selected.',
     TJSONObject.Create, TJSONArray.Create));
 
+  // set_cursor_position — file optional, line+col required
+  SCPProps := TJSONObject.Create;
+  SCPFile  := TJSONObject.Create; SCPFile.Add('type', 'string');  SCPFile.Add('description', 'Absolute path to the file to open and navigate to; omit to move the cursor in the active editor');
+  SCPLine  := TJSONObject.Create; SCPLine.Add('type', 'integer'); SCPLine.Add('description', 'Line number (1-based)');
+  SCPCol   := TJSONObject.Create; SCPCol.Add('type',  'integer'); SCPCol.Add('description', 'Column number (1-based)');
+  SCPProps.Add('file', SCPFile);
+  SCPProps.Add('line', SCPLine);
+  SCPProps.Add('col',  SCPCol);
+  SCPReq := TJSONArray.Create;
+  SCPReq.Add('line');
+  SCPReq.Add('col');
+  Tools.Add(MakeTool('set_cursor_position',
+    'Move the cursor to a specific line and column in the editor. ' +
+    'Opens the file first if it is not already open. ' +
+    'Omit file to move the cursor in the currently active editor.',
+    SCPProps, SCPReq));
+
+  // replace_text — file optional, range + new_text required
+  RTProps  := TJSONObject.Create;
+  RTFile   := TJSONObject.Create; RTFile.Add('type',   'string');  RTFile.Add('description', 'Absolute path to the file; omit to edit the active editor');
+  RTSLine  := TJSONObject.Create; RTSLine.Add('type',  'integer'); RTSLine.Add('description', 'Start line (1-based, inclusive)');
+  RTSCol   := TJSONObject.Create; RTSCol.Add('type',   'integer'); RTSCol.Add('description', 'Start column (1-based, inclusive)');
+  RTELine  := TJSONObject.Create; RTELine.Add('type',  'integer'); RTELine.Add('description', 'End line (1-based, exclusive — the character at this position is NOT replaced)');
+  RTECol   := TJSONObject.Create; RTECol.Add('type',   'integer'); RTECol.Add('description', 'End column (1-based, exclusive)');
+  RTText   := TJSONObject.Create; RTText.Add('type',   'string');  RTText.Add('description', 'Replacement text; empty string to delete the range');
+  RTProps.Add('file',       RTFile);
+  RTProps.Add('start_line', RTSLine);
+  RTProps.Add('start_col',  RTSCol);
+  RTProps.Add('end_line',   RTELine);
+  RTProps.Add('end_col',    RTECol);
+  RTProps.Add('new_text',   RTText);
+  RTReq := TJSONArray.Create;
+  RTReq.Add('start_line');
+  RTReq.Add('start_col');
+  RTReq.Add('end_line');
+  RTReq.Add('end_col');
+  RTReq.Add('new_text');
+  Tools.Add(MakeTool('replace_text',
+    'Replace a range of text in the editor buffer. ' +
+    'The edit is recorded in the editor''s undo history (Ctrl+Z works). ' +
+    'Use an empty range (start = end) to insert text. ' +
+    'Use empty new_text to delete the range. ' +
+    'Opens the file first if it is not already open.',
+    RTProps, RTReq));
+
   // create_unit — filename required, content optional
   CUProps := TJSONObject.Create;
   CUPfn   := TJSONObject.Create; CUPfn.Add('type', 'string'); CUPfn.Add('description', 'Absolute path for the new .pas file');
@@ -798,6 +847,8 @@ begin
           (ToolName = 'get_code_outline') or
           (ToolName = 'get_cursor_position') or
           (ToolName = 'get_selected_text') or
+          (ToolName = 'set_cursor_position') or
+          (ToolName = 'replace_text') or
           (ToolName = 'create_unit') or
           (ToolName = 'add_unit_to_uses') or
           (ToolName = 'rebuild_ide') or
@@ -1752,6 +1803,96 @@ begin
         PackageEditingInterface.InstallPackages(SyncPkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
       finally
         SyncPkgList.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'set_cursor_position' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'line and col required'; Exit;
+      end;
+      SyncNewY := FSyncParams.Get('line', 0);
+      SyncNewX := FSyncParams.Get('col',  0);
+      if (SyncNewY < 1) or (SyncNewX < 1) then
+      begin
+        FSyncError := True; FSyncResult := 'line and col must be >= 1'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('file', '');
+      if SyncFilePath <> '' then
+      begin
+        SyncDeclPt := Point(SyncNewX, SyncNewY);
+        if LazarusIDE.DoOpenFileAndJumpToPos(SyncFilePath, SyncDeclPt,
+             SyncNewY, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+        begin
+          FSyncError := True; FSyncResult := 'Could not open: ' + SyncFilePath; Exit;
+        end;
+        Ed := SourceEditorManagerIntf.ActiveEditor;
+      end
+      else
+      begin
+        Ed := SourceEditorManagerIntf.ActiveEditor;
+        if not Assigned(Ed) then
+        begin
+          FSyncError := True; FSyncResult := 'No active editor'; Exit;
+        end;
+        Ed.CursorTextXY := Point(SyncNewX, SyncNewY);
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file', Ed.FileName);
+        Obj.Add('line', SyncNewY);
+        Obj.Add('col',  SyncNewX);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'replace_text' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'start_line, start_col, end_line, end_col, new_text required'; Exit;
+      end;
+      SyncNewY   := FSyncParams.Get('start_line', 0);
+      SyncNewX   := FSyncParams.Get('start_col',  0);
+      SyncNewTopLine := FSyncParams.Get('end_line', 0);
+      J              := FSyncParams.Get('end_col',  0);
+      if (SyncNewY < 1) or (SyncNewX < 1) or (SyncNewTopLine < 1) or (J < 1) then
+      begin
+        FSyncError := True; FSyncResult := 'start_line, start_col, end_line, end_col must be >= 1'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('file', '');
+      if SyncFilePath <> '' then
+      begin
+        Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
+        if not Assigned(Ed) then
+        begin
+          if LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1,
+               [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+          begin
+            FSyncError := True; FSyncResult := 'Could not open: ' + SyncFilePath; Exit;
+          end;
+          Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
+        end;
+      end
+      else
+        Ed := SourceEditorManagerIntf.ActiveEditor;
+      if not Assigned(Ed) then
+      begin
+        FSyncError := True; FSyncResult := 'No active editor'; Exit;
+      end;
+      SyncNewName  := FSyncParams.Get('new_text', '');
+      SyncDeclPt   := Point(SyncNewX, SyncNewY);
+      Ed.ReplaceText(SyncDeclPt, Point(J, SyncNewTopLine), SyncNewName);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file', Ed.FileName);
+        Obj.Add('replaced', True);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
       end;
     end
 
