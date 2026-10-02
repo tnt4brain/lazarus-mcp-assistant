@@ -69,7 +69,7 @@ implementation
 uses
   SrcEditorIntf, ProjectIntf, LazFileUtils, FileUtil, Sockets, fphttpclient,
   Controls, CompOptsIntf, CodeToolManager, CodeCache, CodeTree, AVL_Tree,
-  PackageIntf, Process, Contnrs;
+  PackageIntf, Process, Contnrs, FormEditingIntf, TypInfo;
 
 { ── Low-level socket helpers ────────────────────────────────────────────── }
 
@@ -791,6 +791,12 @@ begin
     'Unsaved changes are discarded quietly.',
     CFProps, TJSONArray.Create));
 
+  // designer_info — spike: prove FormEditingHook + RTTI access
+  Tools.Add(MakeTool('designer_info',
+    'Spike tool: return DesignerCount and component tree from FormEditingHook. ' +
+    'Open a form in the designer first.',
+    TJSONObject.Create, TJSONArray.Create));
+
   // ping — no params
   Tools.Add(MakeTool('ping',
     'Returns {"status":"ok","version":"x.y"} immediately. Use this to poll for the MCP server ' +
@@ -897,7 +903,8 @@ begin
           (ToolName = 'get_package_info') or
           (ToolName = 'save_file') or
           (ToolName = 'goto_declaration') or
-          (ToolName = 'close_file') then
+          (ToolName = 'close_file') or
+          (ToolName = 'designer_info') then
   begin
     // IDE APIs — must run on main thread
     FSyncToolName        := ToolName;
@@ -2087,6 +2094,55 @@ begin
       try
         Obj.Add('file',   SyncFilePath);
         Obj.Add('closed', True);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'designer_info' then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        if not Assigned(FormEditingHook) then
+        begin
+          Obj.Add('error', 'FormEditingHook is nil');
+          FSyncResult := Obj.AsJSON;
+          Exit;
+        end;
+        // If no designers are open, try to show the designer for the active editor
+        if (FormEditingHook.DesignerCount = 0) and
+           Assigned(SourceEditorManagerIntf.ActiveEditor) then
+        begin
+          Ed := SourceEditorManagerIntf.ActiveEditor;
+          LazarusIDE.DoShowDesignerFormOfSrc(Ed);
+        end;
+        Obj.Add('designer_count', FormEditingHook.DesignerCount);
+        SyncRefArr := TJSONArray.Create;
+        for I := 0 to FormEditingHook.DesignerCount - 1 do
+        begin
+          SyncEntry := TJSONObject.Create;
+          if Assigned(FormEditingHook.Designer[I]) and
+             Assigned(FormEditingHook.Designer[I].LookupRoot) then
+          begin
+            SyncEntry.Add('root_name',  FormEditingHook.Designer[I].LookupRoot.Name);
+            SyncEntry.Add('root_class', FormEditingHook.Designer[I].LookupRoot.ClassName);
+            SyncEntry.Add('component_count', FormEditingHook.Designer[I].LookupRoot.ComponentCount);
+            SyncFileListJ := TJSONArray.Create;
+            for J := 0 to FormEditingHook.Designer[I].LookupRoot.ComponentCount - 1 do
+            begin
+              SyncRefObj := TJSONObject.Create;
+              SyncRefObj.Add('name',  FormEditingHook.Designer[I].LookupRoot.Components[J].Name);
+              SyncRefObj.Add('class', FormEditingHook.Designer[I].LookupRoot.Components[J].ClassName);
+              SyncFileListJ.Add(SyncRefObj);
+            end;
+            SyncEntry.Add('components', SyncFileListJ);
+          end
+          else
+            SyncEntry.Add('note', 'designer or lookup root nil');
+          SyncRefArr.Add(SyncEntry);
+        end;
+        Obj.Add('designers', SyncRefArr);
         FSyncResult := Obj.AsJSON;
       finally
         Obj.Free;
