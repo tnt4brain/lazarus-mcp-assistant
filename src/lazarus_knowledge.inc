@@ -47,6 +47,11 @@
   '- **Install**: `tycontrols_dt.lpk` (design-time; pulls in `tycontrols.lpk` runtime).' + LineEnding +
   '- **Theming**: Drop a `TTyStyleController` on the form; set `StyleFile` to a `.tycss` path.' + LineEnding +
   '' + LineEnding +
+  '### OnurComp' + LineEnding +
+  '- **Repo**: https://github.com/Onur2x/onurcomp' + LineEnding +
+  '- **What**: 20+ BGRABitmap-based skinned controls for Lazarus. Buttons, knobs, LEDs, switches, page controls, progress/track bars, crop-shaped controls (bitmap-masked). Beta. Unlicense.' + LineEnding +
+  '- **Install**: `onur.lpk`. Requires BGRABitmap.' + LineEnding +
+  '' + LineEnding +
   '### CyberUI' + LineEnding +
   '- **Repo**: https://github.com/CodeInPas/CyberUI-Component' + LineEnding +
   '- **What**: 18 cyberpunk-themed components (BGRABitmap). Radar scanners, hex grids, waveform displays, 7-segment labels, rotary knobs, glitch labels. Good for dashboards and HMI.' + LineEnding +
@@ -70,6 +75,16 @@
   '### HtmlViewer' + LineEnding +
   '- **Repo**: https://github.com/BerndGabriel/HtmlViewer' + LineEnding +
   '- **What**: HTML/CSS renderer component for Delphi/Lazarus. Supports majority of HTML tags, inline styles, CSS. `TFrameViewer` for framesets.' + LineEnding +
+  '' + LineEnding +
+  '### BGRAControls' + LineEnding +
+  '- **Repo**: https://github.com/bgrabitmap/bgracontrols' + LineEnding +
+  '- **What**: 40+ styled/custom-drawn LCL components on BGRABitmap. Buttons (including Material Design + SVG), panels, progress bars, radial gauges, knobs, SVG viewer, image manipulation. Dark-themed variants of standard controls.' + LineEnding +
+  '- **Install**: `bgracontrols.lpk`. Requires BGRABitmap (`bgrabitmappack.lpk`).' + LineEnding +
+  '' + LineEnding +
+  '### ATFlatControls' + LineEnding +
+  '- **Repo**: https://github.com/alexey-t/atflatcontrols' + LineEnding +
+  '- **What**: Cross-platform flat custom-drawn controls from CudaText. ATTabs, ATGroups (tab sets), ATButton, ATFlatToolbar, ATListbox, ATScrollbar, ATStatusbar, ATGauge, ATLinkLabel, ATPanelSimple/Color. No external dependencies.' + LineEnding +
+  '- **Note**: Companion to ATSynEdit (same author). Install package is inside the `atflatcontrols/` folder.' + LineEnding +
   '' + LineEnding +
   '### KControls' + LineEnding +
   '- **Repo**: https://github.com/kryslt/KControls' + LineEnding +

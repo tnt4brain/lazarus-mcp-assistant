@@ -414,7 +414,7 @@ begin
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
-  SrvInfo.Add('version', '0.5.0');
+  SrvInfo.Add('version', '0.6.0');
 
   Res := TJSONObject.Create;
   Res.Add('protocolVersion', ProtoVer);
@@ -482,6 +482,7 @@ var
   GDProps, GDSym, GDFile     : TJSONObject;
   GDReq                      : TJSONArray;
   CFProps, CFFile            : TJSONObject;
+  RFProps, RFFile            : TJSONObject;
   GFCProps, GFCFile          : TJSONObject;
   GFCReq                     : TJSONArray;
   GCPProps, GCPName, GCPFile : TJSONObject;
@@ -797,6 +798,20 @@ begin
     'Unsaved changes are discarded quietly.',
     CFProps, TJSONArray.Create));
 
+  // revert_file — file optional
+  RFProps := TJSONObject.Create;
+  RFFile  := TJSONObject.Create; RFFile.Add('type', 'string'); RFFile.Add('description', 'Absolute path of the file to revert; omit to revert the active editor');
+  RFProps.Add('file', RFFile);
+  Tools.Add(MakeTool('revert_file',
+    'Discard unsaved editor changes and reload the file from disk. ' +
+    'Omit file to revert the active editor.',
+    RFProps, TJSONArray.Create));
+
+  // get_project_directory — no args
+  Tools.Add(MakeTool('get_project_directory',
+    'Return the root directory of the active project (directory containing the .lpi file).',
+    TJSONObject.Create, TJSONArray.Create));
+
   // get_form_components — form_file required
   GFCProps := TJSONObject.Create;
   GFCFile  := TJSONObject.Create; GFCFile.Add('type', 'string'); GFCFile.Add('description', 'Absolute path to the .lfm form file');
@@ -945,6 +960,8 @@ begin
           (ToolName = 'save_file') or
           (ToolName = 'goto_declaration') or
           (ToolName = 'close_file') or
+          (ToolName = 'revert_file') or
+          (ToolName = 'get_project_directory') or
           (ToolName = 'get_form_components') or
           (ToolName = 'get_component_properties') or
           (ToolName = 'set_component_property') then
@@ -2143,6 +2160,48 @@ begin
       try
         Obj.Add('file',   SyncFilePath);
         Obj.Add('closed', True);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'revert_file' then
+    begin
+      SyncFilePath := '';
+      if Assigned(FSyncParams) then
+        SyncFilePath := FSyncParams.Get('file', '');
+      if SyncFilePath = '' then
+      begin
+        Ed := SourceEditorManagerIntf.ActiveEditor;
+        if not Assigned(Ed) then
+        begin
+          FSyncError := True; FSyncResult := 'No active editor'; Exit;
+        end;
+        SyncFilePath := Ed.FileName;
+      end;
+      if LazarusIDE.DoRevertEditorFile(SyncFilePath) <> mrOK then
+      begin
+        FSyncError := True; FSyncResult := 'Revert failed: ' + SyncFilePath; Exit;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',     SyncFilePath);
+        Obj.Add('reverted', True);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'get_project_directory' then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
+          Obj.Add('directory', ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile))
+        else
+          Obj.Add('error', 'No active project');
         FSyncResult := Obj.AsJSON;
       finally
         Obj.Free;
