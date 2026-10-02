@@ -1,6 +1,6 @@
 # ADR-003 — Undo/Redo Integration for rename_identifier
 
-**Status:** Decided — deferred to v0.5  
+**Status:** Decided — deferred to v0.8  
 **Date:** 2026-10-02
 
 ## Context
@@ -58,7 +58,7 @@ refactoring pipeline, including undo.
 Claude is instructed to confirm with the user before calling it, and git serves
 as the safety net.
 
-**v0.5 will implement Option B** for open files, falling back to the disk-write
+**v0.8 will implement Option B** for open files, falling back to the disk-write
 path for closed files.  Option C is noted but not pursued without an upstream
 `LazIDEIntf` entry point.
 
