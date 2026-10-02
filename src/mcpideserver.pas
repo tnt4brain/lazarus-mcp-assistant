@@ -479,6 +479,10 @@ var
   RIReq                      : TJSONArray;
   GPProps, GPName            : TJSONObject;
   GPReq                      : TJSONArray;
+  SFProps, SFFile            : TJSONObject;
+  GDProps, GDSym, GDFile     : TJSONObject;
+  GDReq                      : TJSONArray;
+  CFProps, CFFile            : TJSONObject;
 begin
   Tools := TJSONArray.Create;
 
@@ -758,9 +762,38 @@ begin
     'Query a package''s load and install status in the running IDE.',
     GPProps, GPReq));
 
+  // save_file — file optional
+  SFProps := TJSONObject.Create;
+  SFFile  := TJSONObject.Create; SFFile.Add('type', 'string'); SFFile.Add('description', 'Absolute path of the file to save; omit to save the active editor');
+  SFProps.Add('file', SFFile);
+  Tools.Add(MakeTool('save_file',
+    'Save the editor buffer to disk. Omit file to save the active editor.',
+    SFProps, TJSONArray.Create));
+
+  // goto_declaration — symbol + file required
+  GDProps := TJSONObject.Create;
+  GDSym   := TJSONObject.Create; GDSym.Add('type', 'string'); GDSym.Add('description', 'Identifier name to look up');
+  GDFile  := TJSONObject.Create; GDFile.Add('type', 'string'); GDFile.Add('description', 'Absolute path of the file that contains (or imports) the identifier');
+  GDProps.Add('symbol', GDSym);
+  GDProps.Add('file',   GDFile);
+  GDReq := TJSONArray.Create; GDReq.Add('symbol'); GDReq.Add('file');
+  Tools.Add(MakeTool('goto_declaration',
+    'Find where an identifier is declared and jump the editor cursor there. ' +
+    'Opens the declaration file if needed.',
+    GDProps, GDReq));
+
+  // close_file — file optional
+  CFProps := TJSONObject.Create;
+  CFFile  := TJSONObject.Create; CFFile.Add('type', 'string'); CFFile.Add('description', 'Absolute path of the file to close; omit to close the active editor');
+  CFProps.Add('file', CFFile);
+  Tools.Add(MakeTool('close_file',
+    'Close an editor tab. Omit file to close the active editor. ' +
+    'Unsaved changes are discarded quietly.',
+    CFProps, TJSONArray.Create));
+
   // ping — no params
   Tools.Add(MakeTool('ping',
-    'Returns {"status":"ok"} immediately. Use this to poll for the MCP server ' +
+    'Returns {"status":"ok","version":"x.y"} immediately. Use this to poll for the MCP server ' +
     'coming back after rebuild_ide — retry until it succeeds.',
     TJSONObject.Create, TJSONArray.Create));
 
@@ -861,7 +894,10 @@ begin
           (ToolName = 'create_unit') or
           (ToolName = 'add_unit_to_uses') or
           (ToolName = 'rebuild_ide') or
-          (ToolName = 'get_package_info') then
+          (ToolName = 'get_package_info') or
+          (ToolName = 'save_file') or
+          (ToolName = 'goto_declaration') or
+          (ToolName = 'close_file') then
   begin
     // IDE APIs — must run on main thread
     FSyncToolName        := ToolName;
@@ -1937,6 +1973,120 @@ begin
         Obj.Add('is_loaded', Assigned(SyncIDEPkg2));
         if Assigned(SyncIDEPkg2) then
           Obj.Add('loaded_file', SyncIDEPkg2.Filename);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'save_file' then
+    begin
+      SyncFilePath := '';
+      if Assigned(FSyncParams) then
+        SyncFilePath := FSyncParams.Get('file', '');
+      if SyncFilePath <> '' then
+      begin
+        if LazarusIDE.DoSaveEditorFile(SyncFilePath, []) <> mrOK then
+        begin
+          FSyncError := True; FSyncResult := 'Save failed: ' + SyncFilePath; Exit;
+        end;
+      end
+      else
+      begin
+        Ed := SourceEditorManagerIntf.ActiveEditor;
+        if not Assigned(Ed) then
+        begin
+          FSyncError := True; FSyncResult := 'No active editor'; Exit;
+        end;
+        if LazarusIDE.DoSaveEditorFile(Ed, []) <> mrOK then
+        begin
+          FSyncError := True; FSyncResult := 'Save failed'; Exit;
+        end;
+        SyncFilePath := Ed.FileName;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',  SyncFilePath);
+        Obj.Add('saved', True);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'goto_declaration' then
+    begin
+      if not Assigned(FSyncParams) then
+      begin
+        FSyncError := True; FSyncResult := 'symbol and file required'; Exit;
+      end;
+      SyncSymbol   := FSyncParams.Get('symbol', '');
+      SyncFilePath := FSyncParams.Get('file',   '');
+      if (SyncSymbol = '') or (SyncFilePath = '') then
+      begin
+        FSyncError := True; FSyncResult := 'symbol and file required'; Exit;
+      end;
+      SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
+      if not Assigned(SyncCodeBuf) then
+      begin
+        FSyncError := True; FSyncResult := 'Could not load file: ' + SyncFilePath; Exit;
+      end;
+      if not CodeToolBoss.FindDeclarationInInterface(SyncCodeBuf, SyncSymbol,
+               SyncNewCode, SyncNewX, SyncNewY, SyncNewTopLine) then
+      begin
+        FSyncError  := True;
+        FSyncResult := 'Declaration not found for: ' + SyncSymbol +
+                       ' (' + CodeToolBoss.ErrorMessage + ')';
+        Exit;
+      end;
+      SyncDeclPt := Point(SyncNewX, SyncNewY);
+      if LazarusIDE.DoOpenFileAndJumpToPos(SyncNewCode.Filename, SyncDeclPt,
+           SyncNewTopLine, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+      begin
+        FSyncError := True; FSyncResult := 'Could not open: ' + SyncNewCode.Filename; Exit;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('declaration_file', SyncNewCode.Filename);
+        Obj.Add('line', SyncNewY);
+        Obj.Add('col',  SyncNewX);
+        if SyncNewY >= 1 then
+          Obj.Add('context', Trim(SyncNewCode.GetLine(SyncNewY - 1, False)));
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'close_file' then
+    begin
+      SyncFilePath := '';
+      if Assigned(FSyncParams) then
+        SyncFilePath := FSyncParams.Get('file', '');
+      if SyncFilePath <> '' then
+      begin
+        if LazarusIDE.DoCloseEditorFile(SyncFilePath, [cfQuiet]) <> mrOK then
+        begin
+          FSyncError := True; FSyncResult := 'Close failed: ' + SyncFilePath; Exit;
+        end;
+      end
+      else
+      begin
+        Ed := SourceEditorManagerIntf.ActiveEditor;
+        if not Assigned(Ed) then
+        begin
+          FSyncError := True; FSyncResult := 'No active editor'; Exit;
+        end;
+        SyncFilePath := Ed.FileName;
+        if LazarusIDE.DoCloseEditorFile(Ed, [cfQuiet]) <> mrOK then
+        begin
+          FSyncError := True; FSyncResult := 'Close failed'; Exit;
+        end;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',   SyncFilePath);
+        Obj.Add('closed', True);
         FSyncResult := Obj.AsJSON;
       finally
         Obj.Free;
