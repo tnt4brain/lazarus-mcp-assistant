@@ -69,7 +69,7 @@ implementation
 uses
   SrcEditorIntf, ProjectIntf, LazFileUtils, FileUtil, Sockets, fphttpclient,
   Controls, CompOptsIntf, CodeToolManager, CodeCache, CodeTree, AVL_Tree,
-  PackageIntf, Process, Contnrs, FormEditingIntf, TypInfo;
+  PackageIntf, Process, Contnrs, FormEditingIntf, TypInfo, Forms, Variants;
 
 { ── Low-level socket helpers ────────────────────────────────────────────── }
 
@@ -476,13 +476,19 @@ var
   RTProps, RTFile, RTSLine, RTSCol, RTELine, RTECol, RTText : TJSONObject;
   RTReq                                                      : TJSONArray;
   RIProps, RILpk             : TJSONObject;
-  RIReq                      : TJSONArray;
   GPProps, GPName            : TJSONObject;
   GPReq                      : TJSONArray;
   SFProps, SFFile            : TJSONObject;
   GDProps, GDSym, GDFile     : TJSONObject;
   GDReq                      : TJSONArray;
   CFProps, CFFile            : TJSONObject;
+  GFCProps, GFCFile          : TJSONObject;
+  GFCReq                     : TJSONArray;
+  GCPProps, GCPName, GCPFile : TJSONObject;
+  GCPReq                     : TJSONArray;
+  SCPrProps                  : TJSONObject;
+  SCPrName, SCPrProp, SCPrVal, SCPrFile : TJSONObject;
+  SCPrReq                    : TJSONArray;
 begin
   Tools := TJSONArray.Create;
 
@@ -791,11 +797,46 @@ begin
     'Unsaved changes are discarded quietly.',
     CFProps, TJSONArray.Create));
 
-  // designer_info — spike: prove FormEditingHook + RTTI access
-  Tools.Add(MakeTool('designer_info',
-    'Spike tool: return DesignerCount and component tree from FormEditingHook. ' +
-    'Open a form in the designer first.',
-    TJSONObject.Create, TJSONArray.Create));
+  // get_form_components — form_file required
+  GFCProps := TJSONObject.Create;
+  GFCFile  := TJSONObject.Create; GFCFile.Add('type', 'string'); GFCFile.Add('description', 'Absolute path to the .lfm form file');
+  GFCProps.Add('form_file', GFCFile);
+  GFCReq := TJSONArray.Create; GFCReq.Add('form_file');
+  Tools.Add(MakeTool('get_form_components',
+    'Return the component tree for a form: root class/name and all owned ' +
+    'components with their name and class. Opens the form in the designer ' +
+    'if it is not already open.',
+    GFCProps, GFCReq));
+
+  // get_component_properties — component_name + form_file required
+  GCPProps := TJSONObject.Create;
+  GCPName  := TJSONObject.Create; GCPName.Add('type', 'string'); GCPName.Add('description', 'Component name as it appears in the form (e.g. btnOK)');
+  GCPFile  := TJSONObject.Create; GCPFile.Add('type', 'string'); GCPFile.Add('description', 'Absolute path to the .lfm form file');
+  GCPProps.Add('component_name', GCPName);
+  GCPProps.Add('form_file',      GCPFile);
+  GCPReq := TJSONArray.Create; GCPReq.Add('component_name'); GCPReq.Add('form_file');
+  Tools.Add(MakeTool('get_component_properties',
+    'Return all published RTTI properties and their current values for a ' +
+    'named component on a form. Opens the form in the designer if needed.',
+    GCPProps, GCPReq));
+
+  // set_component_property — component_name + prop_name + prop_value + form_file required
+  SCPrProps := TJSONObject.Create;
+  SCPrName  := TJSONObject.Create; SCPrName.Add('type', 'string'); SCPrName.Add('description', 'Component name (e.g. btnOK)');
+  SCPrProp  := TJSONObject.Create; SCPrProp.Add('type', 'string'); SCPrProp.Add('description', 'Property name (e.g. Caption)');
+  SCPrVal   := TJSONObject.Create; SCPrVal.Add('type',  'string'); SCPrVal.Add('description', 'New value as a string; numeric and boolean are coerced');
+  SCPrFile  := TJSONObject.Create; SCPrFile.Add('type', 'string'); SCPrFile.Add('description', 'Absolute path to the .lfm form file');
+  SCPrProps.Add('component_name', SCPrName);
+  SCPrProps.Add('prop_name',      SCPrProp);
+  SCPrProps.Add('prop_value',     SCPrVal);
+  SCPrProps.Add('form_file',      SCPrFile);
+  SCPrReq := TJSONArray.Create; SCPrReq.Add('component_name'); SCPrReq.Add('prop_name'); SCPrReq.Add('prop_value'); SCPrReq.Add('form_file');
+  Tools.Add(MakeTool('set_component_property',
+    'Set a published RTTI property on a form component to a new value. ' +
+    'Marks the designer modified so the change is saved with the form. ' +
+    'Opens the form in the designer if needed. ' +
+    'WARNING: changes the live designer state; use save_file to persist to disk.',
+    SCPrProps, SCPrReq));
 
   // ping — no params
   Tools.Add(MakeTool('ping',
@@ -904,7 +945,9 @@ begin
           (ToolName = 'save_file') or
           (ToolName = 'goto_declaration') or
           (ToolName = 'close_file') or
-          (ToolName = 'designer_info') then
+          (ToolName = 'get_form_components') or
+          (ToolName = 'get_component_properties') or
+          (ToolName = 'set_component_property') then
   begin
     // IDE APIs — must run on main thread
     FSyncToolName        := ToolName;
@@ -1191,6 +1234,12 @@ var
   SyncPkgID      : TLazPackageID;
   SyncPollExe    : string;
   SyncPasFile    : string;
+  SyncDesigner   : TIDesigner;
+  SyncComp       : TComponent;
+  SyncPropList   : PPropList;
+  SyncPropCount  : Integer;
+  SyncPropInfo   : PPropInfo;
+  SyncPropVal    : string;
   J              : Integer;
   I              : Integer;
 begin
@@ -2100,52 +2149,222 @@ begin
       end;
     end
 
-    else if FSyncToolName = 'designer_info' then
+    else if (FSyncToolName = 'get_form_components') or
+            (FSyncToolName = 'get_component_properties') or
+            (FSyncToolName = 'set_component_property') then
     begin
-      Obj := TJSONObject.Create;
-      try
-        if not Assigned(FormEditingHook) then
+      if not Assigned(FormEditingHook) then
+      begin
+        FSyncError  := True;
+        FSyncResult := 'FormEditingHook is nil';
+        Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('form_file', '');
+      if SyncFilePath = '' then
+      begin
+        FSyncError  := True;
+        FSyncResult := 'form_file argument required';
+        Exit;
+      end;
+      // Open the form in designer if the target LFM is not already there
+      SyncDesigner := nil;
+      for I := 0 to FormEditingHook.DesignerCount - 1 do
+        if Assigned(FormEditingHook.Designer[I]) and
+           Assigned(FormEditingHook.Designer[I].LookupRoot) then
         begin
-          Obj.Add('error', 'FormEditingHook is nil');
-          FSyncResult := Obj.AsJSON;
-          Exit;
+          SyncPasFile := ChangeFileExt(SyncFilePath, '.pas');
+          if CompareFilenames(
+               ChangeFileExt(SyncFilePath, '.pas'),
+               ChangeFileExt(SyncFilePath, '.pas')) = 0 then
+          begin
+            // match by checking LookupRoot owner — open a tab for the lfm and
+            // see if its editor already corresponds; simpler: just compare
+            // component class unit or reuse the first designer if only one open
+          end;
+          // Walk all open editors to find one whose filename matches this LFM
+          for J := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+            if CompareFilenames(SourceEditorManagerIntf.SourceEditors[J].FileName,
+                                SyncFilePath) = 0 then
+            begin
+              SyncDesigner := FormEditingHook.Designer[I];
+              Break;
+            end;
+          if Assigned(SyncDesigner) then Break;
         end;
-        // If no designers are open, try to show the designer for the active editor
-        if (FormEditingHook.DesignerCount = 0) and
-           Assigned(SourceEditorManagerIntf.ActiveEditor) then
+      // If no matching designer found, open the LFM and activate the designer
+      if not Assigned(SyncDesigner) then
+      begin
+        Ed := nil;
+        for J := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+          if CompareFilenames(SourceEditorManagerIntf.SourceEditors[J].FileName,
+                              SyncFilePath) = 0 then
+          begin
+            Ed := SourceEditorManagerIntf.SourceEditors[J];
+            Break;
+          end;
+        if not Assigned(Ed) then
         begin
-          Ed := SourceEditorManagerIntf.ActiveEditor;
+          // Open the file
+          LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1, [ofOnlyIfExists]);
+          for J := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+            if CompareFilenames(SourceEditorManagerIntf.SourceEditors[J].FileName,
+                                SyncFilePath) = 0 then
+            begin
+              Ed := SourceEditorManagerIntf.SourceEditors[J];
+              Break;
+            end;
+        end;
+        if Assigned(Ed) then
           LazarusIDE.DoShowDesignerFormOfSrc(Ed);
-        end;
-        Obj.Add('designer_count', FormEditingHook.DesignerCount);
-        SyncRefArr := TJSONArray.Create;
+        // Now search again
         for I := 0 to FormEditingHook.DesignerCount - 1 do
-        begin
-          SyncEntry := TJSONObject.Create;
           if Assigned(FormEditingHook.Designer[I]) and
              Assigned(FormEditingHook.Designer[I].LookupRoot) then
+            for J := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+              if CompareFilenames(SourceEditorManagerIntf.SourceEditors[J].FileName,
+                                  SyncFilePath) = 0 then
+              begin
+                SyncDesigner := FormEditingHook.Designer[I];
+                Break;
+              end;
+        if not Assigned(SyncDesigner) and (FormEditingHook.DesignerCount > 0) then
+          SyncDesigner := FormEditingHook.Designer[0];
+      end;
+      if not Assigned(SyncDesigner) then
+      begin
+        FSyncError  := True;
+        FSyncResult := 'Could not open or find designer for: ' + SyncFilePath;
+        Exit;
+      end;
+
+      if FSyncToolName = 'get_form_components' then
+      begin
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('root_name',       SyncDesigner.LookupRoot.Name);
+          Obj.Add('root_class',      SyncDesigner.LookupRoot.ClassName);
+          Obj.Add('component_count', SyncDesigner.LookupRoot.ComponentCount);
+          SyncRefArr := TJSONArray.Create;
+          for I := 0 to SyncDesigner.LookupRoot.ComponentCount - 1 do
           begin
-            SyncEntry.Add('root_name',  FormEditingHook.Designer[I].LookupRoot.Name);
-            SyncEntry.Add('root_class', FormEditingHook.Designer[I].LookupRoot.ClassName);
-            SyncEntry.Add('component_count', FormEditingHook.Designer[I].LookupRoot.ComponentCount);
-            SyncFileListJ := TJSONArray.Create;
-            for J := 0 to FormEditingHook.Designer[I].LookupRoot.ComponentCount - 1 do
-            begin
-              SyncRefObj := TJSONObject.Create;
-              SyncRefObj.Add('name',  FormEditingHook.Designer[I].LookupRoot.Components[J].Name);
-              SyncRefObj.Add('class', FormEditingHook.Designer[I].LookupRoot.Components[J].ClassName);
-              SyncFileListJ.Add(SyncRefObj);
-            end;
-            SyncEntry.Add('components', SyncFileListJ);
-          end
-          else
-            SyncEntry.Add('note', 'designer or lookup root nil');
-          SyncRefArr.Add(SyncEntry);
+            SyncRefObj := TJSONObject.Create;
+            SyncRefObj.Add('name',  SyncDesigner.LookupRoot.Components[I].Name);
+            SyncRefObj.Add('class', SyncDesigner.LookupRoot.Components[I].ClassName);
+            SyncRefArr.Add(SyncRefObj);
+          end;
+          Obj.Add('components', SyncRefArr);
+          FSyncResult := Obj.AsJSON;
+        finally
+          Obj.Free;
         end;
-        Obj.Add('designers', SyncRefArr);
-        FSyncResult := Obj.AsJSON;
-      finally
-        Obj.Free;
+      end
+
+      else if FSyncToolName = 'get_component_properties' then
+      begin
+        SyncSymbol := FSyncParams.Get('component_name', '');
+        if SyncSymbol = '' then
+        begin
+          FSyncError  := True;
+          FSyncResult := 'component_name argument required';
+          Exit;
+        end;
+        SyncComp := SyncDesigner.LookupRoot.FindComponent(SyncSymbol);
+        if SyncComp = nil then
+          SyncComp := SyncDesigner.LookupRoot; // try the root itself if name matches
+        if (SyncComp = nil) or
+           not SameText(SyncComp.Name, SyncSymbol) then
+        begin
+          // Not found as owned component; check root itself
+          if SameText(SyncDesigner.LookupRoot.Name, SyncSymbol) then
+            SyncComp := SyncDesigner.LookupRoot
+          else
+          begin
+            FSyncError  := True;
+            FSyncResult := 'Component not found: ' + SyncSymbol;
+            Exit;
+          end;
+        end;
+        SyncPropCount := GetPropList(SyncComp.ClassInfo, tkAny, nil);
+        GetMem(SyncPropList, SyncPropCount * SizeOf(Pointer));
+        try
+          GetPropList(SyncComp.ClassInfo, tkAny, SyncPropList);
+          Obj := TJSONObject.Create;
+          try
+            Obj.Add('component_name',  SyncComp.Name);
+            Obj.Add('component_class', SyncComp.ClassName);
+            SyncRefArr := TJSONArray.Create;
+            for I := 0 to SyncPropCount - 1 do
+            begin
+              SyncPropInfo := SyncPropList^[I];
+              SyncRefObj := TJSONObject.Create;
+              SyncRefObj.Add('name', SyncPropInfo^.Name);
+              SyncRefObj.Add('type', GetEnumName(TypeInfo(TTypeKind),
+                                                 Integer(SyncPropInfo^.PropType^.Kind)));
+              try
+                SyncPropVal := VarToStr(GetPropValue(SyncComp, SyncPropInfo^.Name, True));
+                SyncRefObj.Add('value', SyncPropVal);
+              except
+                SyncRefObj.Add('value', '(unreadable)');
+              end;
+              SyncRefArr.Add(SyncRefObj);
+            end;
+            Obj.Add('properties', SyncRefArr);
+            FSyncResult := Obj.AsJSON;
+          finally
+            Obj.Free;
+          end;
+        finally
+          FreeMem(SyncPropList);
+        end;
+      end
+
+      else if FSyncToolName = 'set_component_property' then
+      begin
+        SyncSymbol  := FSyncParams.Get('component_name', '');
+        SyncNewName := FSyncParams.Get('prop_name',      '');
+        SyncSnippet := FSyncParams.Get('prop_value',     '');
+        if (SyncSymbol = '') or (SyncNewName = '') then
+        begin
+          FSyncError  := True;
+          FSyncResult := 'component_name and prop_name are required';
+          Exit;
+        end;
+        SyncComp := SyncDesigner.LookupRoot.FindComponent(SyncSymbol);
+        if (SyncComp = nil) and SameText(SyncDesigner.LookupRoot.Name, SyncSymbol) then
+          SyncComp := SyncDesigner.LookupRoot;
+        if SyncComp = nil then
+        begin
+          FSyncError  := True;
+          FSyncResult := 'Component not found: ' + SyncSymbol;
+          Exit;
+        end;
+        SyncPropInfo := GetPropInfo(SyncComp.ClassInfo, SyncNewName);
+        if SyncPropInfo = nil then
+        begin
+          FSyncError  := True;
+          FSyncResult := 'Property not found: ' + SyncNewName;
+          Exit;
+        end;
+        try
+          SetPropValue(SyncComp, SyncNewName, SyncSnippet);
+          SyncDesigner.Modified;
+          Obj := TJSONObject.Create;
+          try
+            Obj.Add('status',         'ok');
+            Obj.Add('component_name', SyncSymbol);
+            Obj.Add('prop_name',      SyncNewName);
+            Obj.Add('new_value',      VarToStr(GetPropValue(SyncComp, SyncNewName, True)));
+            FSyncResult := Obj.AsJSON;
+          finally
+            Obj.Free;
+          end;
+        except
+          on E: Exception do
+          begin
+            FSyncError  := True;
+            FSyncResult := 'Error setting property: ' + E.Message;
+          end;
+        end;
       end;
     end;
 
