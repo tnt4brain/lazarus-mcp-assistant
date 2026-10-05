@@ -9,7 +9,9 @@ interface
 
 uses
   McpProcessWorker, McpIdeListeners, McpIdeState, McpLayoutPanel, 
-  McpIdeServer, LazarusPackageIntf;
+  McpIdeServer, McpToolContext, McpToolHelpers, McpToolsPackages, 
+  McpToolsEditor, McpToolsBuild, McpToolsCodeTools, McpToolsForms, 
+  McpToolsProject, LazarusPackageIntf;
 
 implementation
 

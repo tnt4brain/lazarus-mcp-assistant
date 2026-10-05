@@ -16,7 +16,7 @@
     <Description Value="A completely generic, brand-agnostic Model Context Protocol (MCP) IDE Assistant client for the Lazarus RAD IDE and Free Pascal ecosystem."/>
     <License Value="BSD-3-Clause"/>
     <Version Major="0" Minor="6"/>
-    <Files Count="6">
+    <Files Count="14">
       <Item1>
         <Filename Value="lazmcpassistant.pas"/>
         <UnitName Value="LazMcpAssistant"/>
@@ -42,6 +42,38 @@
         <Filename Value="mcpideserver.pas"/>
         <UnitName Value="McpIdeServer"/>
       </Item6>
+      <Item7>
+        <Filename Value="McpToolContext.pas"/>
+        <UnitName Value="McpToolContext"/>
+      </Item7>
+      <Item8>
+        <Filename Value="McpToolHelpers.pas"/>
+        <UnitName Value="McpToolHelpers"/>
+      </Item8>
+      <Item9>
+        <Filename Value="McpToolsPackages.pas"/>
+        <UnitName Value="McpToolsPackages"/>
+      </Item9>
+      <Item10>
+        <Filename Value="McpToolsEditor.pas"/>
+        <UnitName Value="McpToolsEditor"/>
+      </Item10>
+      <Item11>
+        <Filename Value="McpToolsBuild.pas"/>
+        <UnitName Value="McpToolsBuild"/>
+      </Item11>
+      <Item12>
+        <Filename Value="McpToolsCodeTools.pas"/>
+        <UnitName Value="McpToolsCodeTools"/>
+      </Item12>
+      <Item13>
+        <Filename Value="McpToolsForms.pas"/>
+        <UnitName Value="McpToolsForms"/>
+      </Item13>
+      <Item14>
+        <Filename Value="McpToolsProject.pas"/>
+        <UnitName Value="McpToolsProject"/>
+      </Item14>
     </Files>
     <CompatibilityMode Value="True"/>
     <RequiredPkgs Count="4">

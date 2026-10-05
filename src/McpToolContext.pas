@@ -1,0 +1,96 @@
+{ Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
+unit McpToolContext;
+
+{ Shared context record and group-level dispatch/schema registry.
+  Tool group units self-register via initialization blocks — McpIdeServer
+  has no compile-time dependency on individual group units. }
+
+{$mode objfpc}{$H+}
+
+interface
+
+uses
+  fpjson, jsonparser;
+
+type
+  { Context record passed into every tool dispatch function.
+    Params is a borrowed reference — do not free it. }
+  TMcpStopServerProc = procedure of object;
+
+  TMcpToolCall = record
+    Params          : TJSONObject;
+    Result          : string;
+    Error           : Boolean;
+    FileList        : string;       { two-phase tools: find_all_references, rename_identifier }
+    ConnectionClose : Boolean;      { IDE-restart tools: rebuild_ide, install/uninstall_package }
+    StopServer      : TMcpStopServerProc;  { set by SyncCallTool before dispatch }
+  end;
+
+  TMcpGroupDispatch = function(const Name: string; var Ctx: TMcpToolCall): Boolean;
+  TMcpSchemaReg     = procedure(Tools: TJSONArray);
+
+{ Called once per group unit from its initialization block. }
+procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);
+procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
+
+{ Called by SyncCallTool and HandleToolsList respectively. }
+procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
+procedure McpRegisterSchemas(Tools: TJSONArray);
+
+{ Build a tool descriptor object from a JSON string schema.
+  AName and ADesc are plain Pascal strings (auto-escaped).
+  InputSchemaJSON is the full inputSchema value, e.g.:
+    '("type":"object","properties":(...), "required":[...])' }
+function MakeTool(const AName, ADesc, InputSchemaJSON: string): TJSONObject;
+
+implementation
+
+var
+  GDispatchGroups : array of TMcpGroupDispatch;
+  GSchemaGroups   : array of TMcpSchemaReg;
+
+procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);
+begin
+  SetLength(GDispatchGroups, Length(GDispatchGroups) + 1);
+  GDispatchGroups[High(GDispatchGroups)] := Fn;
+end;
+
+procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
+begin
+  SetLength(GSchemaGroups, Length(GSchemaGroups) + 1);
+  GSchemaGroups[High(GSchemaGroups)] := Fn;
+end;
+
+procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
+var
+  I : Integer;
+begin
+  Handled := False;
+  for I := 0 to High(GDispatchGroups) do
+    if GDispatchGroups[I](Name, Ctx) then
+    begin
+      Handled := True;
+      Exit;
+    end;
+end;
+
+procedure McpRegisterSchemas(Tools: TJSONArray);
+var
+  I : Integer;
+begin
+  for I := 0 to High(GSchemaGroups) do
+    GSchemaGroups[I](Tools);
+end;
+
+function MakeTool(const AName, ADesc, InputSchemaJSON: string): TJSONObject;
+var
+  Schema : TJSONData;
+begin
+  Schema := GetJSON(InputSchemaJSON);
+  Result := TJSONObject.Create;
+  Result.Add('name',        AName);
+  Result.Add('description', ADesc);
+  Result.Add('inputSchema', Schema);
+end;
+
+end.
