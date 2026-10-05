@@ -497,6 +497,14 @@ var
   SCPrProps                  : TJSONObject;
   SCPrName, SCPrProp, SCPrVal, SCPrFile : TJSONObject;
   SCPrReq                    : TJSONArray;
+  ATPProps, ATPName          : TJSONObject;
+  ATPReq                     : TJSONArray;
+  RTPProps, RTPName          : TJSONObject;
+  RTPReq                     : TJSONArray;
+  IPProps, IPLpk             : TJSONObject;
+  IPReq                      : TJSONArray;
+  UIPProps, UIPName          : TJSONObject;
+  UIPReq                     : TJSONArray;
 begin
   Tools := TJSONArray.Create;
 
@@ -801,6 +809,48 @@ begin
   Tools.Add(MakeTool('get_package_info',
     'Query a package''s load and install status in the running IDE.',
     GPProps, GPReq));
+
+  // add_package_to_project — package_name required
+  ATPProps := TJSONObject.Create;
+  ATPName  := TJSONObject.Create; ATPName.Add('type', 'string'); ATPName.Add('description', 'Package name to add as a dependency (e.g. LazUtils)');
+  ATPProps.Add('package_name', ATPName);
+  ATPReq := TJSONArray.Create; ATPReq.Add('package_name');
+  Tools.Add(MakeTool('add_package_to_project',
+    'Add a package as a dependency to the active project (.lpi). ' +
+    'The package must already be loaded in the IDE. No rebuild required. ' +
+    'Returns the updated list of project package dependencies.',
+    ATPProps, ATPReq));
+
+  // remove_package_from_project — package_name required
+  RTPProps := TJSONObject.Create;
+  RTPName  := TJSONObject.Create; RTPName.Add('type', 'string'); RTPName.Add('description', 'Package name to remove from project dependencies');
+  RTPProps.Add('package_name', RTPName);
+  RTPReq := TJSONArray.Create; RTPReq.Add('package_name');
+  Tools.Add(MakeTool('remove_package_from_project',
+    'Remove a package dependency from the active project (.lpi). ' +
+    'No rebuild required. Returns the updated list of project package dependencies.',
+    RTPProps, RTPReq));
+
+  // install_package — lpk_path required
+  IPProps := TJSONObject.Create;
+  IPLpk   := TJSONObject.Create; IPLpk.Add('type', 'string'); IPLpk.Add('description', 'Absolute path to the .lpk package file to install into the IDE');
+  IPProps.Add('lpk_path', IPLpk);
+  IPReq := TJSONArray.Create; IPReq.Add('lpk_path');
+  Tools.Add(MakeTool('install_package',
+    'Install a package into the Lazarus IDE (design-time / palette). ' +
+    'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}. ' +
+    'Use compile_plugin first to catch errors early.',
+    IPProps, IPReq));
+
+  // uninstall_package — package_name required
+  UIPProps := TJSONObject.Create;
+  UIPName  := TJSONObject.Create; UIPName.Add('type', 'string'); UIPName.Add('description', 'Package name to uninstall from the IDE');
+  UIPProps.Add('package_name', UIPName);
+  UIPReq := TJSONArray.Create; UIPReq.Add('package_name');
+  Tools.Add(MakeTool('uninstall_package',
+    'Uninstall a package from the Lazarus IDE. ' +
+    'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}.',
+    UIPProps, UIPReq));
 
   // save_file — file optional
   SFProps := TJSONObject.Create;
@@ -1260,6 +1310,7 @@ var
   SyncEndLine      : Integer;
   SyncEndCol       : Integer;
   SyncMatchPositions : TList;
+  SyncFPList     : TFPList;
   J              : Integer;
   I              : Integer;
 begin
@@ -2599,6 +2650,190 @@ begin
             FSyncResult := 'Error setting property: ' + E.Message;
           end;
         end;
+      end;
+    end
+
+    else if FSyncToolName = 'add_package_to_project' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('package_name', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'package_name required'; Exit;
+      end;
+      SyncSymbol := FSyncParams.Get('package_name', '');
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        FSyncError := True; FSyncResult := 'No active project'; Exit;
+      end;
+      Proj.AddPackageDependency(SyncSymbol);
+      LazarusIDE.DoSaveProject([]);
+      PackageEditingInterface.GetRequiredPackages(Proj, SyncFPList, [pirNotRecursive]);
+      Obj := TJSONObject.Create;
+      try
+        SyncRefArr := TJSONArray.Create;
+        if Assigned(SyncFPList) then
+        begin
+          for I := 0 to SyncFPList.Count - 1 do
+            SyncRefArr.Add(TIDEPackage(SyncFPList[I]).Name);
+          FreeAndNil(SyncFPList);
+        end;
+        Obj.Add('package_name',        SyncSymbol);
+        Obj.Add('project_dependencies', SyncRefArr);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'remove_package_from_project' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('package_name', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'package_name required'; Exit;
+      end;
+      SyncSymbol := FSyncParams.Get('package_name', '');
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        FSyncError := True; FSyncResult := 'No active project'; Exit;
+      end;
+      if not Proj.RemovePackageDependency(SyncSymbol) then
+      begin
+        FSyncError := True; FSyncResult := 'Package not found in project: ' + SyncSymbol; Exit;
+      end;
+      LazarusIDE.DoSaveProject([]);
+      PackageEditingInterface.GetRequiredPackages(Proj, SyncFPList, [pirNotRecursive]);
+      Obj := TJSONObject.Create;
+      try
+        SyncRefArr := TJSONArray.Create;
+        if Assigned(SyncFPList) then
+        begin
+          for I := 0 to SyncFPList.Count - 1 do
+            SyncRefArr.Add(TIDEPackage(SyncFPList[I]).Name);
+          FreeAndNil(SyncFPList);
+        end;
+        Obj.Add('package_name',        SyncSymbol);
+        Obj.Add('project_dependencies', SyncRefArr);
+        FSyncResult := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'install_package' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('lpk_path', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'lpk_path required'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('lpk_path', '');
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('status',  'rebuilding');
+        Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
+                           'command in poll_command until it succeeds.');
+        SyncPollExe := ExtractFilePath(LazarusIDE.GetFPCompilerFilename) +
+                       'instantfpc' + GetExeExt;
+        SyncIDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+        if Assigned(SyncIDEPkg) then
+          SyncPasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                           ExtractFilePath(SyncIDEPkg.Filename))) + 'wait_for_restart.pas'
+        else
+          SyncPasFile := '';
+        if SyncPasFile <> '' then
+        begin
+          {$IFDEF WINDOWS}
+          Obj.Add('poll_command',
+            'cmd /c "SET PATH=' +
+            ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
+            ';%PATH% && "' + SyncPollExe + '" "' + SyncPasFile + '""');
+          {$ELSE}
+          Obj.Add('poll_command',
+            'sh -c ''PATH="' +
+            ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
+            ':$PATH" "' + SyncPollExe + '" "' + SyncPasFile + '"''');
+          {$ENDIF}
+        end;
+        FSyncResult          := Obj.AsJSON;
+        FSyncConnectionClose := True;
+      finally
+        Obj.Free;
+      end;
+      while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
+        LazarusIDE.DoCloseEditorFile(
+          SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
+      StopServer;
+      SyncPkgList := TObjectList.Create(True);
+      try
+        PackageEditingInterface.DoOpenPackageFile(SyncFilePath, [pofDoNotOpenEditor], False);
+        SyncIDEPkg := PackageEditingInterface.FindPackageWithName(
+                        ExtractFileNameOnly(SyncFilePath));
+        if Assigned(SyncIDEPkg) then
+        begin
+          SyncPkgID := TLazPackageID.Create;
+          SyncPkgID.AssignID(SyncIDEPkg);
+          SyncPkgList.Add(SyncPkgID);
+        end;
+        PackageEditingInterface.InstallPackages(SyncPkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
+      finally
+        SyncPkgList.Free;
+      end;
+    end
+
+    else if FSyncToolName = 'uninstall_package' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('package_name', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'package_name required'; Exit;
+      end;
+      SyncSymbol := FSyncParams.Get('package_name', '');
+      SyncIDEPkg := PackageEditingInterface.FindPackageWithName(SyncSymbol);
+      if not Assigned(SyncIDEPkg) then
+      begin
+        FSyncError := True; FSyncResult := 'Package not found: ' + SyncSymbol; Exit;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('status',  'rebuilding');
+        Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
+                           'command in poll_command until it succeeds.');
+        SyncPollExe := ExtractFilePath(LazarusIDE.GetFPCompilerFilename) +
+                       'instantfpc' + GetExeExt;
+        SyncIDEPkg2 := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+        if Assigned(SyncIDEPkg2) then
+          SyncPasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                           ExtractFilePath(SyncIDEPkg2.Filename))) + 'wait_for_restart.pas'
+        else
+          SyncPasFile := '';
+        if SyncPasFile <> '' then
+        begin
+          {$IFDEF WINDOWS}
+          Obj.Add('poll_command',
+            'cmd /c "SET PATH=' +
+            ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
+            ';%PATH% && "' + SyncPollExe + '" "' + SyncPasFile + '""');
+          {$ELSE}
+          Obj.Add('poll_command',
+            'sh -c ''PATH="' +
+            ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
+            ':$PATH" "' + SyncPollExe + '" "' + SyncPasFile + '"''');
+          {$ENDIF}
+        end;
+        FSyncResult          := Obj.AsJSON;
+        FSyncConnectionClose := True;
+      finally
+        Obj.Free;
+      end;
+      while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
+        LazarusIDE.DoCloseEditorFile(
+          SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
+      StopServer;
+      PackageEditingInterface.UninstallPackage(SyncIDEPkg, False);
+      SyncPkgList := TObjectList.Create(True);
+      try
+        PackageEditingInterface.InstallPackages(SyncPkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
+      finally
+        SyncPkgList.Free;
       end;
     end
 
