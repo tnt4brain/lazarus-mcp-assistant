@@ -1317,6 +1317,8 @@ var
   SyncPropCount  : Integer;
   SyncPropInfo   : PPropInfo;
   SyncPropVal    : string;
+  SyncMethod       : TMethod;
+  SyncMethodAddr   : Pointer;
   SyncOldStr       : string;
   SyncText         : string;
   SyncPos          : Integer;
@@ -2556,14 +2558,46 @@ begin
           Exit;
         end;
         try
-          SetPropValue(SyncComp, SyncNewName, SyncSnippet);
+          if SyncPropInfo^.PropType^.Kind = tkMethod then
+          begin
+            // Event property — use SetMethodProp, not SetPropValue
+            if SyncSnippet = '' then
+            begin
+              SyncMethod.Code := nil;
+              SyncMethod.Data := nil;
+            end
+            else
+            begin
+              SyncMethodAddr := SyncDesigner.LookupRoot.MethodAddress(SyncSnippet);
+              if SyncMethodAddr = nil then
+              begin
+                FSyncError  := True;
+                FSyncResult := 'Method not found on form: ' + SyncSnippet;
+                Exit;
+              end;
+              SyncMethod.Code := SyncMethodAddr;
+              SyncMethod.Data := SyncDesigner.LookupRoot;
+            end;
+            SetMethodProp(SyncComp, SyncPropInfo, SyncMethod);
+          end
+          else
+            SetPropValue(SyncComp, SyncNewName, SyncSnippet);
           SyncDesigner.Modified;
           Obj := TJSONObject.Create;
           try
             Obj.Add('status',         'ok');
             Obj.Add('component_name', SyncSymbol);
             Obj.Add('prop_name',      SyncNewName);
-            Obj.Add('new_value',      VarToStr(GetPropValue(SyncComp, SyncNewName, True)));
+            if SyncPropInfo^.PropType^.Kind = tkMethod then
+            begin
+              SyncMethod := GetMethodProp(SyncComp, SyncPropInfo);
+              if SyncMethod.Code <> nil then
+                Obj.Add('new_value', SyncDesigner.LookupRoot.MethodName(SyncMethod.Code))
+              else
+                Obj.Add('new_value', '');
+            end
+            else
+              Obj.Add('new_value', VarToStr(GetPropValue(SyncComp, SyncNewName, True)));
             FSyncResult := Obj.AsJSON;
           finally
             Obj.Free;
