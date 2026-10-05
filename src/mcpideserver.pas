@@ -36,6 +36,9 @@ type
     function  HandlePing(ID: TJSONData): string;
     function  HandleToolsList(ID: TJSONData): string;
     function  HandleToolsCall(ID: TJSONData; Params: TJSONObject): string;
+    function  HandleResourcesList(ID: TJSONData): string;
+    function  HandleResourcesRead(ID: TJSONData; Params: TJSONObject): string;
+    function  HandleResourcesTemplatesList(ID: TJSONData): string;
     function  RPCResult(ID: TJSONData; ResultObj: TJSONObject): string;
     function  RPCError(ID: TJSONData; ErrCode: Integer;
                        const Msg: string): string;
@@ -67,7 +70,6 @@ uses
   LazFileUtils, Sockets, fphttpclient,
   StrUtils,
   McpUtils, McpToolContext, McpToolHelpers;
-
 
 
 
@@ -266,10 +268,13 @@ begin
     end;
 
     Method := Req.Get('method', '');
-    if      Method = 'initialize'  then Result := HandleInitialize(ID, Params)
-    else if Method = 'ping'        then Result := HandlePing(ID)
-    else if Method = 'tools/list'  then Result := HandleToolsList(ID)
-    else if Method = 'tools/call'  then Result := HandleToolsCall(ID, Params)
+    if      Method = 'initialize'       then Result := HandleInitialize(ID, Params)
+    else if Method = 'ping'             then Result := HandlePing(ID)
+    else if Method = 'tools/list'       then Result := HandleToolsList(ID)
+    else if Method = 'tools/call'       then Result := HandleToolsCall(ID, Params)
+    else if Method = 'resources/list'   then Result := HandleResourcesList(ID)
+    else if Method = 'resources/read'          then Result := HandleResourcesRead(ID, Params)
+    else if Method = 'resources/templates/list' then Result := HandleResourcesTemplatesList(ID)
     else
       Result := RPCError(ID, -32601, 'Method not found');
   finally
@@ -336,7 +341,8 @@ begin
 
   ToolsCap := TJSONObject.Create;  // empty tools capability object
   Caps := TJSONObject.Create;
-  Caps.Add('tools', ToolsCap);
+  Caps.Add('tools',     ToolsCap);
+  Caps.Add('resources', TJSONObject.Create);
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
@@ -367,6 +373,84 @@ begin
   McpRegisterSchemas(Tools);
   Res := TJSONObject.Create;
   Res.Add('tools', Tools);
+  Result := RPCResult(ID, Res);
+end;
+
+function TMcpServerThread.HandleResourcesList(ID: TJSONData): string;
+var
+  Resources : TJSONArray;
+  Res       : TJSONObject;
+begin
+  Resources := TJSONArray.Create;
+  McpListResources(Resources);
+  Res := TJSONObject.Create;
+  Res.Add('resources', Resources);
+  Result := RPCResult(ID, Res);
+end;
+
+function TMcpServerThread.HandleResourcesRead(ID: TJSONData;
+  Params: TJSONObject): string;
+var
+  Uri      : string;
+  FilePath : string;
+  SL       : TStringList;
+  Content  : string;
+  Contents : TJSONArray;
+  Item     : TJSONObject;
+  Res      : TJSONObject;
+begin
+  if not Assigned(Params) then
+    Exit(RPCError(ID, -32602, 'Missing params'));
+  Uri := Params.Get('uri', '');
+  if Uri = '' then
+    Exit(RPCError(ID, -32602, 'uri required'));
+  if Copy(Uri, 1, 7) = 'file://' then
+  begin
+    FilePath := Copy(Uri, 8, MaxInt);
+    if (FilePath <> '') and (FilePath[1] = '/') then
+      FilePath := Copy(FilePath, 2, MaxInt);
+    if not FileExists(FilePath) then
+      Exit(RPCError(ID, -32002, 'File not found: ' + FilePath));
+    SL := TStringList.Create;
+    try
+      SL.LoadFromFile(FilePath);
+      Content := SL.Text;
+    finally
+      SL.Free;
+    end;
+  end
+  else
+  begin
+    if not McpReadResource(Uri, Content) then
+      Exit(RPCError(ID, -32002, 'Resource not found: ' + Uri));
+  end;
+  Item := TJSONObject.Create;
+  Item.Add('uri',      Uri);
+  Item.Add('mimeType', 'text/plain');
+  Item.Add('text',     Content);
+  Contents := TJSONArray.Create;
+  Contents.Add(Item);
+  Res := TJSONObject.Create;
+  Res.Add('contents', Contents);
+  Result := RPCResult(ID, Res);
+end;
+
+function TMcpServerThread.HandleResourcesTemplatesList(ID: TJSONData): string;
+var
+  Tmpl      : TJSONObject;
+  Templates : TJSONArray;
+  Res       : TJSONObject;
+begin
+  Tmpl := TJSONObject.Create;
+  Tmpl.Add('uriTemplate', 'file://{+path}');
+  Tmpl.Add('name',        'File');
+  Tmpl.Add('description', 'Read any file by absolute path. ' +
+    'Windows example: file://C:/path/to/unit.pas');
+  Tmpl.Add('mimeType',    'text/plain');
+  Templates := TJSONArray.Create;
+  Templates.Add(Tmpl);
+  Res := TJSONObject.Create;
+  Res.Add('resourceTemplates', Templates);
   Result := RPCResult(ID, Res);
 end;
 

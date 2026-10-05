@@ -82,6 +82,7 @@ type
     function DoInitDescriptorCode: Pointer;
   end;
 
+
 function TProjectDescHack.DoInitDescriptorCode: Pointer;
 type TInitFunc = function: TModalResult of object;
 var F: TInitFunc;
@@ -107,6 +108,13 @@ begin
   if GBaseDoInitCode = nil then
     Exit(True);   { couldn't determine base — assume interactive to be safe }
   Result := TProjectDescHack(Desc).DoInitDescriptorCode <> GBaseDoInitCode;
+end;
+
+{ ── Resource accessor ───────────────────────────────────────────────────── }
+
+function GetKnowledgeText: string;
+begin
+  Result := KnowledgeText;
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
@@ -450,9 +458,8 @@ begin
     'project_type.',
     SCHEMA_LIST_PROJECT_TEMPLATES));
   Tools.Add(MakeTool('create_project',
-    'Create a new Lazarus project from a template. Closes the current project first ' +
-    '(save it first if needed). Creates project_dir if absent. Use ' +
-    'list_project_templates to discover available templates. Returns ' +
+    'Create a new Lazarus project from a template. Call list_project_templates to ' +
+    'discover available templates. Returns ' +
     '{"project_file":"<path>","project_type":"<name>"}.',
     SCHEMA_CREATE_PROJECT));
 end;
@@ -460,5 +467,13 @@ end;
 initialization
   RegisterMcpGroup(@DispatchProjectTool);
   RegisterMcpSchemas(@RegisterProjectSchemas);
+  RegisterMcpResource(
+    'lazarus-ide://reference',
+    'Lazarus IDE Reference',
+    'Lazarus/FPC component library reference: available packages, install ' +
+    'instructions, and key API gotchas. Read this before answering questions ' +
+    'about LCL controls, package installation, or component libraries.',
+    'text/plain',
+    @GetKnowledgeText);
 
 end.

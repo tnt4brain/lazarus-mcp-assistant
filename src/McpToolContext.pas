@@ -29,6 +29,16 @@ type
   TMcpGroupDispatch = function(const Name: string; var Ctx: TMcpToolCall): Boolean;
   TMcpSchemaReg     = procedure(Tools: TJSONArray);
 
+  TMcpGetResourceText = function: string;
+
+  TMcpResourceEntry = record
+    Uri         : string;
+    Name        : string;
+    Description : string;
+    MimeType    : string;
+    GetText     : TMcpGetResourceText;
+  end;
+
 { Called once per group unit from its initialization block. }
 procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);
 procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
@@ -43,11 +53,17 @@ procedure McpRegisterSchemas(Tools: TJSONArray);
     '("type":"object","properties":(...), "required":[...])' }
 function MakeTool(const AName, ADesc, InputSchemaJSON: string): TJSONObject;
 
+procedure RegisterMcpResource(const AUri, AName, ADesc, AMimeType: string;
+                               AGetText: TMcpGetResourceText);
+procedure McpListResources(Resources: TJSONArray);
+function  McpReadResource(const AUri: string; out Content: string): Boolean;
+
 implementation
 
 var
-  GDispatchGroups : array of TMcpGroupDispatch;
-  GSchemaGroups   : array of TMcpSchemaReg;
+  GDispatchGroups  : array of TMcpGroupDispatch;
+  GSchemaGroups    : array of TMcpSchemaReg;
+  GResourceEntries : array of TMcpResourceEntry;
 
 procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);
 begin
@@ -91,6 +107,50 @@ begin
   Result.Add('name',        AName);
   Result.Add('description', ADesc);
   Result.Add('inputSchema', Schema);
+end;
+
+procedure RegisterMcpResource(const AUri, AName, ADesc, AMimeType: string;
+                               AGetText: TMcpGetResourceText);
+var
+  E : TMcpResourceEntry;
+begin
+  E.Uri         := AUri;
+  E.Name        := AName;
+  E.Description := ADesc;
+  E.MimeType    := AMimeType;
+  E.GetText     := AGetText;
+  SetLength(GResourceEntries, Length(GResourceEntries) + 1);
+  GResourceEntries[High(GResourceEntries)] := E;
+end;
+
+procedure McpListResources(Resources: TJSONArray);
+var
+  I   : Integer;
+  Obj : TJSONObject;
+begin
+  for I := 0 to High(GResourceEntries) do
+  begin
+    Obj := TJSONObject.Create;
+    Obj.Add('uri',         GResourceEntries[I].Uri);
+    Obj.Add('name',        GResourceEntries[I].Name);
+    Obj.Add('description', GResourceEntries[I].Description);
+    Obj.Add('mimeType',    GResourceEntries[I].MimeType);
+    Resources.Add(Obj);
+  end;
+end;
+
+function McpReadResource(const AUri: string; out Content: string): Boolean;
+var
+  I : Integer;
+begin
+  Result := False;
+  for I := 0 to High(GResourceEntries) do
+    if GResourceEntries[I].Uri = AUri then
+    begin
+      Content := GResourceEntries[I].GetText();
+      Result  := True;
+      Exit;
+    end;
 end;
 
 end.
