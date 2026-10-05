@@ -914,7 +914,6 @@ var
   Res      : TJSONObject;
   Err      : Boolean;
   Text     : string;
-  Lines    : TStringList;
 begin
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
@@ -925,20 +924,7 @@ begin
   Err  := False;
   Text := '';
 
-  if ToolName = 'get_file_content' then
-  begin
-    // Route through main thread so we can prefer the live editor buffer
-    // (catches unsaved changes; falls back to disk for closed files)
-    FSyncToolName := 'get_file_content';
-    FSyncParams   := Args;
-    FSyncResult   := '';
-    FSyncError    := False;
-    FSyncConnectionClose := False;
-    TThread.Synchronize(Self, @SyncCallTool);
-    Text := FSyncResult;
-    Err  := FSyncError;
-  end
-  else if ToolName = 'get_unit_interface' then
+  if ToolName = 'get_unit_interface' then
   begin
     if not Assigned(Args) or (Args.Get('file', '') = '') then
     begin
@@ -946,17 +932,6 @@ begin
       Err  := True;
     end else
       Text := GetUnitInterface(Args.Strings['file'], Err);
-  end
-  else if ToolName = 'ping' then
-  begin
-    FSyncToolName := 'ping';
-    FSyncParams   := nil;
-    FSyncResult   := '';
-    FSyncError    := False;
-    FSyncConnectionClose := False;
-    TThread.Synchronize(Self, @SyncCallTool);
-    Text := FSyncResult;
-    Err  := FSyncError;
   end
   else if ToolName = 'compile_plugin' then
   begin
@@ -966,45 +941,6 @@ begin
       Err  := True;
     end else
       Text := RunLazbuild(Args.Strings['lpk_path'], Err);
-  end
-  else if (ToolName = 'get_active_file') or
-          (ToolName = 'get_project_files') or
-          (ToolName = 'get_compiler_errors') or
-          (ToolName = 'build_project') or
-          (ToolName = 'get_open_editors') or
-          (ToolName = 'get_symbol_declaration') or
-          (ToolName = 'run_project') or
-          (ToolName = 'get_identifier_context') or
-          (ToolName = 'get_project_settings') or
-          (ToolName = 'get_code_outline') or
-          (ToolName = 'get_cursor_position') or
-          (ToolName = 'get_selected_text') or
-          (ToolName = 'set_cursor_position') or
-          (ToolName = 'replace_text') or
-          (ToolName = 'create_unit') or
-          (ToolName = 'add_unit_to_uses') or
-          (ToolName = 'rebuild_ide') or
-          (ToolName = 'get_package_info') or
-          (ToolName = 'save_file') or
-          (ToolName = 'goto_declaration') or
-          (ToolName = 'close_file') or
-          (ToolName = 'revert_file') or
-          (ToolName = 'get_project_directory') or
-          (ToolName = 'get_lazarus_reference') or
-          (ToolName = 'edit_text') or
-          (ToolName = 'get_form_components') or
-          (ToolName = 'get_component_properties') or
-          (ToolName = 'set_component_property') then
-  begin
-    // IDE APIs — must run on main thread
-    FSyncToolName        := ToolName;
-    FSyncParams          := Args;
-    FSyncResult          := '';
-    FSyncError           := False;
-    FSyncConnectionClose := False;
-    TThread.Synchronize(Self, @SyncCallTool);
-    Text := FSyncResult;
-    Err  := FSyncError;
   end
   else if ToolName = 'search_in_project' then
   begin
@@ -1053,8 +989,16 @@ begin
   end
   else
   begin
-    Text := 'Unknown tool: ' + ToolName;
-    Err  := True;
+    // Default: IDE API — must run on main thread.
+    // Unknown tools are caught inside SyncCallTool.
+    FSyncToolName        := ToolName;
+    FSyncParams          := Args;
+    FSyncResult          := '';
+    FSyncError           := False;
+    FSyncConnectionClose := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    Text := FSyncResult;
+    Err  := FSyncError;
   end;
 
   TextNode := TJSONObject.Create;
@@ -2656,6 +2600,12 @@ begin
           end;
         end;
       end;
+    end
+
+    else
+    begin
+      FSyncError  := True;
+      FSyncResult := 'Unknown tool: ' + FSyncToolName;
     end;
 
   except
