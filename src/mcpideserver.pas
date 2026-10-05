@@ -74,6 +74,7 @@ implementation
 
 uses
   LazFileUtils, Sockets, fphttpclient,
+
   StrUtils,
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers;
@@ -86,6 +87,9 @@ uses
   directions on little-endian x86; avoids using the deprecated ShortHostToNet). }
 { Open and immediately close a TCP connection to 127.0.0.1:APort.
   Used to unblock accept() after StopAccepting(False) sets the flag. }
+const
+  McpServerVersion = '0.7';
+
 procedure MakeDummyConnect(APort: Word);
 var
   S    : LongInt;
@@ -370,7 +374,7 @@ begin
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
-  SrvInfo.Add('version', '0.6.0');
+  SrvInfo.Add('version', McpServerVersion);
 
   Res := TJSONObject.Create;
   Res.Add('protocolVersion', ProtoVer);
