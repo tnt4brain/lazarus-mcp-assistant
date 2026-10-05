@@ -927,28 +927,16 @@ begin
 
   if ToolName = 'get_file_content' then
   begin
-    if not Assigned(Args) or (Args.Get('path', '') = '') then
-    begin
-      Text := 'Error: path argument required';
-      Err  := True;
-    end else
-    begin
-      Lines := TStringList.Create;
-      try
-        try
-          Lines.LoadFromFile(Args.Strings['path']);
-          Text := Lines.Text;
-        except
-          on E: Exception do
-          begin
-            Text := 'Error reading file: ' + E.Message;
-            Err  := True;
-          end;
-        end;
-      finally
-        Lines.Free;
-      end;
-    end;
+    // Route through main thread so we can prefer the live editor buffer
+    // (catches unsaved changes; falls back to disk for closed files)
+    FSyncToolName := 'get_file_content';
+    FSyncParams   := Args;
+    FSyncResult   := '';
+    FSyncError    := False;
+    FSyncConnectionClose := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    Text := FSyncResult;
+    Err  := FSyncError;
   end
   else if ToolName = 'get_unit_interface' then
   begin
@@ -1393,6 +1381,52 @@ begin
       end;
     end
 
+    else if FSyncToolName = 'get_file_content' then
+    begin
+      if not Assigned(FSyncParams) or (FSyncParams.Get('path', '') = '') then
+      begin
+        FSyncError := True; FSyncResult := 'path argument required'; Exit;
+      end;
+      SyncFilePath := FSyncParams.Get('path', '');
+      // Prefer live editor buffer so unsaved changes are visible
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
+      if Assigned(Ed) then
+      begin
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('path',    SyncFilePath);
+          Obj.Add('content', Ed.Lines.Text);
+          Obj.Add('source',  'editor');
+          FSyncResult := Obj.AsJSON;
+        finally Obj.Free; end;
+      end
+      else
+      begin
+        // File not open — read from disk
+        SyncFileNames := TStringList.Create;
+        try
+          try
+            SyncFileNames.LoadFromFile(SyncFilePath);
+            Obj := TJSONObject.Create;
+            try
+              Obj.Add('path',    SyncFilePath);
+              Obj.Add('content', SyncFileNames.Text);
+              Obj.Add('source',  'disk');
+              FSyncResult := Obj.AsJSON;
+            finally Obj.Free; end;
+          except
+            on E: Exception do
+            begin
+              FSyncError  := True;
+              FSyncResult := 'Error reading file: ' + E.Message;
+            end;
+          end;
+        finally
+          SyncFileNames.Free;
+        end;
+      end;
+    end
+
     else if FSyncToolName = 'get_project_files' then
     begin
       Files := TJSONArray.Create;
@@ -1662,6 +1696,10 @@ begin
       begin
         FSyncError := True; FSyncResult := 'file and unit_name required'; Exit;
       end;
+      // Flush editor to disk before CodeTools reads, so it sees current content
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
+      if Assigned(Ed) and Ed.Modified then
+        LazarusIDE.DoSaveEditorFile(SyncFilePath, []);
       SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
       if not Assigned(SyncCodeBuf) then
       begin
@@ -1828,6 +1866,14 @@ begin
       if (SyncFilePath = '') or (SyncNewName = '') then
       begin
         FSyncError := True; FSyncResult := 'file and new_name required'; Exit;
+      end;
+      // Flush all open editors so CodeTools sees current content and
+      // DoRevertEditorFile can reload silently (no "unsaved changes" prompt)
+      for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+      begin
+        Ed := SourceEditorManagerIntf.SourceEditors[I];
+        if Ed.Modified then
+          LazarusIDE.DoSaveEditorFile(Ed, []);
       end;
       SyncCodeBuf := CodeToolBoss.LoadFile(SyncFilePath, False, False);
       if not Assigned(SyncCodeBuf) then
