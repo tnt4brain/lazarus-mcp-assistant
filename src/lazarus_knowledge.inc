@@ -108,6 +108,261 @@
   '' + LineEnding +
   '---' + LineEnding +
   '' + LineEnding +
+  '## Project Management API (IDEIntf)' + LineEnding +
+  '' + LineEnding +
+  'All identifiers live in `IDEIntf`/`BuildIntf` units unless noted. All IDE API' + LineEnding +
+  'calls must run on the main thread — use `TThread.Synchronize` from worker threads.' + LineEnding +
+  '' + LineEnding +
+  '### Active project — `TLazProject` (`ProjectIntf`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'uses LazIDEIntf, ProjectIntf;' + LineEnding +
+  '' + LineEnding +
+  'Proj := LazarusIDE.ActiveProject;   // TLazProject; nil when no project open' + LineEnding +
+  'LpiPath := Proj.ProjectInfoFile;    // absolute path to the .lpi file' + LineEnding +
+  'ProjDir := ExtractFilePath(LpiPath);' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '#### Adding / removing files' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'uses LazIDEIntf, ProjectIntf;' + LineEnding +
+  '' + LineEnding +
+  '// Add a file: two-step — CreateProjectFile then AddFile' + LineEnding +
+  'var PF: TLazProjectFile;' + LineEnding +
+  'PF := Proj.CreateProjectFile(AbsFilename);   // creates a TLazProjectFile object' + LineEnding +
+  'Proj.AddFile(PF, False);                     // False = don''t touch uses clause' + LineEnding +
+  'LazarusIDE.DoSaveProject([]);                // persist to .lpi' + LineEnding +
+  '' + LineEnding +
+  '// Find a project file by absolute path (pfsfOnlyProjectFiles restricts to project)' + LineEnding +
+  'PF := Proj.FindFile(AbsFilename, [pfsfOnlyProjectFiles]);' + LineEnding +
+  '' + LineEnding +
+  '// Remove: FindFile then loop to get the 0-based index RemoveUnit needs' + LineEnding +
+  'var I: Integer;' + LineEnding +
+  'for I := 0 to Proj.FileCount - 1 do' + LineEnding +
+  '  if Proj.Files[I].Filename = AbsFilename then' + LineEnding +
+  '  begin' + LineEnding +
+  '    Proj.RemoveUnit(I);   // removes from project; does NOT delete disk file' + LineEnding +
+  '    Break;' + LineEnding +
+  '  end;' + LineEnding +
+  'LazarusIDE.DoSaveProject([]);' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '- `TProjectFileSearchFlags` values: `pfsfResolveFileLinks`, `pfsfOnlyEditorFiles`,' + LineEnding +
+  '  `pfsfOnlyVirtualFiles`, `pfsfOnlyProjectFiles`.  There is no `pfsfFullPathSearched`.' + LineEnding +
+  '- `TLazProjectFile` has no `UnitIndex` property — iterate `Proj.Files[]` to find' + LineEnding +
+  '  the index for `RemoveUnit`.' + LineEnding +
+  '- `Proj.Files[I].IsPartOfProject` — true for files that compile with the project.' + LineEnding +
+  '' + LineEnding +
+  '#### Compiler options — `TLazCompilerOptions` (`CompOptsIntf`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'var Opts: TLazCompilerOptions;' + LineEnding +
+  'Opts := Proj.LazCompilerOptions;' + LineEnding +
+  '' + LineEnding +
+  'Opts.TargetOS            := ''win64'';     // '''' = host OS' + LineEnding +
+  'Opts.TargetCPU           := ''x86_64'';   // '''' = host CPU' + LineEnding +
+  'Opts.UnitOutputDirectory := ''lib/$(TargetOS)-$(TargetCPU)'';  // macros OK' + LineEnding +
+  'Opts.CustomOptions       := ''-dMY_FLAG''; // replaces the whole string' + LineEnding +
+  '' + LineEnding +
+  'LazarusIDE.DoSaveProject([]);   // flush to .lpi' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '- **`CustomOptions` uses replace semantics.** Read with `get_project_settings` first' + LineEnding +
+  '  if you want to preserve existing flags; set the full resulting string.' + LineEnding +
+  '- Macro syntax: `$(TargetOS)`, `$(TargetCPU)`, `$(ProjOutDir)` expanded at build time.' + LineEnding +
+  '' + LineEnding +
+  '#### Run parameters — `TAbstractRunParamsOptions` (`ProjectIntf`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  '// Get or create the ''default'' run mode, set args, then run' + LineEnding +
+  'Proj.RunParameters.GetOrCreate(''default'').CmdLineParams := ''--verbose input.txt'';' + LineEnding +
+  '// No save needed before DoRunProjectWithoutDebug' + LineEnding +
+  'LazarusIDE.DoRunProjectWithoutDebug;' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '- `TLazProject.RunParameters` → `TAbstractRunParamsOptions` (declared in `ProjectIntf`).' + LineEnding +
+  '- `GetOrCreate(Name)` → `TAbstractRunParamsOptionsMode`; the default mode is named' + LineEnding +
+  '  `''default''`.' + LineEnding +
+  '- `CmdLineParams: string` — passed verbatim to the spawned process.' + LineEnding +
+  '' + LineEnding +
+  '### Opening files — `DoOpenEditorFile` (`LazIDEIntf`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'uses LazIDEIntf, SrcEditorIntf;' + LineEnding +
+  '' + LineEnding +
+  '// DoOpenEditorFile returns TModalResult (mrOK on success, mrCancel if not found)' + LineEnding +
+  'var Res: TModalResult;' + LineEnding +
+  'Res := LazarusIDE.DoOpenEditorFile(' + LineEnding +
+  '  AbsFilename,' + LineEnding +
+  '  -1, -1,                          // page / window: -1 = IDE decides' + LineEnding +
+  '  [ofOnlyIfExists, ofRegularFile]' + LineEnding +
+  ');' + LineEnding +
+  '// mrOK = opened; mrCancel/mrAbort = not found (with ofOnlyIfExists)' + LineEnding +
+  '' + LineEnding +
+  '// Check if already open (before opening):' + LineEnding +
+  'SourceEditorManagerIntf.SourceEditorIntfWithFilename(AbsFilename) <> nil' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '**`TOpenFlag` values** (from `LazIDEIntf`):' + LineEnding +
+  '' + LineEnding +
+  '| Flag | Effect |' + LineEnding +
+  '|------|--------|' + LineEnding +
+  '| `ofOnlyIfExists` | Do not create; return mrCancel if not found |' + LineEnding +
+  '| `ofRegularFile` | Treat as a normal source file, not a project/package |' + LineEnding +
+  '| `ofAddToRecent` | Add to File → Recent Files |' + LineEnding +
+  '| `ofQuiet` | Suppress error dialogs |' + LineEnding +
+  '| `ofRevert` | Reload from disk even if already open |' + LineEnding +
+  '| `ofDoNotLoadResource` | Open `.pas` without loading paired `.lfm` |' + LineEnding +
+  '' + LineEnding +
+  '### Creating forms — `FileDescriptorForm` (`ProjectIntf`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'uses LazIDEIntf, ProjectIntf;' + LineEnding +
+  '' + LineEnding +
+  '// FileDescriptorForm() is a function (not a global var) from ProjectIntf' + LineEnding +
+  '// Creates <path>.pas + <path>.lfm and adds both to the project' + LineEnding +
+  'LazarusIDE.DoNewEditorFile(' + LineEnding +
+  '  FileDescriptorForm,              // TProjectFileDescriptor from ProjectIntf' + LineEnding +
+  '  ''/path/to/UnitFoo.pas'',          // suggested .pas path' + LineEnding +
+  '  '''',                              // source: '''' = descriptor generates default' + LineEnding +
+  '  [nfIsPartOfProject, nfOpenInEditor, nfSave]' + LineEnding +
+  ');' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '**`TNewFlag` values** (from `LazIDEIntf`):' + LineEnding +
+  '' + LineEnding +
+  '| Flag | Effect |' + LineEnding +
+  '|------|--------|' + LineEnding +
+  '| `nfIsPartOfProject` | Mark as project file |' + LineEnding +
+  '| `nfOpenInEditor` | Open in editor after creation |' + LineEnding +
+  '| `nfSave` | Save files immediately |' + LineEnding +
+  '| `nfAddToRecent` | Add to File → Recent Files |' + LineEnding +
+  '' + LineEnding +
+  '- The form class name is auto-generated by the descriptor (e.g. `TForm1`).' + LineEnding +
+  '  Rename afterwards with `edit_text`.' + LineEnding +
+  '- `DoNewEditorFile` returns `TModalResult` (mrOK on success).' + LineEnding +
+  '' + LineEnding +
+  '### Creating a new project — `DoNewProject` (`LazIDEIntf`, `ProjectIntf`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'uses LazIDEIntf, ProjectIntf, LazFileUtils;' + LineEnding +
+  '' + LineEnding +
+  '// Available descriptor names (constants in ProjectIntf):' + LineEnding +
+  '//   ProjDescNameApplication      = ''Application''        (GUI app + Form1)' + LineEnding +
+  '//   ProjDescNameSimpleProgram     = ''Simple Program''' + LineEnding +
+  '//   ProjDescNameProgram           = ''Program''' + LineEnding +
+  '//   ProjDescNameConsoleApplication = ''Console application''' + LineEnding +
+  '//   ProjDescNameLibrary           = ''Library''' + LineEnding +
+  '//   ProjDescNameCustomProgram     = ''Custom Program''' + LineEnding +
+  '//   ProjDescNameEmpty             = ''Empty''' + LineEnding +
+  '' + LineEnding +
+  'var' + LineEnding +
+  '  Desc : TProjectDescriptor;' + LineEnding +
+  '  Proj : TLazProject;' + LineEnding +
+  'begin' + LineEnding +
+  '  // 1. Pick the descriptor (use the helper functions or FindByName)' + LineEnding +
+  '  Desc := ProjectDescriptorApplication;          // for a GUI app' + LineEnding +
+  '  // or: Desc := ProjectDescriptors.FindByName(ProjDescNameConsoleApplication);' + LineEnding +
+  '' + LineEnding +
+  '  // 2. Create the target directory if needed' + LineEnding +
+  '  ForceDirectories(''/path/to/myproject'');' + LineEnding +
+  '' + LineEnding +
+  '  // 3. Create the project — closes the current project first' + LineEnding +
+  '  //    None of the built-in descriptors override DoInitDescriptor,' + LineEnding +
+  '  //    so no dialog is shown.  CreateStartFiles for Application creates Form1.' + LineEnding +
+  '  if LazarusIDE.DoNewProject(Desc) <> mrOK then' + LineEnding +
+  '    Exit;  // user cancelled or error' + LineEnding +
+  '' + LineEnding +
+  '  // 4. Set the .lpi path and save' + LineEnding +
+  '  Proj := LazarusIDE.ActiveProject;' + LineEnding +
+  '  Proj.ProjectInfoFile := ''/path/to/myproject/MyApp.lpi'';' + LineEnding +
+  '  Proj.Title := ''MyApp'';                         // optional; shown in title bar' + LineEnding +
+  '  LazarusIDE.DoSaveProject([]);                  // writes .lpi to the path set above' + LineEnding +
+  'end;' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '**Key points:**' + LineEnding +
+  '- `DoNewProject` closes the current open project first; unsaved changes are lost unless' + LineEnding +
+  '  you call `DoSaveAll([])` beforehand.' + LineEnding +
+  '- Setting `Proj.ProjectInfoFile` before `DoSaveProject` redirects the save without' + LineEnding +
+  '  triggering a "Save As…" dialog.' + LineEnding +
+  '- The descriptor''s `CreateStartFiles` may open new editor tabs (e.g. Form1 for' + LineEnding +
+  '  `Application`). This is normal and expected.' + LineEnding +
+  '- `ProjectDescriptorApplication` / `ProjectDescriptorConsoleApplication` etc. are' + LineEnding +
+  '  convenience functions calling `ProjectDescriptors.FindByName(...)`.' + LineEnding +
+  '- Returns `mrOK` on success; `mrCancel` / `mrAbort` on failure.' + LineEnding +
+  '' + LineEnding +
+  '### Component palette — `IDEComponentPalette` (`ComponentReg`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'uses ComponentReg;  // TBaseComponentPalette, TRegisteredComponent, TBaseComponentPage' + LineEnding +
+  '' + LineEnding +
+  'var' + LineEnding +
+  '  Comp : TRegisteredComponent;' + LineEnding +
+  '  I    : Integer;' + LineEnding +
+  'begin' + LineEnding +
+  '  // IDEComponentPalette.Comps is a flat TRegisteredCompList of all components' + LineEnding +
+  '  for I := 0 to IDEComponentPalette.Comps.Count - 1 do' + LineEnding +
+  '  begin' + LineEnding +
+  '    Comp := IDEComponentPalette.Comps[I];' + LineEnding +
+  '    // Comp.ComponentClass.ClassName — e.g. ''TChart''' + LineEnding +
+  '    // Comp.GetUnitName              — unit where the component is defined' + LineEnding +
+  '    // Comp.OrigPageName             — palette tab name, e.g. ''Chart''' + LineEnding +
+  '    // Comp.RealPage.PageName        — same as OrigPageName if not reordered' + LineEnding +
+  '  end;' + LineEnding +
+  'end;' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '- `IDEComponentPalette: TBaseComponentPalette` — global, declared in `ComponentReg`,' + LineEnding +
+  '  assigned by the IDE at startup.' + LineEnding +
+  '- Iterate `.Comps` (flat list) for searching; iterate `.Pages` for page-by-page' + LineEnding +
+  '  display.' + LineEnding +
+  '- There is **no `OriginPackage`** property on `TRegisteredComponent`.  Package' + LineEnding +
+  '  membership is not directly accessible via IDEIntf.' + LineEnding +
+  '- `RealPage` may be nil for components not yet placed on a palette page.' + LineEnding +
+  '' + LineEnding +
+  '### IDE Messages window — `IDEMessagesWindow` (`IDEMsgIntf`)' + LineEnding +
+  '' + LineEnding +
+  '```pascal' + LineEnding +
+  'uses IDEMsgIntf, IDEExternToolIntf;' + LineEnding +
+  '' + LineEnding +
+  '// IDEMessagesWindow exposes Views (build output, tools, etc.)' + LineEnding +
+  '// Each TExtToolView has a TMessageLines Lines property' + LineEnding +
+  'var' + LineEnding +
+  '  View    : TExtToolView;' + LineEnding +
+  '  MsgLine : TMessageLine;' + LineEnding +
+  '  I, J    : Integer;' + LineEnding +
+  'begin' + LineEnding +
+  '  if not Assigned(IDEMessagesWindow) then Exit;' + LineEnding +
+  '  for I := 0 to IDEMessagesWindow.ViewCount - 1 do' + LineEnding +
+  '  begin' + LineEnding +
+  '    View := IDEMessagesWindow.Views[I];' + LineEnding +
+  '    for J := 0 to View.Lines.Count - 1 do' + LineEnding +
+  '    begin' + LineEnding +
+  '      MsgLine := View.Lines.Items[J];' + LineEnding +
+  '      // MsgLine.Msg       — message text' + LineEnding +
+  '      // MsgLine.Urgency   — TMessageLineUrgency:' + LineEnding +
+  '      //   mluNone, mluProgress, mluDebug, mluVerbose, mluHint, mluNote,' + LineEnding +
+  '      //   mluWarning, mluImportant, mluError, mluFatal, mluPanic' + LineEnding +
+  '      // MsgLine.Filename  — source file (may be '''')' + LineEnding +
+  '      // MsgLine.Line      — source line (0 if not applicable)' + LineEnding +
+  '      // MessageLineUrgencyNames[MsgLine.Urgency] — string form of urgency' + LineEnding +
+  '    end;' + LineEnding +
+  '  end;' + LineEnding +
+  'end;' + LineEnding +
+  '```' + LineEnding +
+  '' + LineEnding +
+  '- `IDEMessagesWindow: TIDEMessagesWindowInterface` (from `IDEMsgIntf`).' + LineEnding +
+  '- `IDEMessagesWindow` has no `LinesCount`/`Lines[]` directly — messages are' + LineEnding +
+  '  accessed through `Views[i]: TExtToolView` and then `View.Lines`.' + LineEnding +
+  '- `TExtToolView` and `TMessageLine` are from `IDEExternToolIntf` (BuildIntf).' + LineEnding +
+  '- `mluHint` and `mluNote` are dropped by `get_compiler_errors` — `get_messages`' + LineEnding +
+  '  returns all urgency levels.' + LineEnding +
+  '- The window is cleared at the start of each build; call after build completes.' + LineEnding +
+  '' + LineEnding +
+  '---' + LineEnding +
+  '' + LineEnding +
   '## Common Lazarus Gotchas' + LineEnding +
   '' + LineEnding +
   '- **No `TForm.Create(Application)` needed** — Lazarus auto-creates forms listed in Project Options unless you remove them.' + LineEnding +

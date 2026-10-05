@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 40 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 50 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed.
 
@@ -94,6 +94,21 @@ Transport details: [ADR-001](docs/adr/0001-mcp-server-transport-and-lifecycle.md
 | `remove_package_from_project` | Remove a package dependency from the active project's `.lpi`. |
 | `install_package` | Open a `.lpk` and install it into the IDE, then rebuild and restart (~60 s). The response includes a `poll_command` identical to `rebuild_ide`. |
 | `uninstall_package` | Mark a package for uninstall, then rebuild and restart the IDE (~60 s). |
+
+### Project lifecycle
+
+| Tool | Description |
+|---|---|
+| `add_file_to_project` | Add an existing source file to the active project's file list. |
+| `remove_file_from_project` | Remove a source file from the active project without deleting it from disk. |
+| `create_form` | Create a new form: a `.pas` unit and paired `.lfm`, both added to the project and opened in the editor. |
+| `set_project_settings` | Write compiler options (target OS/CPU, output dir, custom flags) to the active project. All parameters optional; only supplied keys are changed. |
+| `open_file` | Open a file in the IDE editor without moving the cursor. Returns `already_open` flag. |
+| `search_components` | Search the component palette by class name. Returns class name, unit, and palette page for each match. |
+| `run_with_args` | Build (if needed) and run the active project with the given command-line argument string. |
+| `get_messages` | Full content of the IDE Messages window from the last build or run, including hints and notes. |
+| `list_project_templates` | List all registered project templates (descriptors) with their names and descriptions. Use the `name` field as `project_type` in `create_project`. |
+| `create_project` | Create a new Lazarus project from a template. Closes the current project first. Pass `project_type` from `list_project_templates`; defaults to `Application`. Returns the `.lpi` path. |
 
 ### Protocol & knowledge
 
@@ -201,6 +216,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-003](docs/adr/0003-undo-redo-for-rename-identifier.md) | CodeTools-backed refactoring tools |
 | [ADR-004](docs/adr/0004-self-hosted-development.md) | Self-hosted development: token persistence, rebuild cycle, port stability |
 | [ADR-005](docs/adr/0005-fpcunit-test-suite.md) | FPCUnit test suite: testability boundary, standalone test project layout |
+| [ADR-006](docs/adr/0006-project-lifecycle-tools.md) | Project lifecycle tools: file management, project settings, component search, editor state, run configuration |
 
 ---
 

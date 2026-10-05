@@ -18,7 +18,7 @@ uses
   consoletestrunner, fpcunitreport, plaintestreport,
   THttpHelper,
   TUtils, TProtocol, TAuth, TTestInfra,
-  TJUnitWriter;
+  TJUnitWriter, TProjectTools;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -170,6 +170,7 @@ begin
     WriteLn('Server on port ', Port, ' — protocol and auth tests enabled.');
     GetTestRegistry.AddTest(TTestProtocol.Suite);
     GetTestRegistry.AddTest(TTestAuth.Suite);
+    GetTestRegistry.AddTest(TTestProjectTools.Suite);
   end
   else
     WriteLn('Server not running — protocol/auth tests skipped.');

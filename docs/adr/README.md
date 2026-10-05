@@ -11,3 +11,4 @@ ADR-007 was never assigned; no document is missing.
 | [0003](0003-undo-redo-for-rename-identifier.md) | # ADR-003 — Undo/Redo Integration for rename_identifier |
 | [0004](0004-self-hosted-development.md) | # ADR-004 — Self-Hosted Development: Token Persistence, IDE Rebuild, and Session Continuity |
 | [0005](0005-fpcunit-test-suite.md) | # ADR-005 — FPCUnit Test Suite |
+| [0006](0006-project-lifecycle-tools.md) | # ADR-006 — Project Lifecycle Tools |
