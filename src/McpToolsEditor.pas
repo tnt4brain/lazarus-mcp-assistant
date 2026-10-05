@@ -134,14 +134,14 @@ begin
         Obj.Add('note', 'The active editor is a form file. ' +
                         'Both the form definition and its Pascal unit are provided.');
         Obj.Add('form_filename', Ed.FileName);
-        Obj.Add('form_content',  Ed.Lines.Text);
+        Obj.Add('form_content',  StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]));
         for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
           if CompareFilenames(SourceEditorManagerIntf.SourceEditors[I].FileName,
                               PasName) = 0 then
           begin
             Obj.Add('unit_filename', PasName);
             Obj.Add('unit_content',
-                    SourceEditorManagerIntf.SourceEditors[I].Lines.Text);
+                    StringReplace(SourceEditorManagerIntf.SourceEditors[I].Lines.Text, #13#10, #10, [rfReplaceAll]));
             Break;
           end;
         Ctx.Result := Obj.AsJSON;
@@ -153,7 +153,7 @@ begin
     Obj := TJSONObject.Create;
     try
       Obj.Add('filename',    Ed.FileName);
-      Obj.Add('content',     Ed.Lines.Text);
+      Obj.Add('content',     StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]));
       Obj.Add('cursor_line', Ed.CursorTextXY.Y);
       Obj.Add('cursor_col',  Ed.CursorTextXY.X);
       Ctx.Result := Obj.AsJSON;
@@ -176,7 +176,7 @@ begin
       Obj := TJSONObject.Create;
       try
         Obj.Add('path',    SyncFilePath);
-        Obj.Add('content', Ed.Lines.Text);
+        Obj.Add('content', StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]));
         Obj.Add('source',  'editor');
         Ctx.Result := Obj.AsJSON;
       finally
@@ -192,7 +192,7 @@ begin
           Obj := TJSONObject.Create;
           try
             Obj.Add('path',    SyncFilePath);
-            Obj.Add('content', SyncFileNames.Text);
+            Obj.Add('content', StringReplace(SyncFileNames.Text, #13#10, #10, [rfReplaceAll]));
             Obj.Add('source',  'disk');
             Ctx.Result := Obj.AsJSON;
           finally
@@ -417,7 +417,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
     end;
-    SyncText := Ed.Lines.Text;
+    SyncText := StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]);
     SyncMatchPositions := TList.Create;
     try
       SyncPos := 1;
