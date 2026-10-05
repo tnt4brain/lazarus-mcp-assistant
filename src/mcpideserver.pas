@@ -28,6 +28,7 @@ type
     FSyncError           : Boolean;     // True when SyncCallTool encountered an error
     FSyncConnectionClose : Boolean;     // True → add Connection: close to response
     FSyncFileList : string;      // JSON file list passed into two-phase tools
+    FSyncLogMsg   : string;
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
                             var AResponse : TFPHTTPConnectionResponse);
@@ -42,7 +43,9 @@ type
     function  RPCResult(ID: TJSONData; ResultObj: TJSONObject): string;
     function  RPCError(ID: TJSONData; ErrCode: Integer;
                        const Msg: string): string;
-    procedure SyncCallTool; // runs on main thread via Synchronize
+    procedure SyncCallTool;    // runs on main thread via Synchronize
+    procedure SyncLogToIDE;    // runs on main thread via Synchronize
+
   protected
     procedure Execute; override;
   public
@@ -69,6 +72,7 @@ implementation
 uses
   LazFileUtils, Sockets, fphttpclient,
   StrUtils,
+  IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers;
 
 
@@ -332,12 +336,24 @@ var
   Caps     : TJSONObject;
   ToolsCap : TJSONObject;
   SrvInfo  : TJSONObject;
-  ProtoVer : string;
+  ClientInfo : TJSONObject;
+  ProtoVer   : string;
 begin
   // Echo back client's protocolVersion; fall back to our minimum
   ProtoVer := '2024-11-05';
   if Assigned(Params) and Assigned(Params.Find('protocolVersion')) then
     ProtoVer := Params.Strings['protocolVersion'];
+
+  if Assigned(Params) then
+  begin
+    ClientInfo := TJSONObject(Params.Find('clientInfo'));
+    if Assigned(ClientInfo) then
+    begin
+      FSyncLogMsg := Format('Client "%s %s" connected (protocol %s).',
+        [ClientInfo.Get('name', '?'), ClientInfo.Get('version', '?'), ProtoVer]);
+      TThread.Synchronize(Self, @SyncLogToIDE);
+    end;
+  end;
 
   ToolsCap := TJSONObject.Create;  // empty tools capability object
   Caps := TJSONObject.Create;
@@ -630,6 +646,12 @@ begin
   FSyncResult          := Ctx.Result;
   FSyncError           := Ctx.Error;
   FSyncConnectionClose := Ctx.ConnectionClose;
+end;
+
+procedure TMcpServerThread.SyncLogToIDE;
+begin
+  if Assigned(IDEMessagesWindow) then
+    IDEMessagesWindow.AddCustomMessage(mluProgress, FSyncLogMsg, '', 0, 0, 'MCP Server');
 end;
 
 { ── Module lifecycle ─────────────────────────────────────────────────────── }
