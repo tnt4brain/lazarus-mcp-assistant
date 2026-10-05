@@ -36,9 +36,6 @@ const
   SCHEMA_GET_PROJECT_SETTINGS =
     '{"type":"object","properties":{}}';
 
-  SCHEMA_GET_LAZARUS_REFERENCE =
-    '{"type":"object","properties":{}}';
-
   SCHEMA_SET_PROJECT_SETTINGS =
     '{"type":"object","properties":{' +
     '"target_os":{"type":"string","description":"Target OS (e.g. win64, linux); empty string = host OS"},' +
@@ -218,18 +215,6 @@ begin
       Obj.Add('target_cpu',     Proj.LazCompilerOptions.TargetCPU);
       Obj.Add('output_dir',     Proj.LazCompilerOptions.UnitOutputDirectory);
       Obj.Add('custom_options', Proj.LazCompilerOptions.CustomOptions);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'get_lazarus_reference' then
-  begin
-    Result := True;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('reference', KnowledgeText);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -435,11 +420,6 @@ begin
     'only supplied keys are changed. Returns the new settings in the same shape ' +
     'as get_project_settings. custom_options REPLACES the existing string.',
     SCHEMA_SET_PROJECT_SETTINGS));
-  Tools.Add(MakeTool('get_lazarus_reference',
-    'Return the Lazarus/FPC component library reference: available packages, ' +
-    'install instructions, and key gotchas. Call this before answering questions ' +
-    'about component libraries, UI controls, or package installation.',
-    SCHEMA_GET_LAZARUS_REFERENCE));
   Tools.Add(MakeTool('add_file_to_project',
     'Add an existing source file to the active project (.lpi). ' +
     'Saves the project afterwards.',
