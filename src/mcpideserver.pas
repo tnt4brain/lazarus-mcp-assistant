@@ -40,6 +40,9 @@ type
     function  HandleResourcesList(ID: TJSONData): string;
     function  HandleResourcesRead(ID: TJSONData; Params: TJSONObject): string;
     function  HandleResourcesTemplatesList(ID: TJSONData): string;
+    function  HandleCompletionComplete(ID: TJSONData; Params: TJSONObject): string;
+    function  HandlePromptsList(ID: TJSONData): string;
+    function  HandlePromptsGet(ID: TJSONData; Params: TJSONObject): string;
     function  RPCResult(ID: TJSONData; ResultObj: TJSONObject): string;
     function  RPCError(ID: TJSONData; ErrCode: Integer;
                        const Msg: string): string;
@@ -279,6 +282,9 @@ begin
     else if Method = 'resources/list'   then Result := HandleResourcesList(ID)
     else if Method = 'resources/read'          then Result := HandleResourcesRead(ID, Params)
     else if Method = 'resources/templates/list' then Result := HandleResourcesTemplatesList(ID)
+    else if Method = 'completion/complete'      then Result := HandleCompletionComplete(ID, Params)
+    else if Method = 'prompts/list'             then Result := HandlePromptsList(ID)
+    else if Method = 'prompts/get'              then Result := HandlePromptsGet(ID, Params)
     else
       Result := RPCError(ID, -32601, 'Method not found');
   finally
@@ -358,7 +364,9 @@ begin
   ToolsCap := TJSONObject.Create;  // empty tools capability object
   Caps := TJSONObject.Create;
   Caps.Add('tools',     ToolsCap);
-  Caps.Add('resources', TJSONObject.Create);
+  Caps.Add('resources',   TJSONObject.Create);
+  Caps.Add('completions', TJSONObject.Create);
+  Caps.Add('prompts',     TJSONObject.Create);
 
   SrvInfo := TJSONObject.Create;
   SrvInfo.Add('name',    'lazarus-ide');
@@ -467,6 +475,179 @@ begin
   Templates.Add(Tmpl);
   Res := TJSONObject.Create;
   Res.Add('resourceTemplates', Templates);
+  Result := RPCResult(ID, Res);
+end;
+
+function TMcpServerThread.HandleCompletionComplete(ID: TJSONData;
+  Params: TJSONObject): string;
+var
+  Ref      : TJSONObject;
+  Argument : TJSONObject;
+  RefType  : string;
+  ArgName  : string;
+  ArgValue : string;
+  Values   : TJSONArray;
+  Comp     : TJSONObject;
+  Res      : TJSONObject;
+  FilesData: TJSONData;
+  FileArr  : TJSONArray;
+  FileItem : TJSONData;
+  I        : Integer;
+  FilePath : string;
+  LowerVal : string;
+begin
+  if not Assigned(Params) then
+    Exit(RPCError(ID, -32602, 'Missing params'));
+  Ref      := TJSONObject(Params.Find('ref'));
+  Argument := TJSONObject(Params.Find('argument'));
+  if not Assigned(Ref) or not Assigned(Argument) then
+    Exit(RPCError(ID, -32602, 'ref and argument required'));
+  ArgName  := Argument.Get('name', '');
+  ArgValue := Argument.Get('value', '');
+  RefType  := Ref.Get('type', '');
+
+  Values := TJSONArray.Create;
+
+  if (RefType = 'ref/tool') and
+     ((ArgName = 'file') or (ArgName = 'lpk_path') or
+      (ArgName = 'lpi_path') or (ArgName = 'path')) then
+  begin
+    FSyncToolName := 'get_project_files';
+    FSyncParams   := nil;
+    FSyncResult   := '';
+    FSyncError    := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    if not FSyncError and (FSyncResult <> '') then
+    begin
+      FilesData := GetJSON(FSyncResult);
+      try
+        FileArr := nil;
+        if FilesData is TJSONObject then
+          FileArr := TJSONArray(TJSONObject(FilesData).Find('files'));
+        if Assigned(FileArr) then
+        begin
+          LowerVal := LowerCase(ArgValue);
+          for I := 0 to FileArr.Count - 1 do
+          begin
+            FileItem := FileArr.Items[I];
+            if FileItem is TJSONObject then
+              FilePath := TJSONObject(FileItem).Get('file', '')
+            else
+              FilePath := FileItem.AsString;
+            if FilePath = '' then Continue;
+            if (ArgValue = '') or (Pos(LowerVal, LowerCase(FilePath)) > 0) then
+              Values.Add(FilePath);
+            if Values.Count >= 25 then Break;
+          end;
+        end;
+      finally
+        FilesData.Free;
+      end;
+    end;
+  end;
+
+  Comp := TJSONObject.Create;
+  Comp.Add('values',  Values);
+  Comp.Add('hasMore', Values.Count >= 25);
+  Res := TJSONObject.Create;
+  Res.Add('completion', Comp);
+  Result := RPCResult(ID, Res);
+end;
+
+function TMcpServerThread.HandlePromptsList(ID: TJSONData): string;
+var
+  Prompts : TJSONArray;
+  P       : TJSONObject;
+  Res     : TJSONObject;
+begin
+  Prompts := TJSONArray.Create;
+
+  P := TJSONObject.Create;
+  P.Add('name',        'explain_compiler_errors');
+  P.Add('description', 'Fetch current compiler output and ask Claude to explain errors and suggest fixes');
+  Prompts.Add(P);
+
+  P := TJSONObject.Create;
+  P.Add('name',        'review_active_file');
+  P.Add('description', 'Review the currently active editor file for code quality and improvements');
+  Prompts.Add(P);
+
+  Res := TJSONObject.Create;
+  Res.Add('prompts', Prompts);
+  Result := RPCResult(ID, Res);
+end;
+
+function TMcpServerThread.HandlePromptsGet(ID: TJSONData;
+  Params: TJSONObject): string;
+var
+  Name     : string;
+  Messages : TJSONArray;
+  Msg      : TJSONObject;
+  Content  : TJSONObject;
+  Text     : string;
+  FileData : TJSONData;
+  FilePath : string;
+  Res      : TJSONObject;
+begin
+  if not Assigned(Params) then
+    Exit(RPCError(ID, -32602, 'Missing params'));
+  Name := Params.Get('name', '');
+
+  if Name = 'explain_compiler_errors' then
+  begin
+    FSyncToolName := 'get_compiler_errors';
+    FSyncParams   := nil;
+    FSyncResult   := '';
+    FSyncError    := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    if FSyncError or (FSyncResult = '') then
+      Text := 'No compiler output is available. Please build the project first ' +
+              '(Build → Build Project), then invoke this prompt again.'
+    else
+      Text := 'The Lazarus IDE compiler produced the following output:' + LineEnding + LineEnding +
+              FSyncResult + LineEnding + LineEnding +
+              'Please explain each error or warning, identify the root cause, ' +
+              'and suggest a specific code fix for each one.';
+  end
+  else if Name = 'review_active_file' then
+  begin
+    FSyncToolName := 'get_active_file';
+    FSyncParams   := nil;
+    FSyncResult   := '';
+    FSyncError    := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    FilePath := '';
+    if not FSyncError and (FSyncResult <> '') then
+    begin
+      FileData := GetJSON(FSyncResult);
+      try
+        if FileData is TJSONObject then
+          FilePath := TJSONObject(FileData).Get('file', '');
+      finally
+        FileData.Free;
+      end;
+    end;
+    if FilePath = '' then
+      Text := 'No file is currently active in the editor. Please open a file first.'
+    else
+      Text := 'Please review the file "' + FilePath + '" for code quality, potential bugs, ' +
+              'adherence to Pascal/FPC best practices, and improvement opportunities. ' +
+              'Read its content via: file://' + FilePath;
+  end
+  else
+    Exit(RPCError(ID, -32602, 'Unknown prompt: ' + Name));
+
+  Content := TJSONObject.Create;
+  Content.Add('type', 'text');
+  Content.Add('text', Text);
+  Msg := TJSONObject.Create;
+  Msg.Add('role',    'user');
+  Msg.Add('content', Content);
+  Messages := TJSONArray.Create;
+  Messages.Add(Msg);
+
+  Res := TJSONObject.Create;
+  Res.Add('messages', Messages);
   Result := RPCResult(ID, Res);
 end;
 
