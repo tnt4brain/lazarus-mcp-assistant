@@ -43,6 +43,7 @@ type
     function  DoSearchInProject(const FileListJSON, Query: string): string;
     function  GetUnitInterface(const FilePath: string; out IsError: Boolean): string;
     function  RunLazbuild(const LpkPath: string; out IsError: Boolean): string;
+    function  RunTests(const LpiPath, JUnitOut: string; out IsError: Boolean): string;
   protected
     procedure Execute; override;
   public
@@ -431,6 +432,7 @@ var
   IPReq                      : TJSONArray;
   UIPProps, UIPName          : TJSONObject;
   UIPReq                     : TJSONArray;
+  RunTProps, RunTProj, RunTJUnit : TJSONObject;
 begin
   Tools := TJSONArray.Create;
 
@@ -712,6 +714,23 @@ begin
     'Does not restart the IDE.',
     CPProps, CPReq));
 
+  // run_tests — test_project optional, junit_out optional
+  RunTProps    := TJSONObject.Create;
+  RunTProj     := TJSONObject.Create;
+  RunTProj.Add('type', 'string');
+  RunTProj.Add('description', 'Path to the FPCUnit test project .lpi (absolute, or relative to the active project directory). Defaults to tests/mcpserver_tests.lpi next to the active project.');
+  RunTJUnit    := TJSONObject.Create;
+  RunTJUnit.Add('type', 'string');
+  RunTJUnit.Add('description', 'If provided, also write JUnit-compatible XML to this absolute path. Readable by GitHub Actions, Jenkins, and other CI tools.');
+  RunTProps.Add('test_project', RunTProj);
+  RunTProps.Add('junit_out',    RunTJUnit);
+  Tools.Add(MakeTool('run_tests',
+    'Compile and run the FPCUnit test project, then return structured results ' +
+    '(pass/fail counts, individual test output). Standalone utility and ' +
+    'infrastructure tests always run; protocol and auth tests run only when ' +
+    'the MCP server is reachable. Optionally writes JUnit XML for CI consumption.',
+    RTProps, TJSONArray.Create));
+
   // rebuild_ide — lpk_path optional
   RIProps := TJSONObject.Create;
   RILpk   := TJSONObject.Create;
@@ -918,6 +937,13 @@ begin
     end else
       Text := RunLazbuild(Args.Strings['lpk_path'], Err);
   end
+  else if ToolName = 'run_tests' then
+  begin
+    Text := RunTests(
+      IfThen(Assigned(Args), Args.Get('test_project', ''), ''),
+      IfThen(Assigned(Args), Args.Get('junit_out',    ''), ''),
+      Err);
+  end
   else if ToolName = 'search_in_project' then
   begin
     FSyncToolName := 'get_project_files';
@@ -1115,6 +1141,230 @@ begin
   finally
     Proc.Free;
   end;
+end;
+
+{ ── Test runner (server thread) ──────────────────────────────────────────── }
+
+{ Parse the FPCUnit plain-text summary line:
+    Time:HH.SSS N:X E:X F:X I:X
+  Returns True if the line was found; fills out-params. }
+function ParseFPCUnitSummary(const Output: string;
+  out Total, Errors, Failures, Ignored: Integer): Boolean;
+var
+  Lines : TStringList;
+  I     : Integer;
+  Line  : string;
+
+  function ReadInt(const S, Key: string): Integer;
+  var
+    K, E : Integer;
+  begin
+    K := Pos(Key, S);
+    if K = 0 then begin Result := -1; Exit; end;
+    Inc(K, Length(Key));
+    E := K;
+    while (E <= Length(S)) and (S[E] in ['0'..'9']) do Inc(E);
+    Result := StrToIntDef(Copy(S, K, E - K), -1);
+  end;
+
+begin
+  Result  := False;
+  Total   := 0;
+  Errors  := 0;
+  Failures := 0;
+  Ignored := 0;
+  Lines   := TStringList.Create;
+  try
+    Lines.Text := Output;
+    for I := 0 to Lines.Count - 1 do
+    begin
+      Line := Lines[I];
+      // Root summary line: starts with a space or "Number" prefix, contains N: E: F: I:
+      if (Pos(' N:', Line) > 0) and (Pos(' E:', Line) > 0) and
+         (Pos(' F:', Line) > 0) and (Pos(' I:', Line) > 0) then
+      begin
+        // Use the FIRST occurrence (root totals, before per-suite lines)
+        Total    := ReadInt(Line, 'N:');
+        Errors   := ReadInt(Line, 'E:');
+        Failures := ReadInt(Line, 'F:');
+        Ignored  := ReadInt(Line, 'I:');
+        Result := (Total >= 0);
+        if Result then Exit;
+      end;
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+function TMcpServerThread.RunTests(const LpiPath, JUnitOut: string;
+  out IsError: Boolean): string;
+var
+  LazbuildExe : string;
+  TestExe     : string;
+  ResolvedLpi : string;
+  BuildOut    : string;
+  RunOut      : string;
+  Proc        : TProcess;
+  Chunk       : string = '';
+  BytesRead   : LongInt;
+  Total, Errors, Failures, Ignored : Integer;
+  Parsed      : Boolean;
+  Obj         : TJSONObject;
+  DirJSON     : TJSONData;
+  ProjDir     : string;
+const
+  BufSize = 4096;
+begin
+  IsError := False;
+  LazbuildExe := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
+                 'lazbuild' + GetExeExt;
+  if not FileExists(LazbuildExe) then
+  begin
+    IsError := True;
+    Result  := 'lazbuild not found at: ' + LazbuildExe;
+    Exit;
+  end;
+
+  // Resolve the .lpi path.
+  ResolvedLpi := LpiPath;
+  if ResolvedLpi = '' then
+  begin
+    // Default: tests/mcpserver_tests.lpi relative to the active project dir.
+    FSyncToolName := 'get_project_directory';
+    FSyncParams   := nil;
+    FSyncResult   := '';
+    FSyncError    := False;
+    TThread.Synchronize(Self, @SyncCallTool);
+    if FSyncError or (FSyncResult = '') then
+    begin
+      IsError := True;
+      Result  := 'Could not determine project directory for default test_project path';
+      Exit;
+    end;
+    // FSyncResult is JSON: {"directory":"..."} — extract the string.
+    DirJSON := GetJSON(FSyncResult);
+    try
+      if DirJSON is TJSONObject then
+        ProjDir := TJSONObject(DirJSON).Get('directory', '')
+      else
+        ProjDir := '';
+    finally
+      DirJSON.Free;
+    end;
+    if ProjDir = '' then
+    begin
+      IsError := True;
+      Result  := 'Could not parse project directory from: ' + FSyncResult;
+      Exit;
+    end;
+    ResolvedLpi := IncludeTrailingPathDelimiter(ProjDir) +
+                   'tests' + PathDelim + 'mcpserver_tests.lpi';
+  end;
+
+  if not FileExists(ResolvedLpi) then
+  begin
+    IsError := True;
+    Result  := 'Test project not found: ' + ResolvedLpi;
+    Exit;
+  end;
+
+  // Step 1: compile.
+  BuildOut := '';
+  Proc     := TProcess.Create(nil);
+  try
+    Proc.Executable := LazbuildExe;
+    Proc.Parameters.Add(ResolvedLpi);
+    Proc.Options := [poUsePipes, poStdErrToOutput];
+    Proc.Execute;
+    repeat
+      SetLength(Chunk, BufSize);
+      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
+      if BytesRead > 0 then begin SetLength(Chunk, BytesRead); BuildOut := BuildOut + Chunk; end;
+    until (BytesRead = 0) and not Proc.Running;
+    Proc.WaitOnExit;
+    IsError := Proc.ExitCode <> 0;
+  finally
+    Proc.Free;
+  end;
+
+  if IsError then
+  begin
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('compiled',  False);
+      Obj.Add('run',       False);
+      Obj.Add('output',    BuildOut);
+      Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+    Exit;
+  end;
+
+  // Step 2: run.
+  TestExe := ChangeFileExt(ResolvedLpi, GetExeExt);
+  if not FileExists(TestExe) then
+    TestExe := ChangeFileExt(ResolvedLpi, '') + GetExeExt;
+
+  if not FileExists(TestExe) then
+  begin
+    IsError := True;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('compiled', True);
+      Obj.Add('run',      False);
+      Obj.Add('output',   'Compiled but binary not found at: ' + TestExe);
+      Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+    Exit;
+  end;
+
+  RunOut := '';
+  Proc   := TProcess.Create(nil);
+  try
+    Proc.Executable := TestExe;
+    Proc.Parameters.Add('--all');
+    Proc.Parameters.Add('--format=plain');
+    if JUnitOut <> '' then
+      Proc.Parameters.Add('--junit-out=' + JUnitOut);
+    Proc.Options := [poUsePipes, poStdErrToOutput];
+    Proc.Execute;
+    repeat
+      SetLength(Chunk, BufSize);
+      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
+      if BytesRead > 0 then begin SetLength(Chunk, BytesRead); RunOut := RunOut + Chunk; end;
+    until (BytesRead = 0) and not Proc.Running;
+    Proc.WaitOnExit;
+    // Non-zero exit = test failures — not a tool error.
+  finally
+    Proc.Free;
+  end;
+
+  Parsed := ParseFPCUnitSummary(RunOut, Total, Errors, Failures, Ignored);
+
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('compiled', True);
+    Obj.Add('run',      True);
+    if Parsed then
+    begin
+      Obj.Add('total',    Total);
+      Obj.Add('errors',   Errors);
+      Obj.Add('failures', Failures);
+      Obj.Add('ignored',  Ignored);
+      Obj.Add('passed',   (Errors = 0) and (Failures = 0));
+    end;
+    if JUnitOut <> '' then
+      Obj.Add('junit_out', JUnitOut);
+    Obj.Add('output', RunOut);
+    Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+  IsError := False;
 end;
 
 { ── Unit interface extractor (server thread) ─────────────────────────────── }

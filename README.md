@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 39 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 40 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed.
 
@@ -63,6 +63,7 @@ Transport details: [ADR-001](docs/adr/0001-mcp-server-transport-and-lifecycle.md
 | `run_project` | Build (if needed) and run the active project without the debugger. |
 | `compile_plugin` | Compile a `.lpk` package with `lazbuild`. Use as a smoke-test before `rebuild_ide`. |
 | `rebuild_ide` | Rebuild and restart the Lazarus IDE. The IDE exits immediately; the server is unavailable for ~60 s. Pass `lpk_path` to install a new package before rebuilding; omit it to rebuild with currently installed packages. |
+| `run_tests` | Compile and run the FPCUnit test suite, return structured results (`total`, `errors`, `failures`, `passed`, full output). Pass `test_project` to use a different `.lpi`; pass `junit_out` to also write JUnit-compatible XML for CI consumption. |
 
 ### Code intelligence (CodeTools)
 

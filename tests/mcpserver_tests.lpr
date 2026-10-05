@@ -4,16 +4,82 @@ program mcpserver_tests;
 { MCP Server test runner.
   Standalone utility tests always run.
   Protocol and auth tests require the Lazarus MCP server to be running
-  (start Lazarus IDE; the server starts automatically). }
+  (start Lazarus IDE; the server starts automatically).
+
+  Optional argument:  --junit-out=<path>
+  Writes JUnit-compatible XML to the given path in addition to the
+  normal plain-text console output.  Consumed by run_tests MCP tool. }
 
 {$mode objfpc}{$H+}
 
 uses
   SysUtils, Classes, fphttpclient,
-  fpcunit, testregistry,
-  consoletestrunner,
+  fpcunit, testregistry, testutils,
+  consoletestrunner, fpcunitreport, plaintestreport,
   THttpHelper,
-  TUtils, TProtocol, TAuth, TTestInfra;
+  TUtils, TProtocol, TAuth, TTestInfra,
+  TJUnitWriter;
+
+{ ── Test runner with optional JUnit XML side-output ─────────────────────── }
+
+type
+  TMcpTestRunner = class(TTestRunner)
+  private
+    FJUnitOut : string;
+  protected
+    procedure AppendLongOpts; override;
+    function  ParseOptions: Boolean; override;
+    procedure DoTestRun(ATest: TTest); override;
+  public
+    property JUnitOut: string read FJUnitOut write FJUnitOut;
+  end;
+
+procedure TMcpTestRunner.AppendLongOpts;
+begin
+  inherited;
+  LongOpts.Add('junit-out:');
+end;
+
+function TMcpTestRunner.ParseOptions: Boolean;
+var
+  S : string;
+begin
+  Result := inherited ParseOptions;
+  S := GetOptionValue('junit-out');
+  if S <> '' then FJUnitOut := S;
+end;
+
+procedure TMcpTestRunner.DoTestRun(ATest: TTest);
+var
+  RWriter : TCustomResultsWriter;
+  JWriter : TJUnitResultsWriter;
+  JStream : TFileStream;
+  Res     : TTestResult;
+begin
+  JWriter := nil;
+  JStream := nil;
+  RWriter := GetResultsWriter;
+  Res     := TTestResult.Create;
+  try
+    RWriter.FileName := FileName;
+    Res.AddListener(RWriter);
+    if FJUnitOut <> '' then
+    begin
+      JStream := TFileStream.Create(FJUnitOut, fmCreate);
+      JWriter := TJUnitResultsWriter.Create(JStream);
+      Res.AddListener(JWriter);
+    end;
+    ATest.Run(Res);
+    RWriter.WriteResult(Res);
+    if Assigned(JWriter) then JWriter.FlushXML;
+    ExitCode := Res.NumberOfFailures + Res.NumberOfErrors;
+  finally
+    Res.Free;
+    RWriter.Free;
+    if Assigned(JWriter) then JWriter.Free;
+    if Assigned(JStream) then JStream.Free;
+  end;
+end;
 
 { ── Server discovery ─────────────────────────────────────────────────────── }
 
@@ -89,13 +155,13 @@ end;
 { ── Entry point ──────────────────────────────────────────────────────────── }
 
 var
-  App  : TTestRunner;
+  App  : TMcpTestRunner;
   Port : Word;
   Tok  : string;
 
 begin
-  // TTestUtils is registered via its own initialization block (tutils.pas).
-  // Conditionally run protocol/auth tests when the server is reachable.
+  // TTestUtils and TTestJUnitWriter are registered via their own initialization
+  // blocks.  Conditionally register protocol/auth when server is reachable.
   if ReadServerConfig(Port, Tok) and PingServer(Port, Tok) then
   begin
     GServerPort  := Port;
@@ -109,9 +175,9 @@ begin
     WriteLn('Server not running — protocol/auth tests skipped.');
   WriteLn;
 
-  DefaultFormat        := fPlain;
-  DefaultRunAllTests   := True;
-  App := TTestRunner.Create(nil);
+  DefaultFormat      := fPlain;
+  DefaultRunAllTests := True;
+  App := TMcpTestRunner.Create(nil);
   try
     App.Title := 'MCP Server Tests';
     App.Initialize;
