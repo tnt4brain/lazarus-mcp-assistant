@@ -83,6 +83,15 @@ const
     '"file_path":{"type":"string","description":"Absolute path to the file to open in the editor"}},' +
     '"required":["file_path"]}';
 
+  SCHEMA_EDIT_AT_POSITION =
+    '{"type":"object","properties":{' +
+    '"file":{"type":"string","description":"Absolute path to the file; omit for active editor"},' +
+    '"line":{"type":"integer","description":"1-based line number of the edit point"},' +
+    '"col":{"type":"integer","description":"1-based column number of the edit point"},' +
+    '"delete_len":{"type":"integer","description":"Number of characters to delete forward from (line,col); 0 for pure insert"},' +
+    '"insert_text":{"type":"string","description":"Text to insert at (line,col) after deletion; empty string for pure delete"}},' +
+    '"required":["line","col","delete_len","insert_text"]}';
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchEditorTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -583,6 +592,72 @@ begin
     finally
       Obj.Free;
     end;
+  end
+
+  else if Name = 'edit_at_position' then
+  begin
+    Result := True;
+    if not Assigned(Ctx.Params) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'line, col, delete_len, insert_text required'; Exit;
+    end;
+    StartLine   := Ctx.Params.Get('line',       0);
+    StartCol    := Ctx.Params.Get('col',        0);
+    SyncPos     := Ctx.Params.Get('delete_len', 0);  { reuse SyncPos for delete_len }
+    SyncNewName := Ctx.Params.Get('insert_text', '');
+    if (StartLine < 1) or (StartCol < 1) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'line and col must be >= 1'; Exit;
+    end;
+    if SyncPos < 0 then
+    begin
+      Ctx.Error := True; Ctx.Result := 'delete_len must be >= 0'; Exit;
+    end;
+    SyncFilePath := Ctx.Params.Get('file', '');
+    if SyncFilePath <> '' then
+    begin
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
+      if not Assigned(Ed) then
+      begin
+        if LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1,
+             [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Could not open: ' + SyncFilePath; Exit;
+        end;
+        Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
+      end;
+    end
+    else
+      Ed := SourceEditorManagerIntf.ActiveEditor;
+    if not Assigned(Ed) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
+    end;
+    { Compute end point: walk to start offset, advance delete_len chars, convert back }
+    SyncText := StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]);
+    I := 1;
+    J := 1; { current line during walk }
+    while (I <= Length(SyncText)) and (J < StartLine) do
+    begin
+      if SyncText[I] = #10 then Inc(J);
+      Inc(I);
+    end;
+    Inc(I, StartCol - 1);  { I is now the 1-based offset of (StartLine, StartCol) }
+    McpOffsetToLineCol(SyncText, I + SyncPos, SyncEndLine, SyncEndCol);
+    Ed.ReplaceText(Point(StartCol, StartLine),
+                   Point(SyncEndCol, SyncEndLine), SyncNewName);
+    { Normalise insert_text line endings in result echo }
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('file',       Ed.FileName);
+      Obj.Add('line',       StartLine);
+      Obj.Add('col',        StartCol);
+      Obj.Add('deleted',    SyncPos);
+      Obj.Add('inserted',   Length(SyncNewName));
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
   end;
 end;
 
@@ -644,6 +719,13 @@ begin
     'Open a file in the IDE editor and make it the active tab, ' +
     'without moving the cursor. Returns {"file":..., "already_open":bool}.',
     SCHEMA_OPEN_FILE));
+  Tools.Add(MakeTool('edit_at_position',
+    'Replace exactly delete_len characters starting at (line, col) with insert_text. ' +
+    'No string matching — use coordinates from a prior get_code_outline, ' +
+    'get_symbol_declaration, or get_ast_partial call. ' +
+    'Pass delete_len=0 for a pure insert; insert_text="" for a pure delete. ' +
+    'The edit is recorded in the undo history (Ctrl+Z works).',
+    SCHEMA_EDIT_AT_POSITION));
 end;
 
 initialization

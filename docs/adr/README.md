@@ -12,3 +12,4 @@ ADR-007 was never assigned; no document is missing.
 | [0004](0004-self-hosted-development.md) | # ADR-004 — Self-Hosted Development: Token Persistence, IDE Rebuild, and Session Continuity |
 | [0005](0005-fpcunit-test-suite.md) | # ADR-005 — FPCUnit Test Suite |
 | [0006](0006-project-lifecycle-tools.md) | # ADR-006 — Project Lifecycle Tools |
+| [0008](0008-structural-source-editing.md) | # ADR-008 — Token-Aware / Structural Source Editing |
