@@ -56,6 +56,19 @@ It covers idioms, component libraries, and gotchas specific to this ecosystem.
 - **What**: 18 cyberpunk-themed components (BGRABitmap). Radar scanners, hex grids, waveform displays, 7-segment labels, rotary knobs, glitch labels. Good for dashboards and HMI.
 - **Install**: `cyberui.lpk` in `src/` folder. Requires BGRABitmap.
 
+### TWLazUI
+- **Repo**: https://github.com/CodeInPas/TWLazUI
+- **What**: ~27 Tailwind CSS-inspired modern UI components (BGRABitmap). Buttons, panels, cards, text fields, checkboxes, switches, combo/list boxes, badges, avatars, data tables, line charts, tabs, breadcrumbs, accordions, steppers, progress bars, spinners, alerts, toasts, tooltips, modals. Smooth anti-aliasing, rounded corners, alpha transparency, drop shadows.
+- **Themes**: Primary/Secondary/Success/Danger colors, corner styles, Outline/Solid/Pills variants — all via Object Inspector.
+- **Install**: `twlazui_components.lpk`. Requires BGRABitmap. Lazarus 2.2+.
+
+### CPUView
+- **Repo**: https://github.com/AlexanderBagel/CPUView
+- **What**: Advanced CPU debugger UI for Lazarus. Adds a dockable window (View→Debug Windows→CPU-View, Ctrl+Shift+C) with disassembly, CPU registers, memory dump, call stack, trace log, exports, memory map, and PDB symbol manager. Runs on top of FpDebug — no new debugger engine, pure UI layer.
+- **Platforms**: Windows x86_64, Linux x86_64, Linux AArch64. GTK2 and Qt5 widgetsets.
+- **Install**: compile FWHexView first, then `CPUView_win_x86_64_D.lpk` (or platform equivalent). Requires stable Lazarus 3.x. MIT license.
+- **Note**: purely a visual tool — no external API. Debugger state queries go through FpDebug/IdeDebugger interfaces, not CPUView.
+
 ### Floria Toolkit (ft)
 - **Repo**: https://github.com/kiranaproject/ft
 - **What**: Standalone native GUI framework (AGG subpixel rendering, CSS theming, 60 fps). Builds as a shared C ABI library (`libft.so`/`.dll`). **Not an LCL component pack** — requires separate integration. Not drop-in with existing LCL forms.
