@@ -384,6 +384,7 @@ end;
 - **Signals vs events on Linux**: use `fpSetSignalHandler` via `BaseUnix`; `Application.OnException` for unhandled exceptions.
 - **`{$IFDEF WINDOWS}`** (not `WIN32`) for Windows-specific code on 64-bit.
 - **LCL thread safety**: all GUI calls must happen on the main thread. Use `TThread.Synchronize` or `Application.QueueAsyncCall`.
+- **`TThread.Synchronize` + async callbacks**: never do work (ProcessMessages, ProcessAsyncCallQueue, Sleep) *inside* a Synchronize callback — it blocks the main thread's event loop and prevents `Application.QueueAsyncCall` callbacks from being delivered. Pattern: one Synchronize call that starts the async op and returns immediately; worker thread polls the result field with `Sleep`. See `get_call_stack` in `McpToolsDebugger.pas` for the canonical example.
 - **`TFrame`** is the recommended code-reuse unit for composite UI, not `TPanel` subclasses.
 
 ---

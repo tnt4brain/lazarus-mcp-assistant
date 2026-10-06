@@ -46,6 +46,10 @@ procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 procedure McpRegisterSchemas(Tools: TJSONArray);
 
+{ Blocking group registry — dispatchers run on the MCP worker thread. }
+procedure RegisterMcpBlockingGroup(Fn: TMcpGroupDispatch);
+procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
+
 { MCP tool annotation presets — pass as AAnnotations to MakeTool. }
 const
   MCP_ANN_RO    = '{"readOnlyHint":true}';
@@ -69,6 +73,7 @@ implementation
 var
   GDispatchGroups  : array of TMcpGroupDispatch;
   GSchemaGroups    : array of TMcpSchemaReg;
+  GBlockingGroups  : array of TMcpGroupDispatch;
   GResourceEntries : array of TMcpResourceEntry;
 
 procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);
@@ -102,6 +107,25 @@ var
 begin
   for I := 0 to High(GSchemaGroups) do
     GSchemaGroups[I](Tools);
+end;
+
+procedure RegisterMcpBlockingGroup(Fn: TMcpGroupDispatch);
+begin
+  SetLength(GBlockingGroups, Length(GBlockingGroups) + 1);
+  GBlockingGroups[High(GBlockingGroups)] := Fn;
+end;
+
+procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
+var
+  I : Integer;
+begin
+  Handled := False;
+  for I := 0 to High(GBlockingGroups) do
+    if GBlockingGroups[I](Name, Ctx) then
+    begin
+      Handled := True;
+      Exit;
+    end;
 end;
 
 function MakeTool(const AName, ADesc, InputSchemaJSON: string;

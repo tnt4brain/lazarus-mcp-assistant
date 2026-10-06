@@ -147,7 +147,7 @@ begin
   FServer := TMcpHttpServer.Create(nil);
   FServer.Address   := '127.0.0.1';
   FServer.Port      := APort;
-  FServer.Threaded  := False;
+  FServer.Threaded  := True;   { each connection gets its own thread — required for blocking tools }
   FServer.OnRequest := @HandleRequest;
   FServer.QueueSize := 5;
 end;
@@ -360,7 +360,7 @@ begin
     begin
       FSyncLogMsg := Format('Client "%s %s" connected (protocol %s).',
         [ClientInfo.Get('name', '?'), ClientInfo.Get('version', '?'), ProtoVer]);
-      TThread.Synchronize(Self, @SyncLogToIDE);
+      TThread.Synchronize(nil, @SyncLogToIDE);
     end;
   end;
 
@@ -519,7 +519,7 @@ begin
     FSyncParams   := nil;
     FSyncResult   := '';
     FSyncError    := False;
-    TThread.Synchronize(Self, @SyncCallTool);
+    TThread.Synchronize(nil, @SyncCallTool);
     if not FSyncError and (FSyncResult <> '') then
     begin
       FilesData := GetJSON(FSyncResult);
@@ -602,7 +602,7 @@ begin
     FSyncParams   := nil;
     FSyncResult   := '';
     FSyncError    := False;
-    TThread.Synchronize(Self, @SyncCallTool);
+    TThread.Synchronize(nil, @SyncCallTool);
     if FSyncError or (FSyncResult = '') then
       Text := 'No compiler output is available. Please build the project first ' +
               '(Build → Build Project), then invoke this prompt again.'
@@ -618,7 +618,7 @@ begin
     FSyncParams   := nil;
     FSyncResult   := '';
     FSyncError    := False;
-    TThread.Synchronize(Self, @SyncCallTool);
+    TThread.Synchronize(nil, @SyncCallTool);
     FilePath := '';
     if not FSyncError and (FSyncResult <> '') then
     begin
@@ -667,6 +667,8 @@ var
   ResolvedLpi : string;
   DirData     : TJSONData;
   ProjDir     : string;
+  BCtx        : TMcpToolCall;
+  BHandled    : Boolean;
 begin
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
@@ -696,7 +698,7 @@ begin
       FSyncParams   := nil;
       FSyncResult   := '';
       FSyncError    := False;
-      TThread.Synchronize(Self, @SyncCallTool);
+      TThread.Synchronize(nil, @SyncCallTool);
       if FSyncError or (FSyncResult = '') then
       begin
         Text := 'Could not determine project directory for default test_project path';
@@ -723,16 +725,27 @@ begin
   end
   else
   begin
-    // Default: IDE API — must run on main thread.
-    // Unknown tools are caught inside SyncCallTool.
-    FSyncToolName        := ToolName;
-    FSyncParams          := Args;
-    FSyncResult          := '';
-    FSyncError           := False;
-    FSyncConnectionClose := False;
-    TThread.Synchronize(Self, @SyncCallTool);
-    Text := FSyncResult;
-    Err  := FSyncError;
+    BCtx.Params := Args; BCtx.Result := ''; BCtx.Error := False;
+    BCtx.ConnectionClose := False; BCtx.StopServer := @Self.StopServer;
+    McpBlockingDispatch(ToolName, BCtx, BHandled);
+    if BHandled then
+    begin
+      Text := BCtx.Result;
+      Err  := BCtx.Error;
+      FSyncConnectionClose := BCtx.ConnectionClose;
+    end
+    else
+    begin
+      // Default: IDE API — must run on main thread.
+      FSyncToolName        := ToolName;
+      FSyncParams          := Args;
+      FSyncResult          := '';
+      FSyncError           := False;
+      FSyncConnectionClose := False;
+      TThread.Synchronize(nil, @SyncCallTool);
+      Text := FSyncResult;
+      Err  := FSyncError;
+    end;
   end;
 
   TextNode := TJSONObject.Create;
@@ -810,6 +823,7 @@ procedure InitializeMcpServer;
 var
   Port  : Word;
   Token : string;
+  Tries : Integer;
 begin
   if IsServerRunning then Exit;
 
@@ -835,13 +849,17 @@ begin
   McpServerThread := TMcpServerThread.Create(Token, Port);
   McpServerThread.Start;
 
-  Sleep(300);
-  if not PingServer(Port, Token) then
+  { Give the server thread up to 1 s to bind and start accepting.
+    A simple liveness check replaces the fragile single-shot ping. }
+  Tries := 0;
+  while McpServerThread.Finished and (Tries < 10) do
   begin
-    DebugLn('[MCP Server] Ping check failed; tearing down.');
-    McpServerThread.StopServer;
-    while not McpServerThread.Finished do
-      CheckSynchronize(10);
+    Sleep(100);
+    Inc(Tries);
+  end;
+  if McpServerThread.Finished then
+  begin
+    DebugLn('[MCP Server] Server thread died immediately; tearing down.');
     FreeAndNil(McpServerThread);
     Exit;
   end;
