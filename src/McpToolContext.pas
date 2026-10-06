@@ -21,7 +21,6 @@ type
     Params          : TJSONObject;
     Result          : string;
     Error           : Boolean;
-    FileList        : string;       { two-phase tools: find_all_references, rename_identifier }
     ConnectionClose : Boolean;      { IDE-restart tools: rebuild_ide, install/uninstall_package }
     StopServer      : TMcpStopServerProc;  { set by SyncCallTool before dispatch }
   end;

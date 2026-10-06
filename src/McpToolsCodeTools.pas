@@ -1,12 +1,12 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsCodeTools;
 
-{ Codetools / search tools: get_symbol_declaration, get_identifier_context,
-  get_code_outline, find_all_references, rename_identifier, goto_declaration,
-  create_unit, add_unit_to_uses, insert_in_procedure, replace_procedure_body,
-  add_to_class_section.
-  Schema registration also covers get_unit_interface and search_in_project,
-  which run off the main thread and remain handled in HandleToolsCall. }
+{ Codetools / search tools: get_symbol_declaration, get_unit_interface,
+  get_identifier_context, get_code_outline, find_all_references, rename_identifier,
+  goto_declaration, search_in_project, create_unit, add_unit_to_uses,
+  insert_in_procedure, replace_procedure_body, add_to_class_section, get_ast_partial.
+  Note: add_unit_to_uses always saves to disk (CodeTools ApplyChanges path);
+  it does not use the editor buffer and has no auto_save flag. }
 
 {$mode objfpc}{$H+}
 
@@ -20,7 +20,7 @@ uses
   CodeToolManager, CodeCache, CodeTree, AVL_Tree,
   Controls,
   fpjson, jsonparser,
-  McpToolContext;
+  McpToolContext, McpToolHelpers;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -297,10 +297,36 @@ var
   BeginNode            : TCodeTreeNode;
   Child                : TCodeTreeNode;
   AutoSave             : Boolean;
+  TmpCtx               : TMcpToolCall;
+  TmpHandled           : Boolean;
 begin
   Result := False;
 
-  if Name = 'get_symbol_declaration' then
+  if Name = 'get_unit_interface' then
+  begin
+    Result := True;
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+    begin
+      Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
+    end;
+    Ctx.Result := McpGetUnitInterface(Ctx.Params.Strings['file'], Ctx.Error);
+  end
+
+  else if Name = 'search_in_project' then
+  begin
+    Result := True;
+    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    if TmpCtx.Error then
+    begin
+      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+    end;
+    Ctx.Result := McpDoSearchInProject(TmpCtx.Result,
+      IfThen(Assigned(Ctx.Params), Ctx.Params.Get('query', ''), ''));
+  end
+
+  else if Name = 'get_symbol_declaration' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -441,7 +467,14 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
     end;
-    FileListJ := TJSONArray(GetJSON(Ctx.FileList));
+    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    if TmpCtx.Error then
+    begin
+      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+    end;
+    FileListJ := TJSONArray(GetJSON(TmpCtx.Result));
     FileNames := TStringList.Create;
     RefTree   := nil;
     try
@@ -525,7 +558,14 @@ begin
       Ctx.Result := 'No identifier at line ' + IntToStr(NewY) + ' col ' + IntToStr(NewX);
       Exit;
     end;
-    FileListJ := TJSONArray(GetJSON(Ctx.FileList));
+    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    if TmpCtx.Error then
+    begin
+      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+    end;
+    FileListJ := TJSONArray(GetJSON(TmpCtx.Result));
     FileNames := TStringList.Create;
     RefTree   := nil;
     try

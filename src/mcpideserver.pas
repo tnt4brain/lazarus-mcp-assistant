@@ -27,7 +27,6 @@ type
     FSyncResult          : string;      // output set by main thread
     FSyncError           : Boolean;     // True when SyncCallTool encountered an error
     FSyncConnectionClose : Boolean;     // True → add Connection: close to response
-    FSyncFileList : string;      // JSON file list passed into two-phase tools
     FSyncLogMsg   : string;
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
@@ -678,16 +677,7 @@ begin
   Err  := False;
   Text := '';
 
-  if ToolName = 'get_unit_interface' then
-  begin
-    if not Assigned(Args) or (Args.Get('file', '') = '') then
-    begin
-      Text := 'Error: file argument required';
-      Err  := True;
-    end else
-      Text := McpGetUnitInterface(Args.Strings['file'], Err);
-  end
-  else if ToolName = 'compile_plugin' then
+  if ToolName = 'compile_plugin' then
   begin
     if not Assigned(Args) or (Args.Get('lpk_path', '') = '') then
     begin
@@ -731,51 +721,6 @@ begin
       Text := McpRunTests(ResolvedLpi,
         IfThen(Assigned(Args), Args.Get('junit_out', ''), ''), Err);
   end
-  else if ToolName = 'search_in_project' then
-  begin
-    FSyncToolName := 'get_project_files';
-    FSyncParams   := nil;
-    FSyncResult   := '';
-    FSyncError    := False;
-    TThread.Synchronize(Self, @SyncCallTool);
-    if FSyncError then
-    begin
-      Text := FSyncResult;
-      Err  := True;
-    end else
-    begin
-      if Assigned(Args) then
-        Text := McpDoSearchInProject(FSyncResult, Args.Get('query', ''))
-      else
-        Text := McpDoSearchInProject(FSyncResult, '');
-      Err  := False;
-    end;
-  end
-  else if (ToolName = 'find_all_references') or (ToolName = 'rename_identifier') then
-  begin
-    // Step 1: get project file list on main thread
-    FSyncToolName := 'get_project_files';
-    FSyncParams   := nil;
-    FSyncResult   := '';
-    FSyncError    := False;
-    TThread.Synchronize(Self, @SyncCallTool);
-    if FSyncError then
-    begin
-      Text := FSyncResult;
-      Err  := True;
-    end else
-    begin
-      // Step 2: run Codetools on main thread; pass file list in FSyncFileList
-      FSyncFileList := FSyncResult;
-      FSyncToolName := ToolName;
-      FSyncParams   := Args;
-      FSyncResult   := '';
-      FSyncError    := False;
-      TThread.Synchronize(Self, @SyncCallTool);
-      Text := FSyncResult;
-      Err  := FSyncError;
-    end;
-  end
   else
   begin
     // Default: IDE API — must run on main thread.
@@ -809,7 +754,6 @@ var
   Handled : Boolean;
 begin
   Ctx.Params          := FSyncParams;
-  Ctx.FileList        := FSyncFileList;
   Ctx.Result          := '';
   Ctx.Error           := False;
   Ctx.ConnectionClose := False;
