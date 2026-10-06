@@ -5,8 +5,7 @@ unit McpToolsCodeTools;
   get_identifier_context, get_code_outline, find_all_references, rename_identifier,
   goto_declaration, search_in_project, create_unit, add_unit_to_uses,
   insert_in_procedure, replace_procedure_body, add_to_class_section, get_ast_partial.
-  Note: add_unit_to_uses always saves to disk (CodeTools ApplyChanges path);
-  it does not use the editor buffer and has no auto_save flag. }
+  All edit tools work through the editor buffer with an optional auto_save flag. }
 
 {$mode objfpc}{$H+}
 
@@ -84,7 +83,8 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path to the Pascal file to modify"},' +
     '"unit_name":{"type":"string","description":"Unit name to add to the uses clause"},' +
-    '"in_interface":{"type":"boolean","description":"Add to interface uses (true, default) or implementation uses (false)"}},' +
+    '"in_interface":{"type":"boolean","description":"Add to interface uses (true, default) or implementation uses (false)"},' +
+    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
     '"required":["file","unit_name"]}';
 
   SCHEMA_INSERT_IN_PROCEDURE =
@@ -737,6 +737,7 @@ begin
     end;
     FilePath := Ctx.Params.Get('file',      '');
     Symbol   := Ctx.Params.Get('unit_name', '');
+    AutoSave := Ctx.Params.Get('auto_save', False);
     if (FilePath = '') or (Symbol = '') then
     begin
       Ctx.Error := True; Ctx.Result := 'file and unit_name required'; Exit;
@@ -749,6 +750,8 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
     end;
+    { Snapshot source before CodeTools mutates TCodeBuffer via ApplyChanges }
+    PasName := CodeBuf.Source;
     if Ctx.Params.Get('in_interface', True) then
     begin
       if not CodeToolBoss.AddUnitToMainUsesSection(CodeBuf, Symbol, '') then
@@ -767,17 +770,47 @@ begin
         Exit;
       end;
     end;
+    { Apply mutates TCodeBuffer in memory only — no disk write }
     if not CodeToolBoss.ApplyChanges then
     begin
       Ctx.Error := True; Ctx.Result := 'ApplyChanges failed'; Exit;
     end;
-    CodeBuf.Save;
-    LazarusIDE.DoRevertEditorFile(FilePath);
+    { Diff OrigSource vs NewSource to find the single insertion point.
+      CodeTools always produces one contiguous insertion for this operation. }
+    Snippet := CodeBuf.Source;  { NewSource }
+    I := 1;
+    while (I <= Length(PasName)) and (I <= Length(Snippet))
+          and (PasName[I] = Snippet[I]) do
+      Inc(I);
+    { I = first divergence (1-based absolute position in original) }
+    J := 0;
+    while (J < Length(PasName) - I + 1) and (J < Length(Snippet) - I + 1)
+          and (PasName[Length(PasName) - J] = Snippet[Length(Snippet) - J]) do
+      Inc(J);
+    { InsertedText = Snippet[I .. Length(Snippet)-J] }
+    NewName := Copy(Snippet, I, Length(Snippet) - J - I + 1);
+    { Convert absolute position I in PasName to line/col }
+    CodeBuf.Source := PasName;  { restore so AbsoluteToLineCol is consistent }
+    CodeBuf.AbsoluteToLineCol(I, NewY, NewX);
+    { Open editor if not already open }
+    if not Assigned(Ed) then
+    begin
+      if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
+           [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
+      end;
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+    end;
+    { Insert into editor buffer — lands on undo stack, no disk write }
+    Ed.ReplaceText(Point(NewX, NewY), Point(NewX, NewY), NewName);
+    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
     Obj := TJSONObject.Create;
     try
       Obj.Add('file',      FilePath);
       Obj.Add('unit_name', Symbol);
       Obj.Add('added',     True);
+      if AutoSave then Obj.Add('saved', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -1171,9 +1204,10 @@ begin
     SCHEMA_CREATE_UNIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('add_unit_to_uses',
     'Add a unit to the uses clause of a Pascal file using Codetools. ' +
-    'Writes directly to disk (not undoable via Ctrl+Z; use git to revert). ' +
+    'Edit lands in the editor buffer (Ctrl+Z works); use auto_save=true or ' +
+    'save_file to persist to disk. ' +
     'Set in_interface=false to target the implementation uses clause.',
-    SCHEMA_ADD_UNIT_TO_USES, MCP_ANN_DEST));
+    SCHEMA_ADD_UNIT_TO_USES, MCP_ANN_WRITE));
   Tools.Add(MakeTool('insert_in_procedure',
     'Insert text at the start of a named procedure or function body (immediately ' +
     'after begin), located via CodeTools AST. No string matching — robust to ' +
