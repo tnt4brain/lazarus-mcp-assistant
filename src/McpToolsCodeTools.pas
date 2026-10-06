@@ -92,7 +92,8 @@ const
     '"file":{"type":"string","description":"Absolute path to the .pas file"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
-    '"text":{"type":"string","description":"Pascal text to insert at the start of the procedure body, immediately after begin"}},' +
+    '"text":{"type":"string","description":"Pascal text to insert at the start of the procedure body, immediately after begin"},' +
+    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
     '"required":["file","proc_name","text"]}';
 
   SCHEMA_REPLACE_PROCEDURE_BODY =
@@ -100,7 +101,8 @@ const
     '"file":{"type":"string","description":"Absolute path to the .pas file"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
-    '"new_body":{"type":"string","description":"New body content placed between begin and end; replaces everything currently there"}},' +
+    '"new_body":{"type":"string","description":"New body content placed between begin and end; replaces everything currently there"},' +
+    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
     '"required":["file","proc_name","new_body"]}';
 
   SCHEMA_ADD_TO_CLASS_SECTION =
@@ -108,7 +110,8 @@ const
     '"file":{"type":"string","description":"Absolute path to the .pas file"},' +
     '"class_name":{"type":"string","description":"Class type name (e.g. TMyForm)"},' +
     '"section":{"type":"string","description":"Class section to append to: public (default), private, protected, or published"},' +
-    '"text":{"type":"string","description":"Declaration text to append to the section"}},' +
+    '"text":{"type":"string","description":"Declaration text to append to the section"},' +
+    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
     '"required":["file","class_name","text"]}';
 
   SCHEMA_GET_AST_PARTIAL =
@@ -293,6 +296,7 @@ var
   InsertLine           : Integer;
   BeginNode            : TCodeTreeNode;
   Child                : TCodeTreeNode;
+  AutoSave             : Boolean;
 begin
   Result := False;
 
@@ -751,6 +755,7 @@ begin
     Symbol   := Ctx.Params.Get('proc_name',  '');
     NewName  := Ctx.Params.Get('class_name', '');
     Snippet  := Ctx.Params.Get('text',       '');
+    AutoSave := Ctx.Params.Get('auto_save',  False);
     if (FilePath = '') or (Symbol = '') then
     begin
       Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
@@ -782,12 +787,14 @@ begin
     Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
     Ed.ReplaceText(Point(1, BeginLine + 1), Point(1, BeginLine + 1),
                    Snippet + #10);
+    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
     Obj := TJSONObject.Create;
     try
       Obj.Add('file',       FilePath);
       Obj.Add('procedure',  Symbol);
       Obj.Add('begin_line', BeginLine);
       Obj.Add('inserted',   True);
+      if AutoSave then Obj.Add('saved', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -805,6 +812,7 @@ begin
     Symbol   := Ctx.Params.Get('proc_name',  '');
     NewName  := Ctx.Params.Get('class_name', '');
     Snippet  := Ctx.Params.Get('new_body',   '');
+    AutoSave := Ctx.Params.Get('auto_save',  False);
     if (FilePath = '') or (Symbol = '') then
     begin
       Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
@@ -836,6 +844,7 @@ begin
     Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
     Ed.ReplaceText(Point(1, BeginLine + 1), Point(1, EndLine),
                    Snippet + #10);
+    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
     Obj := TJSONObject.Create;
     try
       Obj.Add('file',       FilePath);
@@ -843,6 +852,7 @@ begin
       Obj.Add('begin_line', BeginLine);
       Obj.Add('end_line',   EndLine);
       Obj.Add('replaced',   True);
+      if AutoSave then Obj.Add('saved', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -860,6 +870,7 @@ begin
     Symbol   := Ctx.Params.Get('class_name', '');
     NewName  := Ctx.Params.Get('section',    'public');
     Snippet  := Ctx.Params.Get('text',       '');
+    AutoSave := Ctx.Params.Get('auto_save',  False);
     if (FilePath = '') or (Symbol = '') then
     begin
       Ctx.Error := True; Ctx.Result := 'file and class_name required'; Exit;
@@ -893,12 +904,14 @@ begin
     Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
     Ed.ReplaceText(Point(1, InsertLine), Point(1, InsertLine),
                    Snippet + #10);
+    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
     Obj := TJSONObject.Create;
     try
       Obj.Add('file',     FilePath);
       Obj.Add('class',    Symbol);
       Obj.Add('section',  NewName);
       Obj.Add('inserted', True);
+      if AutoSave then Obj.Add('saved', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;

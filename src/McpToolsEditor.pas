@@ -63,7 +63,8 @@ const
     '"old_string":{"type":"string","description":"Exact text to find and replace (must be unique unless replace_all=true)"},' +
     '"new_string":{"type":"string","description":"Replacement text; empty string to delete the match"},' +
     '"file":{"type":"string","description":"Absolute path to the file; omit to edit the active editor"},' +
-    '"replace_all":{"type":"boolean","description":"Replace all occurrences (default false — fails if >1 match)"}},' +
+    '"replace_all":{"type":"boolean","description":"Replace all occurrences (default false — fails if >1 match)"},' +
+    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
     '"required":["old_string","new_string"]}';
 
   SCHEMA_SAVE_FILE =
@@ -89,7 +90,8 @@ const
     '"line":{"type":"integer","description":"1-based line number of the edit point"},' +
     '"col":{"type":"integer","description":"1-based column number of the edit point"},' +
     '"delete_len":{"type":"integer","description":"Number of characters to delete forward from (line,col); 0 for pure insert"},' +
-    '"insert_text":{"type":"string","description":"Text to insert at (line,col) after deletion; empty string for pure delete"}},' +
+    '"insert_text":{"type":"string","description":"Text to insert at (line,col) after deletion; empty string for pure delete"},' +
+    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
     '"required":["line","col","delete_len","insert_text"]}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
@@ -110,6 +112,7 @@ var
   SyncOldStr   : string;
   SyncNewName  : string;
   SyncReplAll  : Boolean;
+  SyncAutoSave : Boolean;
   SyncText     : string;
   SyncMatchPositions: TList;
   SyncPos      : Integer;
@@ -399,9 +402,10 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'old_string and new_string required'; Exit;
     end;
-    SyncOldStr  := Ctx.Params.Get('old_string', '');
-    SyncNewName := Ctx.Params.Get('new_string', '');
-    SyncReplAll := Ctx.Params.Get('replace_all', False);
+    SyncOldStr   := Ctx.Params.Get('old_string',  '');
+    SyncNewName  := Ctx.Params.Get('new_string',  '');
+    SyncReplAll  := Ctx.Params.Get('replace_all', False);
+    SyncAutoSave := Ctx.Params.Get('auto_save',   False);
     if SyncOldStr = '' then
     begin
       Ctx.Error := True; Ctx.Result := 'old_string must not be empty'; Exit;
@@ -459,10 +463,13 @@ begin
         Ed.ReplaceText(Point(SyncMatchCol, SyncMatchLine),
                        Point(SyncEndCol,   SyncEndLine), SyncNewName);
       end;
+      if SyncAutoSave then
+        LazarusIDE.DoSaveEditorFile(Ed.FileName, []);
       Obj := TJSONObject.Create;
       try
         Obj.Add('file',     Ed.FileName);
         Obj.Add('replaced', SyncMatchPositions.Count);
+        if SyncAutoSave then Obj.Add('saved', True);
         Ctx.Result := Obj.AsJSON;
       finally
         Obj.Free;
@@ -601,10 +608,11 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'line, col, delete_len, insert_text required'; Exit;
     end;
-    StartLine   := Ctx.Params.Get('line',       0);
-    StartCol    := Ctx.Params.Get('col',        0);
-    SyncPos     := Ctx.Params.Get('delete_len', 0);  { reuse SyncPos for delete_len }
-    SyncNewName := Ctx.Params.Get('insert_text', '');
+    StartLine    := Ctx.Params.Get('line',        0);
+    StartCol     := Ctx.Params.Get('col',         0);
+    SyncPos      := Ctx.Params.Get('delete_len',  0);  { reuse SyncPos for delete_len }
+    SyncNewName  := Ctx.Params.Get('insert_text', '');
+    SyncAutoSave := Ctx.Params.Get('auto_save',   False);
     if (StartLine < 1) or (StartCol < 1) then
     begin
       Ctx.Error := True; Ctx.Result := 'line and col must be >= 1'; Exit;
@@ -646,14 +654,16 @@ begin
     McpOffsetToLineCol(SyncText, I + SyncPos, SyncEndLine, SyncEndCol);
     Ed.ReplaceText(Point(StartCol, StartLine),
                    Point(SyncEndCol, SyncEndLine), SyncNewName);
-    { Normalise insert_text line endings in result echo }
+    if SyncAutoSave then
+      LazarusIDE.DoSaveEditorFile(Ed.FileName, []);
     Obj := TJSONObject.Create;
     try
-      Obj.Add('file',       Ed.FileName);
-      Obj.Add('line',       StartLine);
-      Obj.Add('col',        StartCol);
-      Obj.Add('deleted',    SyncPos);
-      Obj.Add('inserted',   Length(SyncNewName));
+      Obj.Add('file',     Ed.FileName);
+      Obj.Add('line',     StartLine);
+      Obj.Add('col',      StartCol);
+      Obj.Add('deleted',  SyncPos);
+      Obj.Add('inserted', Length(SyncNewName));
+      if SyncAutoSave then Obj.Add('saved', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
