@@ -538,7 +538,7 @@ begin
     'Marks the designer modified so the change is saved with the form. ' +
     'Opens the form in the designer if needed. ' +
     'WARNING: changes the live designer state; use save_file to persist to disk.',
-    SCHEMA_SET_COMPONENT_PROPERTY));
+    SCHEMA_SET_COMPONENT_PROPERTY, MCP_ANN_WRITE));
   Tools.Add(MakeTool('search_components',
     'Search the IDE Component Class Registry (CCR) for components whose class name ' +
     'contains the query string. Returns class_name, unit_name, and palette_page for each match. ' +
@@ -549,13 +549,13 @@ begin
     'class to be registered in the IDE palette (use search_components to find it). ' +
     'Returns the assigned name and class of the new component. ' +
     'Use save_file on the .lfm to persist.',
-    SCHEMA_ADD_COMPONENT));
+    SCHEMA_ADD_COMPONENT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('create_event_handler',
     'Create an event handler stub for a component event and navigate the IDE to ' +
     'it. If a handler is already assigned, navigates to the existing one and ' +
     'returns status=existing. On success the form Pascal unit is modified and the ' +
     'cursor is placed inside the new stub. Use save_file to persist.',
-    SCHEMA_CREATE_EVENT_HANDLER));
+    SCHEMA_CREATE_EVENT_HANDLER, MCP_ANN_WRITE));
 end;
 
 initialization

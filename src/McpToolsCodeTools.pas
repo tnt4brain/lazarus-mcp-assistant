@@ -1120,7 +1120,7 @@ begin
   Tools.Add(MakeTool('goto_declaration',
     'Find where an identifier is declared and jump the editor cursor there. ' +
     'Opens the declaration file if needed.',
-    SCHEMA_GOTO_DECLARATION));
+    SCHEMA_GOTO_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('search_in_project',
     'Search for a text substring across all project source files. ' +
     'Returns matching file, line number, and line content.',
@@ -1128,7 +1128,7 @@ begin
   Tools.Add(MakeTool('create_unit',
     'Create a new Pascal unit file on disk, add it to the active project, ' +
     'and open it in the editor. Provide content or receive a blank unit skeleton.',
-    SCHEMA_CREATE_UNIT));
+    SCHEMA_CREATE_UNIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('add_unit_to_uses',
     'Add a unit to the uses clause of a Pascal file using Codetools. ' +
     'Writes directly to disk (not undoable via Ctrl+Z; use git to revert). ' +
@@ -1138,17 +1138,17 @@ begin
     'Insert text at the start of a named procedure or function body (immediately ' +
     'after begin), located via CodeTools AST. No string matching — robust to ' +
     'whitespace and formatting changes. Uses the editor undo stack (Ctrl+Z works).',
-    SCHEMA_INSERT_IN_PROCEDURE));
+    SCHEMA_INSERT_IN_PROCEDURE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('replace_procedure_body',
     'Replace the entire body of a named procedure or function (everything between ' +
     'begin and end) with new_body, located via CodeTools AST. No string matching. ' +
     'Uses the editor undo stack (Ctrl+Z works).',
-    SCHEMA_REPLACE_PROCEDURE_BODY));
+    SCHEMA_REPLACE_PROCEDURE_BODY, MCP_ANN_WRITE));
   Tools.Add(MakeTool('add_to_class_section',
     'Append a declaration to a named section of a class (public, private, ' +
     'protected, or published), located via CodeTools AST. No string matching. ' +
     'Uses the editor undo stack (Ctrl+Z works).',
-    SCHEMA_ADD_TO_CLASS_SECTION));
+    SCHEMA_ADD_TO_CLASS_SECTION, MCP_ANN_WRITE));
   Tools.Add(MakeTool('get_ast_partial',
     'Return the structural content of a named procedure body: local variable ' +
     'declarations and a flat list of block-level control-flow nodes (if, for, ' +

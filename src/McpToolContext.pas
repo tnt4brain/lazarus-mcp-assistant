@@ -49,8 +49,9 @@ procedure McpRegisterSchemas(Tools: TJSONArray);
 
 { MCP tool annotation presets — pass as AAnnotations to MakeTool. }
 const
-  MCP_ANN_RO   = '{"readOnlyHint":true}';
-  MCP_ANN_DEST = '{"destructiveHint":true}';
+  MCP_ANN_RO    = '{"readOnlyHint":true}';
+  MCP_ANN_WRITE = '{"destructiveHint":false}';
+  MCP_ANN_DEST  = '{"destructiveHint":true}';
 
 (* Build a tool descriptor object from a JSON string schema.
    AName and ADesc are plain Pascal strings (auto-escaped).

@@ -273,15 +273,15 @@ begin
   Tools.Add(MakeTool('build_project',
     'Trigger an incremental build of the active project and return ' +
     'success/failure with any compiler errors.',
-    SCHEMA_BUILD_PROJECT));
+    SCHEMA_BUILD_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('run_project',
     'Build (if needed) and run the active project without the debugger.',
-    SCHEMA_RUN_PROJECT));
+    SCHEMA_RUN_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('compile_plugin',
     'Compile a Lazarus package (.lpk) using lazbuild and return the full ' +
     'compiler output. Use this as a smoke-test before calling rebuild_ide. ' +
     'Does not restart the IDE.',
-    SCHEMA_COMPILE_PLUGIN));
+    SCHEMA_COMPILE_PLUGIN, MCP_ANN_WRITE));
   Tools.Add(MakeTool('rebuild_ide',
     'Rebuild and restart the Lazarus IDE. Pass lpk_path to install a package ' +
     'before rebuilding; omit it to rebuild with currently installed packages. ' +
@@ -293,7 +293,7 @@ begin
     '(pass/fail counts, individual test output). Standalone utility and ' +
     'infrastructure tests always run; protocol and auth tests run only when ' +
     'the MCP server is reachable. Optionally writes JUnit XML for CI consumption.',
-    SCHEMA_RUN_TESTS));
+    SCHEMA_RUN_TESTS, MCP_ANN_WRITE));
   Tools.Add(MakeTool('get_compiler_errors',
     'Return the current build compiler errors and warnings.',
     SCHEMA_GET_COMPILER_ERRORS, MCP_ANN_RO));
@@ -303,7 +303,7 @@ begin
   Tools.Add(MakeTool('run_with_args',
     'Set command-line arguments for the active project and run it (build if needed). ' +
     'Equivalent to run_project but passes args to the launched process.',
-    SCHEMA_RUN_WITH_ARGS));
+    SCHEMA_RUN_WITH_ARGS, MCP_ANN_WRITE));
 end;
 
 initialization

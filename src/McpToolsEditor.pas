@@ -698,14 +698,14 @@ begin
     'Move the cursor to a specific line and column in the editor. ' +
     'Opens the file first if it is not already open. ' +
     'Omit file to move the cursor in the currently active editor.',
-    SCHEMA_SET_CURSOR_POSITION));
+    SCHEMA_SET_CURSOR_POSITION, MCP_ANN_RO));
   Tools.Add(MakeTool('replace_text',
     'Replace a range of text in the editor buffer. ' +
     'The edit is recorded in the editor''s undo history (Ctrl+Z works). ' +
     'Use an empty range (start = end) to insert text. ' +
     'Use empty new_text to delete the range. ' +
     'Opens the file first if it is not already open.',
-    SCHEMA_REPLACE_TEXT));
+    SCHEMA_REPLACE_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('edit_text',
     'Replace text by content: find old_string in the editor buffer and replace ' +
     'with new_string. Fails if old_string is not found or matches more than once ' +
@@ -713,29 +713,29 @@ begin
     'Prefer this over replace_text — no stale line-number offsets. ' +
     'The edit is recorded in the editor''s undo history (Ctrl+Z works). ' +
     'Opens the file first if it is not already open.',
-    SCHEMA_EDIT_TEXT));
+    SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('save_file',
     'Save the editor buffer to disk. Omit file to save the active editor.',
-    SCHEMA_SAVE_FILE));
+    SCHEMA_SAVE_FILE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('close_file',
     'Close an editor tab. Omit file to close the active editor. ' +
     'Unsaved changes are discarded quietly.',
-    SCHEMA_CLOSE_FILE));
+    SCHEMA_CLOSE_FILE, MCP_ANN_DEST));
   Tools.Add(MakeTool('revert_file',
     'Discard unsaved editor changes and reload the file from disk. ' +
     'Omit file to revert the active editor.',
-    SCHEMA_REVERT_FILE));
+    SCHEMA_REVERT_FILE, MCP_ANN_DEST));
   Tools.Add(MakeTool('open_file',
     'Open a file in the IDE editor and make it the active tab, ' +
     'without moving the cursor. Returns {"file":..., "already_open":bool}.',
-    SCHEMA_OPEN_FILE));
+    SCHEMA_OPEN_FILE, MCP_ANN_RO));
   Tools.Add(MakeTool('edit_at_position',
     'Replace exactly delete_len characters starting at (line, col) with insert_text. ' +
     'No string matching — use coordinates from a prior get_code_outline, ' +
     'get_symbol_declaration, or get_ast_partial call. ' +
     'Pass delete_len=0 for a pure insert; insert_text="" for a pure delete. ' +
     'The edit is recorded in the undo history (Ctrl+Z works).',
-    SCHEMA_EDIT_AT_POSITION));
+    SCHEMA_EDIT_AT_POSITION, MCP_ANN_WRITE));
 end;
 
 initialization

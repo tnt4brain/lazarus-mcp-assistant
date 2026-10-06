@@ -419,19 +419,19 @@ begin
     'Write compiler options to the active project. All parameters are optional; ' +
     'only supplied keys are changed. Returns the new settings in the same shape ' +
     'as get_project_settings. custom_options REPLACES the existing string.',
-    SCHEMA_SET_PROJECT_SETTINGS));
+    SCHEMA_SET_PROJECT_SETTINGS, MCP_ANN_WRITE));
   Tools.Add(MakeTool('add_file_to_project',
     'Add an existing source file to the active project (.lpi). ' +
     'Saves the project afterwards.',
-    SCHEMA_ADD_FILE_TO_PROJECT));
+    SCHEMA_ADD_FILE_TO_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('remove_file_from_project',
     'Remove a source file from the active project without deleting it from disk. ' +
     'Saves the project afterwards.',
-    SCHEMA_REMOVE_FILE_FROM_PROJECT));
+    SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('create_form',
     'Create a new LCL form: a .pas unit and paired .lfm file, both added to the ' +
     'active project and opened in the editor.',
-    SCHEMA_CREATE_FORM));
+    SCHEMA_CREATE_FORM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('list_project_templates',
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
     'of {name, localized_name, description}. Pass the name to create_project as ' +
@@ -441,7 +441,7 @@ begin
     'Create a new Lazarus project from a template. Call list_project_templates to ' +
     'discover available templates. Returns ' +
     '{"project_file":"<path>","project_type":"<name>"}.',
-    SCHEMA_CREATE_PROJECT));
+    SCHEMA_CREATE_PROJECT, MCP_ANN_WRITE));
 end;
 
 initialization

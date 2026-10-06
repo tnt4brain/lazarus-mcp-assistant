@@ -455,25 +455,25 @@ begin
     SCHEMA_GIT_LOG, MCP_ANN_RO));
   Tools.Add(MakeTool('git_add',
     'Stage files for the next commit. Pass an array of file or directory paths.',
-    SCHEMA_GIT_ADD));
+    SCHEMA_GIT_ADD, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_commit',
     'Commit currently staged changes with the given message. ' +
     'Stage files first with git_add.',
-    SCHEMA_GIT_COMMIT));
+    SCHEMA_GIT_COMMIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_checkout',
     'Switch to a branch, restore a file, or detach HEAD at a commit. ' +
     'Pass a branch name, tag, commit hash, or file path as target.',
-    SCHEMA_GIT_CHECKOUT));
+    SCHEMA_GIT_CHECKOUT, MCP_ANN_DEST));
   Tools.Add(MakeTool('git_branches',
     'List all local and remote branches. The current branch is prefixed with *.',
     SCHEMA_GIT_BRANCHES, MCP_ANN_RO));
   Tools.Add(MakeTool('git_stash',
     'Stash uncommitted changes (staged and unstaged) with an optional message. ' +
     'Use git_stash_pop to restore them.',
-    SCHEMA_GIT_STASH));
+    SCHEMA_GIT_STASH, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_stash_pop',
     'Apply and remove a stash entry. index defaults to 0 (most recent stash).',
-    SCHEMA_GIT_STASH_POP));
+    SCHEMA_GIT_STASH_POP, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_reset',
     'Reset the current HEAD to target. mode=mixed (default) unstages changes ' +
     'and moves HEAD; mode=soft keeps changes staged. ' +

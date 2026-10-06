@@ -294,11 +294,11 @@ begin
     'Add a package as a dependency to the active project (.lpi). ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +
     'Returns the updated list of project package dependencies.',
-    SCHEMA_ADD_PACKAGE_TO_PROJECT));
+    SCHEMA_ADD_PACKAGE_TO_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('remove_package_from_project',
     'Remove a package dependency from the active project (.lpi). ' +
     'No rebuild required. Returns the updated list of project package dependencies.',
-    SCHEMA_REMOVE_PACKAGE_FROM_PROJECT));
+    SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('install_package',
     'Install a package into the Lazarus IDE (design-time / palette). ' +
     'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}. ' +
