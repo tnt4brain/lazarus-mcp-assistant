@@ -289,7 +289,7 @@ procedure RegisterPackagesSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('get_package_info',
     'Query a package''s load and install status in the running IDE.',
-    SCHEMA_GET_PACKAGE_INFO));
+    SCHEMA_GET_PACKAGE_INFO, MCP_ANN_RO));
   Tools.Add(MakeTool('add_package_to_project',
     'Add a package as a dependency to the active project (.lpi). ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +
@@ -303,11 +303,11 @@ begin
     'Install a package into the Lazarus IDE (design-time / palette). ' +
     'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}. ' +
     'Use compile_plugin first to catch errors early.',
-    SCHEMA_INSTALL_PACKAGE));
+    SCHEMA_INSTALL_PACKAGE, MCP_ANN_DEST));
   Tools.Add(MakeTool('uninstall_package',
     'Uninstall a package from the Lazarus IDE. ' +
     'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}.',
-    SCHEMA_UNINSTALL_PACKAGE));
+    SCHEMA_UNINSTALL_PACKAGE, MCP_ANN_DEST));
 end;
 
 initialization

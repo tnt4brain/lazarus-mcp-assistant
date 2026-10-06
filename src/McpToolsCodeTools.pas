@@ -1079,31 +1079,31 @@ begin
   Tools.Add(MakeTool('get_symbol_declaration',
     'Find where an identifier is declared using Codetools. ' +
     'Returns declaration file, line, column and a short context snippet.',
-    SCHEMA_GET_SYMBOL_DECLARATION));
+    SCHEMA_GET_SYMBOL_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('get_unit_interface',
     'Return only the interface section of a Pascal unit ' +
     '(everything above the implementation keyword).',
-    SCHEMA_GET_UNIT_INTERFACE));
+    SCHEMA_GET_UNIT_INTERFACE, MCP_ANN_RO));
   Tools.Add(MakeTool('get_identifier_context',
     'Return type, declaration location, and hint text for the identifier ' +
     'at a given file/line/col using Codetools FindSmartHint.',
-    SCHEMA_GET_IDENTIFIER_CONTEXT));
+    SCHEMA_GET_IDENTIFIER_CONTEXT, MCP_ANN_RO));
   Tools.Add(MakeTool('get_code_outline',
     'Return the structural outline of a Pascal unit: uses clauses, type ' +
     'names, class members, and top-level routines with their line numbers. ' +
     'Does not include method bodies.',
-    SCHEMA_GET_CODE_OUTLINE));
+    SCHEMA_GET_CODE_OUTLINE, MCP_ANN_RO));
   Tools.Add(MakeTool('find_all_references',
     'Find every reference to the identifier at the given declaration position ' +
     'across all project files.',
-    SCHEMA_FIND_ALL_REFERENCES));
+    SCHEMA_FIND_ALL_REFERENCES, MCP_ANN_RO));
   Tools.Add(MakeTool('rename_identifier',
     'Rename an identifier at the given declaration position across all ' +
     'project files. WARNING: this operation writes directly to disk and ' +
     'bypasses the IDE undo stack — it CANNOT be undone with Ctrl+Z. ' +
     'Use git to revert if needed. Only call this after confirming the ' +
     'new name with the user.',
-    SCHEMA_RENAME_IDENTIFIER));
+    SCHEMA_RENAME_IDENTIFIER, MCP_ANN_DEST));
   Tools.Add(MakeTool('goto_declaration',
     'Find where an identifier is declared and jump the editor cursor there. ' +
     'Opens the declaration file if needed.',
@@ -1111,7 +1111,7 @@ begin
   Tools.Add(MakeTool('search_in_project',
     'Search for a text substring across all project source files. ' +
     'Returns matching file, line number, and line content.',
-    SCHEMA_SEARCH_IN_PROJECT));
+    SCHEMA_SEARCH_IN_PROJECT, MCP_ANN_RO));
   Tools.Add(MakeTool('create_unit',
     'Create a new Pascal unit file on disk, add it to the active project, ' +
     'and open it in the editor. Provide content or receive a blank unit skeleton.',
@@ -1120,7 +1120,7 @@ begin
     'Add a unit to the uses clause of a Pascal file using Codetools. ' +
     'Writes directly to disk (not undoable via Ctrl+Z; use git to revert). ' +
     'Set in_interface=false to target the implementation uses clause.',
-    SCHEMA_ADD_UNIT_TO_USES));
+    SCHEMA_ADD_UNIT_TO_USES, MCP_ANN_DEST));
   Tools.Add(MakeTool('insert_in_procedure',
     'Insert text at the start of a named procedure or function body (immediately ' +
     'after begin), located via CodeTools AST. No string matching — robust to ' +
@@ -1143,7 +1143,7 @@ begin
     'proc_name (+ optional class_name) or by a line number inside the body. ' +
     'Read-only — use the returned line numbers as inputs to edit_at_position ' +
     'or the Tier-2 structural edit tools.',
-    SCHEMA_GET_AST_PARTIAL));
+    SCHEMA_GET_AST_PARTIAL, MCP_ANN_RO));
 end;
 
 initialization

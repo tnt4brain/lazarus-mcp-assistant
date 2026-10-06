@@ -287,7 +287,7 @@ begin
     'before rebuilding; omit it to rebuild with currently installed packages. ' +
     'The IDE exits immediately after this call; the MCP server will be ' +
     'unavailable for ~60 s. Call compile_plugin first to catch errors early.',
-    SCHEMA_REBUILD_IDE));
+    SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
   Tools.Add(MakeTool('run_tests',
     'Compile and run the FPCUnit test project, then return structured results ' +
     '(pass/fail counts, individual test output). Standalone utility and ' +
@@ -296,10 +296,10 @@ begin
     SCHEMA_RUN_TESTS));
   Tools.Add(MakeTool('get_compiler_errors',
     'Return the current build compiler errors and warnings.',
-    SCHEMA_GET_COMPILER_ERRORS));
+    SCHEMA_GET_COMPILER_ERRORS, MCP_ANN_RO));
   Tools.Add(MakeTool('get_messages',
     'Return all messages from the IDE Messages window (build output, hints, etc.).',
-    SCHEMA_GET_MESSAGES));
+    SCHEMA_GET_MESSAGES, MCP_ANN_RO));
   Tools.Add(MakeTool('run_with_args',
     'Set command-line arguments for the active project and run it (build if needed). ' +
     'Equivalent to run_project but passes args to the launched process.',

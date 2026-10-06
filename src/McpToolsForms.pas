@@ -528,11 +528,11 @@ begin
     'Return the component tree for a form: root class/name and all owned ' +
     'components with their name and class. Opens the form in the designer ' +
     'if it is not already open.',
-    SCHEMA_GET_FORM_COMPONENTS));
+    SCHEMA_GET_FORM_COMPONENTS, MCP_ANN_RO));
   Tools.Add(MakeTool('get_component_properties',
     'Return all published RTTI properties and their current values for a ' +
     'named component on a form. Opens the form in the designer if needed.',
-    SCHEMA_GET_COMPONENT_PROPERTIES));
+    SCHEMA_GET_COMPONENT_PROPERTIES, MCP_ANN_RO));
   Tools.Add(MakeTool('set_component_property',
     'Set a published RTTI property on a form component to a new value. ' +
     'Marks the designer modified so the change is saved with the form. ' +
@@ -543,7 +543,7 @@ begin
     'Search the IDE Component Class Registry (CCR) for components whose class name ' +
     'contains the query string. Returns class_name, unit_name, and palette_page for each match. ' +
     'Use this to find which unit and palette page a component lives on before adding it.',
-    SCHEMA_SEARCH_COMPONENTS));
+    SCHEMA_SEARCH_COMPONENTS, MCP_ANN_RO));
   Tools.Add(MakeTool('add_component',
     'Instantiate a component on a form via the designer. Requires the component ' +
     'class to be registered in the IDE palette (use search_components to find it). ' +

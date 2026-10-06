@@ -667,23 +667,23 @@ procedure RegisterEditorSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('get_active_file',
     'Return the active editor file name and its current buffer content.',
-    SCHEMA_GET_ACTIVE_FILE));
+    SCHEMA_GET_ACTIVE_FILE, MCP_ANN_RO));
   Tools.Add(MakeTool('get_file_content',
     'Read the content of any file by its absolute path. ' +
     'Prefers the live editor buffer (shows unsaved changes) over disk.',
-    SCHEMA_GET_FILE_CONTENT));
+    SCHEMA_GET_FILE_CONTENT, MCP_ANN_RO));
   Tools.Add(MakeTool('get_project_files',
     'Return the list of source files in the active project.',
-    SCHEMA_GET_PROJECT_FILES));
+    SCHEMA_GET_PROJECT_FILES, MCP_ANN_RO));
   Tools.Add(MakeTool('get_open_editors',
     'Return the list of all currently open editor tabs (file names).',
-    SCHEMA_GET_OPEN_EDITORS));
+    SCHEMA_GET_OPEN_EDITORS, MCP_ANN_RO));
   Tools.Add(MakeTool('get_cursor_position',
     'Return the current cursor position (file, line, col) in the active editor.',
-    SCHEMA_GET_CURSOR_POSITION));
+    SCHEMA_GET_CURSOR_POSITION, MCP_ANN_RO));
   Tools.Add(MakeTool('get_selected_text',
     'Return the currently selected text and its range in the active editor.',
-    SCHEMA_GET_SELECTED_TEXT));
+    SCHEMA_GET_SELECTED_TEXT, MCP_ANN_RO));
   Tools.Add(MakeTool('set_cursor_position',
     'Move the cursor to a specific line and column in the editor. ' +
     'Opens the file first if it is not already open. ' +

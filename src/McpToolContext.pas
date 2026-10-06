@@ -47,11 +47,17 @@ procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 procedure McpRegisterSchemas(Tools: TJSONArray);
 
-{ Build a tool descriptor object from a JSON string schema.
-  AName and ADesc are plain Pascal strings (auto-escaped).
-  InputSchemaJSON is the full inputSchema value, e.g.:
-    '("type":"object","properties":(...), "required":[...])' }
-function MakeTool(const AName, ADesc, InputSchemaJSON: string): TJSONObject;
+{ MCP tool annotation presets — pass as AAnnotations to MakeTool. }
+const
+  MCP_ANN_RO   = '{"readOnlyHint":true}';
+  MCP_ANN_DEST = '{"destructiveHint":true}';
+
+(* Build a tool descriptor object from a JSON string schema.
+   AName and ADesc are plain Pascal strings (auto-escaped).
+   InputSchemaJSON is the full inputSchema value, e.g.:
+     '{"type":"object","properties":{...},"required":[...]}' *)
+function MakeTool(const AName, ADesc, InputSchemaJSON: string;
+  const AAnnotations: string = ''): TJSONObject;
 
 procedure RegisterMcpResource(const AUri, AName, ADesc, AMimeType: string;
                                AGetText: TMcpGetResourceText);
@@ -98,7 +104,8 @@ begin
     GSchemaGroups[I](Tools);
 end;
 
-function MakeTool(const AName, ADesc, InputSchemaJSON: string): TJSONObject;
+function MakeTool(const AName, ADesc, InputSchemaJSON: string;
+  const AAnnotations: string = ''): TJSONObject;
 var
   Schema : TJSONData;
 begin
@@ -107,6 +114,8 @@ begin
   Result.Add('name',        AName);
   Result.Add('description', ADesc);
   Result.Add('inputSchema', Schema);
+  if AAnnotations <> '' then
+    Result.Add('annotations', GetJSON(AAnnotations));
 end;
 
 procedure RegisterMcpResource(const AUri, AName, ADesc, AMimeType: string;

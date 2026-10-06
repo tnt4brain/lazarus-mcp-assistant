@@ -445,14 +445,14 @@ begin
   Tools.Add(MakeTool('git_status',
     'Show the working tree status (--porcelain=v1). Returns a compact list of ' +
     'modified/staged/untracked files. work_dir defaults to the active project directory.',
-    SCHEMA_GIT_STATUS));
+    SCHEMA_GIT_STATUS, MCP_ANN_RO));
   Tools.Add(MakeTool('git_diff',
     'Show changes between the working tree and the index (or, with staged=true, ' +
     'between the index and HEAD). Optionally scoped to a single path.',
-    SCHEMA_GIT_DIFF));
+    SCHEMA_GIT_DIFF, MCP_ANN_RO));
   Tools.Add(MakeTool('git_log',
     'Show recent commit history as one-line summaries. max_count defaults to 20.',
-    SCHEMA_GIT_LOG));
+    SCHEMA_GIT_LOG, MCP_ANN_RO));
   Tools.Add(MakeTool('git_add',
     'Stage files for the next commit. Pass an array of file or directory paths.',
     SCHEMA_GIT_ADD));
@@ -466,7 +466,7 @@ begin
     SCHEMA_GIT_CHECKOUT));
   Tools.Add(MakeTool('git_branches',
     'List all local and remote branches. The current branch is prefixed with *.',
-    SCHEMA_GIT_BRANCHES));
+    SCHEMA_GIT_BRANCHES, MCP_ANN_RO));
   Tools.Add(MakeTool('git_stash',
     'Stash uncommitted changes (staged and unstaged) with an optional message. ' +
     'Use git_stash_pop to restore them.',
@@ -478,7 +478,7 @@ begin
     'Reset the current HEAD to target. mode=mixed (default) unstages changes ' +
     'and moves HEAD; mode=soft keeps changes staged. ' +
     'Hard reset is intentionally not supported — use the terminal for that.',
-    SCHEMA_GIT_RESET));
+    SCHEMA_GIT_RESET, MCP_ANN_DEST));
 end;
 
 initialization

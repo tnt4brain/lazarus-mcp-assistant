@@ -407,14 +407,14 @@ begin
   Tools.Add(MakeTool('ping',
     'Returns {"status":"ok","version":"x.y"} immediately. Use this to poll for the ' +
     'MCP server coming back after rebuild_ide — retry until it succeeds.',
-    SCHEMA_PING));
+    SCHEMA_PING, MCP_ANN_RO));
   Tools.Add(MakeTool('get_project_directory',
     'Return the root directory of the active project (directory containing the .lpi file).',
-    SCHEMA_GET_PROJECT_DIRECTORY));
+    SCHEMA_GET_PROJECT_DIRECTORY, MCP_ANN_RO));
   Tools.Add(MakeTool('get_project_settings',
     'Return active project compiler options: target OS/CPU, output directory, ' +
     'custom options, and project file path.',
-    SCHEMA_GET_PROJECT_SETTINGS));
+    SCHEMA_GET_PROJECT_SETTINGS, MCP_ANN_RO));
   Tools.Add(MakeTool('set_project_settings',
     'Write compiler options to the active project. All parameters are optional; ' +
     'only supplied keys are changed. Returns the new settings in the same shape ' +
@@ -436,7 +436,7 @@ begin
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
     'of {name, localized_name, description}. Pass the name to create_project as ' +
     'project_type.',
-    SCHEMA_LIST_PROJECT_TEMPLATES));
+    SCHEMA_LIST_PROJECT_TEMPLATES, MCP_ANN_RO));
   Tools.Add(MakeTool('create_project',
     'Create a new Lazarus project from a template. Call list_project_templates to ' +
     'discover available templates. Returns ' +
