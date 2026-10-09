@@ -242,7 +242,21 @@ begin
       Obj.Free;
     end;
     if Assigned(DebugBoss) and (DebugBoss.State in [dsRun, dsPause, dsInternalPause]) then
+    begin
       DebugBoss.DoStopProject;
+      { FpDebug stops the target process asynchronously on its own thread.
+        Pump messages so its state-change callbacks can fire, then wait until
+        the debugger reaches dsNone (fully stopped) before triggering the
+        rebuild.  50 × 100 ms = 5 s max wait. }
+      I := 0;
+      while (I < 50) and Assigned(DebugBoss) and
+            (DebugBoss.State <> dsNone) do
+      begin
+        Application.ProcessMessages;
+        Sleep(100);
+        Inc(I);
+      end;
+    end;
     while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
       LazarusIDE.DoCloseEditorFile(
         SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);

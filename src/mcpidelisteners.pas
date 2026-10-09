@@ -7,7 +7,7 @@ interface
 
 uses
   Classes, SysUtils, Controls, IDEIntf, SrcEditorIntf,
-  LazIDEIntf, IDEExternToolIntf, SynEdit, fpjson;
+  LazIDEIntf, IDEExternToolIntf, SynEdit, StdCtrls, Forms, fpjson;
 
 type
   { Internal hook manager class using public LazIDEIntf specifications }
@@ -15,6 +15,8 @@ type
   private
     FErrorLog: TJSONArray;
     procedure OnCompilerFinished(Sender: TObject; BuildSuccessful: boolean);
+    procedure OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
+    procedure OnFormRemoved(Sender: TObject; Form: TCustomForm);
   public
     constructor Create;
     destructor Destroy; override;
@@ -26,6 +28,11 @@ type
 
 var
   McpHookManager: TMcpIdeHookManager = nil;
+  { Set on the main thread when TIDEExceptionDlg becomes active; cleared when
+    the dialog is removed.  Read from the MCP worker thread without Synchronize
+    — main thread sets it before the modal loop starts, worker thread reads it
+    once the modal loop is spinning. }
+  GMcpLastExceptionLabel: string = '';
 
 procedure InitializeIdeHooks;
 procedure FinalizeIdeHooks;
@@ -48,12 +55,34 @@ procedure TMcpIdeHookManager.HookIdeEvents;
 begin
   if Assigned(LazarusIDE) then
     LazarusIDE.AddHandlerOnProjectBuildingFinished(@OnCompilerFinished);
+  Screen.AddHandlerActiveFormChanged(@OnActiveFormChanged);
+  Screen.AddHandlerRemoveForm(@OnFormRemoved);
 end;
 
 procedure TMcpIdeHookManager.UnhookIdeEvents;
 begin
   if Assigned(LazarusIDE) then
     LazarusIDE.RemoveHandlerOnProjectBuildingFinished(@OnCompilerFinished);
+  Screen.RemoveHandlerActiveFormChanged(@OnActiveFormChanged);
+  Screen.RemoveHandlerRemoveForm(@OnFormRemoved);
+end;
+
+procedure TMcpIdeHookManager.OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
+var
+  C: TComponent;
+begin
+  if Assigned(Form) and Form.ClassNameIs('TIDEExceptionDlg') and Form.Visible then
+  begin
+    C := Form.FindComponent('lblMessage');
+    if Assigned(C) and (C is TLabel) then
+      GMcpLastExceptionLabel := TLabel(C).Caption;
+  end;
+end;
+
+procedure TMcpIdeHookManager.OnFormRemoved(Sender: TObject; Form: TCustomForm);
+begin
+  if Assigned(Form) and Form.ClassNameIs('TIDEExceptionDlg') then
+    GMcpLastExceptionLabel := '';
 end;
 
 procedure TMcpIdeHookManager.OnCompilerFinished(Sender: TObject; BuildSuccessful: boolean);

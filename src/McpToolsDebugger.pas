@@ -23,7 +23,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, Forms,
+  Classes, SysUtils,
   LazIDEIntf, LazFileUtils, SrcEditorIntf,
   BaseDebugManager,
   LazDebuggerIntfBaseTypes,  { TDBGState }
@@ -31,6 +31,7 @@ uses
   DbgIntfDebuggerBase,       { TDBGType, TDBGEvaluateResultCallback }
   Debugger,                  { TIDEBreakPoint, TIDEBreakPoints }
   fpjson,
+  McpIdeListeners,           { GMcpLastExceptionLabel }
   McpToolContext;
 
 
@@ -582,6 +583,20 @@ end;
 
 { ── Blocking dispatch (MCP worker thread) ───────────────────────────────── }
 
+{ Evaluate AExpr asynchronously (3 s timeout). Returns True on success.
+  Result value is in GSyncHelper.OutEvalRes / OutEvalOk on return. }
+function EvalExpr(const AExpr: string): Boolean;
+var
+  T, E : Integer;
+begin
+  GSyncHelper.InEvalExpr := AExpr;
+  TThread.Synchronize(nil, @GSyncHelper.DoEvaluateAndWait);
+  T := 3000; E := 0;
+  while not GSyncHelper.FEvalFired and (E < T) do
+  begin Sleep(50); Inc(E, 50); end;
+  Result := GSyncHelper.FEvalFired and GSyncHelper.OutEvalOk;
+end;
+
 function DispatchDebuggerBlockingTool(const Name: string;
   var Ctx: TMcpToolCall): Boolean;
 var
@@ -591,6 +606,13 @@ var
   FinalFile : string;
   FinalLine : Integer;
   Obj       : TJSONObject;
+  ExcLbl    : string;  { raw exception dialog label }
+  ExcTmp    : string;  { scratch for parsing }
+  ExcPos    : Integer;
+  ExcQ      : Integer;
+  ExcClass   : string;
+  ExcMsg     : string;
+  ExcLineNum : Integer;
 
   procedure Finish(const AReason: string);
   var
@@ -771,6 +793,91 @@ begin
     if not GSyncHelper.OutLocalsReady then
       GSyncHelper.OutLocalsJSON := '[]';
     Ctx.Result := GSyncHelper.OutLocalsJSON;
+  end
+
+  else if Name = 'exception_info' then
+  begin
+    Result := True;
+    { GMcpLastExceptionLabel is written on the main thread (before the modal
+      loop starts) and read here on the MCP worker thread.  No Synchronize
+      needed — main thread has already left the write site by the time the
+      modal loop is spinning and we receive the HTTP request. }
+    ExcLbl := GMcpLastExceptionLabel;
+    if ExcLbl = '' then
+    begin
+      { Dialog not showing — fall back to synchronised state check. }
+      TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    end;
+    Obj := TJSONObject.Create;
+    try
+      if ExcLbl <> '' then
+      begin
+        { Exception dialog is currently showing — parse the label text.
+          Format (English, from lazarusidestrconsts):
+            no message : 'Project %s raised exception class ''%s''.'
+            with message: 'Project %s raised exception class ''%s'' with message:%s%s'
+          where the %s%s at the end is LineEnding + ExceptionText. }
+        Obj.Add('has_exception', True);
+        { Extract class: text between "exception class '" and next "'" }
+        ExcClass := '';
+        ExcPos := Pos('exception class ''', ExcLbl);
+        if ExcPos > 0 then
+        begin
+          ExcTmp := Copy(ExcLbl, ExcPos + Length('exception class '''), MaxInt);
+          ExcQ   := Pos('''', ExcTmp);
+          if ExcQ > 0 then ExcClass := Copy(ExcTmp, 1, ExcQ - 1);
+        end;
+        { Extract message: text after "with message:" stripped of leading newline }
+        ExcMsg := '';
+        ExcPos := Pos('with message:', ExcLbl);
+        if ExcPos > 0 then
+        begin
+          ExcTmp := Copy(ExcLbl, ExcPos + Length('with message:'), MaxInt);
+          while (Length(ExcTmp) > 0) and (ExcTmp[1] in [#10, #13]) do Delete(ExcTmp, 1, 1);
+          { Stop before the location part which starts with LineEnding+LineEnding }
+          ExcQ := Pos(LineEnding + LineEnding, ExcTmp);
+          if ExcQ > 0 then ExcMsg := TrimRight(Copy(ExcTmp, 1, ExcQ - 1))
+          else           ExcMsg := Trim(ExcTmp);
+        end;
+        { Extract file and line from "In file 'x' at line N" — present when
+          the exception has source location info. }
+        ExcTmp := '';
+        ExcLineNum := 0;
+        ExcPos := Pos('In file ''', ExcLbl);
+        if ExcPos > 0 then
+        begin
+          ExcTmp := Copy(ExcLbl, ExcPos + Length('In file '''), MaxInt);
+          ExcQ   := Pos('''', ExcTmp);
+          if ExcQ > 0 then
+          begin
+            ExcTmp := Copy(ExcTmp, 1, ExcQ - 1);
+            { Now find "at line " after the closing quote }
+            ExcPos := Pos('at line ', ExcLbl);
+            if ExcPos > 0 then
+              ExcLineNum := StrToIntDef(
+                Trim(Copy(ExcLbl, ExcPos + Length('at line '), 20)), 0);
+          end;
+        end;
+        Obj.Add('file',    ExcTmp);
+        Obj.Add('line',    ExcLineNum);
+        Obj.Add('class',   ExcClass);
+        Obj.Add('message', ExcMsg);
+      end
+      else
+      begin
+        { Dialog not showing.  Possible causes: debugger not running,
+          user already clicked Break/Continue, or paused at a breakpoint. }
+        Obj.Add('has_exception', False);
+        if GSyncHelper.OutState = dsPause then
+          Obj.Add('note', 'Debugger is paused (at a breakpoint or after Break was clicked). ' +
+                          'Call exception_info while the exception dialog is still showing to get class and message.')
+        else if GSyncHelper.OutState = dsNone then
+          Obj.Add('note', 'Debugger is not running.')
+        else
+          Obj.Add('note', 'No exception dialog is currently visible.');
+      end;
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
   end;
 
 end;
@@ -827,6 +934,9 @@ const
     '"name":{"type":"string","description":"Variable or parameter name"},' +
     '"value":{"type":"string","description":"New value expressed as a string"}},' +
     '"required":["name","value"]}';
+
+  SCHEMA_EXCEPTION_INFO =
+    '{"type":"object","properties":{}}';
 
 { ── Schema registration ──────────────────────────────────────────────────── }
 
@@ -895,6 +1005,11 @@ begin
     'Modify a local variable or parameter in the current stack frame. ' +
     'Debugger must be paused. Call get_local_variables afterwards to verify.',
     SCHEMA_SET_LOCAL_VARIABLE, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('exception_info',
+    'Return information about the current exception when the debugger is paused ' +
+    'at an exception. Returns has_exception=false if not paused at an exception. ' +
+    'Uses FPC RTL ExceptObject to read class name and message.',
+    SCHEMA_EXCEPTION_INFO, MCP_ANN_RO));
 end;
 
 initialization
