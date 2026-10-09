@@ -33,6 +33,10 @@ var
     — main thread sets it before the modal loop starts, worker thread reads it
     once the modal loop is spinning. }
   GMcpLastExceptionLabel: string = '';
+  { LCL handle of the exception dialog; 0 when absent.
+    Set on the main thread in OnActiveFormChanged before the modal loop starts.
+    Read from the worker thread without Synchronize. }
+  GMcpExceptionDialogHwnd: THandle = 0;
 
 procedure InitializeIdeHooks;
 procedure FinalizeIdeHooks;
@@ -76,13 +80,17 @@ begin
     C := Form.FindComponent('lblMessage');
     if Assigned(C) and (C is TLabel) then
       GMcpLastExceptionLabel := TLabel(C).Caption;
+    GMcpExceptionDialogHwnd := Form.Handle;
   end;
 end;
 
 procedure TMcpIdeHookManager.OnFormRemoved(Sender: TObject; Form: TCustomForm);
 begin
   if Assigned(Form) and Form.ClassNameIs('TIDEExceptionDlg') then
-    GMcpLastExceptionLabel := '';
+  begin
+    GMcpLastExceptionLabel  := '';
+    GMcpExceptionDialogHwnd := 0;
+  end;
 end;
 
 procedure TMcpIdeHookManager.OnCompilerFinished(Sender: TObject; BuildSuccessful: boolean);

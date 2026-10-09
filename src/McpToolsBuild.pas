@@ -66,21 +66,15 @@ const
 
 function DispatchBuildTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
-  Obj        : TJSONObject;
-  Errors     : TJSONArray;
-  BuildRes   : TModalResult;
-  Proj       : TLazProject;
-  IDEPkg     : TIDEPackage;
-  PkgList    : TObjectList;
-  PkgID      : TLazPackageID;
-  PollExe    : string;
-  PasFile    : string;
-  LpkPath    : string;
-  MsgArr     : TJSONArray;
-  MsgView    : TExtToolView;
-  MsgLine    : TMessageLine;
-  MsgObj     : TJSONObject;
-  I, J       : Integer;
+  Obj      : TJSONObject;
+  Errors   : TJSONArray;
+  BuildRes : TModalResult;
+  Proj     : TLazProject;
+  MsgArr   : TJSONArray;
+  MsgView  : TExtToolView;
+  MsgLine  : TMessageLine;
+  MsgObj   : TJSONObject;
+  I, J     : Integer;
 begin
   Result := False;
 
@@ -197,89 +191,206 @@ begin
     end;
   end
 
-  else if Name = 'rebuild_ide' then
+end;
+
+{ ── Blocking rebuild_ide ─────────────────────────────────────────────────── }
+{ rebuild_ide runs on the HTTP worker thread.  If an exception dialog is open,
+  it queues a non-blocking close request to the main thread (TThread.Queue),
+  then polls for the dialog globals to clear before proceeding with the rebuild.
+  All IDE API calls still happen via TThread.Synchronize. }
+
+type
+  TBuildSyncHelper = class
+  public
+    LpkPath    : string;
+    PollExe    : string;
+    PasFile    : string;
+    FpcDir     : string;
+    StopServer : TMcpStopServerProc;
+    procedure DismissExceptionDialog;
+    procedure ReadPollPaths;
+    procedure DoStopDebugger;
+    procedure DoRebuild;
+  end;
+
+var
+  GBuildHelper   : TBuildSyncHelper = nil;
+  GRebuildActive : LongInt = 0;   { InterlockedCompareExchange guard }
+
+procedure TBuildSyncHelper.DismissExceptionDialog;
+var
+  I : Integer;
+  F : TCustomForm;
+begin
+  for I := 0 to Screen.FormCount - 1 do
   begin
-    Result := True;
-    LpkPath := '';
-    if Assigned(Ctx.Params) then
-      LpkPath := Ctx.Params.Get('lpk_path', '');
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('status',  'rebuilding');
-      Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
-                         'command in poll_command until it succeeds.');
-      PollExe := ExtractFilePath(LazarusIDE.GetFPCompilerFilename) +
-                 'instantfpc' + GetExeExt;
-      if LpkPath <> '' then
-        PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
-                     ExtractFilePath(LpkPath))) + 'wait_for_restart.pas'
-      else
-      begin
-        IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
-        if Assigned(IDEPkg) then
-          PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
-                       ExtractFilePath(IDEPkg.Filename))) + 'wait_for_restart.pas'
-        else
-          PasFile := '';
-      end;
-      if PasFile <> '' then
-      begin
-        {$IFDEF WINDOWS}
-        Obj.Add('poll_command',
-          'cmd /c "SET PATH=' +
-          ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
-          ';%PATH% && "' + PollExe + '" "' + PasFile + '""');
-        {$ELSE}
-        Obj.Add('poll_command',
-          'sh -c ''PATH="' +
-          ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
-          ':$PATH" "' + PollExe + '" "' + PasFile + '"''');
-        {$ENDIF}
-      end;
-      Ctx.Result          := Obj.AsJSON;
-      Ctx.ConnectionClose := True;
-    finally
-      Obj.Free;
-    end;
-    if Assigned(DebugBoss) and (DebugBoss.State in [dsRun, dsPause, dsInternalPause]) then
+    F := Screen.Forms[I];
+    if F.ClassNameIs('TIDEExceptionDlg') and F.Visible then
     begin
-      DebugBoss.DoStopProject;
-      { FpDebug stops the target process asynchronously on its own thread.
-        Pump messages so its state-change callbacks can fire, then wait until
-        the debugger reaches dsNone (fully stopped) before triggering the
-        rebuild.  50 × 100 ms = 5 s max wait. }
-      I := 0;
-      while (I < 50) and Assigned(DebugBoss) and
-            (DebugBoss.State <> dsNone) do
+      F.Close;
+      Break;
+    end;
+  end;
+end;
+
+procedure TBuildSyncHelper.ReadPollPaths;
+var
+  IDEPkg: TIDEPackage;
+begin
+  FpcDir  := ExtractFilePath(LazarusIDE.GetFPCompilerFilename);
+  PollExe := FpcDir + 'instantfpc' + GetExeExt;
+  FpcDir  := ExcludeTrailingPathDelimiter(FpcDir);
+  if LpkPath <> '' then
+    PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                 ExtractFilePath(LpkPath))) + 'wait_for_restart.pas'
+  else
+  begin
+    IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+    if Assigned(IDEPkg) then
+      PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                   ExtractFilePath(IDEPkg.Filename))) + 'wait_for_restart.pas'
+    else
+      PasFile := '';
+  end;
+end;
+
+procedure TBuildSyncHelper.DoStopDebugger;
+begin
+  if Assigned(DebugBoss) and (DebugBoss.State in [dsRun, dsPause, dsInternalPause]) then
+    DebugBoss.DoStopProject;
+end;
+
+procedure TBuildSyncHelper.DoRebuild;
+var
+  IDEPkg  : TIDEPackage;
+  PkgList : TObjectList;
+  PkgID   : TLazPackageID;
+  I       : Integer;
+  F       : TCustomForm;
+begin
+  { Close any stray message dialogs (e.g. "Execution stopped") so they do not
+    become orphaned when the IDE exits for the rebuild. }
+  for I := Screen.FormCount - 1 downto 0 do
+  begin
+    F := Screen.Forms[I];
+    if F.Visible and (F.BorderStyle = bsDialog) then
+      F.Close;
+  end;
+  while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
+    LazarusIDE.DoCloseEditorFile(
+      SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
+  if Assigned(StopServer) then StopServer();
+  PkgList := TObjectList.Create(True);
+  try
+    if LpkPath <> '' then
+    begin
+      PackageEditingInterface.DoOpenPackageFile(LpkPath, [pofDoNotOpenEditor], False);
+      IDEPkg := PackageEditingInterface.FindPackageWithName(
+                  ExtractFileNameOnly(LpkPath));
+      if Assigned(IDEPkg) then
       begin
-        Application.ProcessMessages;
-        Sleep(100);
-        Inc(I);
+        PkgID := TLazPackageID.Create;
+        PkgID.AssignID(IDEPkg);
+        PkgList.Add(PkgID);
       end;
     end;
-    while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
-      LazarusIDE.DoCloseEditorFile(
-        SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
-    if Assigned(Ctx.StopServer) then Ctx.StopServer();
-    PkgList := TObjectList.Create(True);
-    try
-      if LpkPath <> '' then
+    PackageEditingInterface.InstallPackages(
+      PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
+  finally
+    PkgList.Free;
+  end;
+end;
+
+function DispatchBuildBlockingTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
+var
+  Obj    : TJSONObject;
+  Waited : Integer;
+begin
+  Result := False;
+  if Name <> 'rebuild_ide' then Exit;
+  Result := True;
+
+  { In-flight guard: refuse a concurrent rebuild. }
+  if InterlockedCompareExchange(GRebuildActive, 1, 0) <> 0 then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'rebuild_ide is already in progress.';
+    Exit;
+  end;
+  try
+
+  GBuildHelper.LpkPath    := '';
+  GBuildHelper.StopServer := Ctx.StopServer;
+  if Assigned(Ctx.Params) then
+    GBuildHelper.LpkPath := Ctx.Params.Get('lpk_path', '');
+
+  { Phase 1 — if the exception dialog is open, close it from the main thread
+    via TThread.Queue (non-blocking), then poll until the LCL form is gone.
+    Queue is used instead of Synchronize so the worker thread stays free to
+    time out if the main thread's modal loop does not process the queue. }
+  if (GMcpLastExceptionLabel <> '') or (GMcpExceptionDialogHwnd <> 0) then
+  begin
+    TThread.Queue(nil, @GBuildHelper.DismissExceptionDialog);
+    Waited := 0;
+    while (GMcpLastExceptionLabel <> '') or (GMcpExceptionDialogHwnd <> 0) do
+    begin
+      Sleep(200);
+      Inc(Waited, 200);
+      if Waited >= 5000 then
       begin
-        PackageEditingInterface.DoOpenPackageFile(LpkPath, [pofDoNotOpenEditor], False);
-        IDEPkg := PackageEditingInterface.FindPackageWithName(
-                    ExtractFileNameOnly(LpkPath));
-        if Assigned(IDEPkg) then
-        begin
-          PkgID := TLazPackageID.Create;
-          PkgID.AssignID(IDEPkg);
-          PkgList.Add(PkgID);
-        end;
+        Ctx.Error  := True;
+        Ctx.Result := '{"error":"Exception dialog is still showing after 5 s. ' +
+                      'Click Break or Continue on the dialog, then call rebuild_ide again."}';
+        Exit;
       end;
-      PackageEditingInterface.InstallPackages(
-        PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
-    finally
-      PkgList.Free;
     end;
+    Sleep(300);
+  end;
+
+  { Phase 2 — main thread is free; read IDE paths. }
+  TThread.Synchronize(nil, @GBuildHelper.ReadPollPaths);
+
+  { Build the response JSON before doing anything destructive. }
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('status',  'rebuilding');
+    Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
+                       'command in poll_command until it succeeds.');
+    if GBuildHelper.PasFile <> '' then
+    begin
+      {$IFDEF WINDOWS}
+      Obj.Add('poll_command',
+        'cmd /c "SET PATH=' + GBuildHelper.FpcDir +
+        ';%PATH% && "' + GBuildHelper.PollExe + '" "' + GBuildHelper.PasFile + '""');
+      {$ELSE}
+      Obj.Add('poll_command',
+        'sh -c ''PATH="' + GBuildHelper.FpcDir +
+        ':$PATH" "' + GBuildHelper.PollExe + '" "' + GBuildHelper.PasFile + '"''');
+      {$ENDIF}
+    end;
+    Ctx.Result          := Obj.AsJSON;
+    Ctx.ConnectionClose := True;
+  finally
+    Obj.Free;
+  end;
+
+  { Phase 3 — stop the debugger (main thread). }
+  TThread.Synchronize(nil, @GBuildHelper.DoStopDebugger);
+
+  { Poll for dsNone on the worker thread — never wait inside Synchronize.
+    DoStopProject is async; allow up to 20 s for the state to reach dsNone. }
+  Waited := 0;
+  while Assigned(DebugBoss) and (DebugBoss.State <> dsNone) and (Waited < 20000) do
+  begin
+    Sleep(200);
+    Inc(Waited, 200);
+  end;
+
+  { Phase 4 — close editors, dismiss stray dialogs, stop server, rebuild. }
+  TThread.Synchronize(nil, @GBuildHelper.DoRebuild);
+
+  finally
+    InterlockedCompareExchange(GRebuildActive, 0, 1);
   end;
 end;
 
@@ -324,7 +435,12 @@ begin
 end;
 
 initialization
+  GBuildHelper := TBuildSyncHelper.Create;
   RegisterMcpGroup(@DispatchBuildTool);
+  RegisterMcpBlockingGroup(@DispatchBuildBlockingTool);
   RegisterMcpSchemas(@RegisterBuildSchemas);
+
+finalization
+  GBuildHelper.Free;
 
 end.
