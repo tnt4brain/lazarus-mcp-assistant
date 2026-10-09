@@ -7,7 +7,9 @@ interface
 
 uses
   Classes, SysUtils, fphttpserver, httpdefs, fpjson, jsonparser,
-  LazIDEIntf, LazLogger, McpIdeListeners, McpIdeState;
+  Process,
+  LazIDEIntf, LazLogger, PackageIntf,
+  McpIdeListeners, McpIdeState;
 
 type
   { Re-publishes Address so callers can bind to 127.0.0.1 }
@@ -819,11 +821,88 @@ begin
     Result := '';
 end;
 
+var
+  GMcpGitHash : string = '';  { cached on first call }
+
+function GetMcpVersion: string;
+var
+  IDEPkg : TIDEPackage;
+begin
+  Result := '?';
+  IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+  if Assigned(IDEPkg) then
+    Result := IDEPkg.Version.AsString;
+end;
+
+function GetMcpGitHash: string;
+var
+  IDEPkg : TIDEPackage;
+  SrcDir : string;
+  Proc   : TProcess;
+  SL     : TStringList;
+begin
+  if GMcpGitHash <> '' then begin Result := GMcpGitHash; Exit; end;
+  Result := 'unknown';
+  IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+  if not Assigned(IDEPkg) then begin GMcpGitHash := Result; Exit; end;
+  SrcDir := ExtractFileDir(IDEPkg.Filename);
+  Proc := TProcess.Create(nil);
+  SL   := TStringList.Create;
+  try
+    Proc.Executable      := 'git';
+    Proc.Parameters.Add('rev-parse');
+    Proc.Parameters.Add('--short');
+    Proc.Parameters.Add('HEAD');
+    Proc.CurrentDirectory := SrcDir;
+    Proc.Options          := [poUsePipes, poWaitOnExit, poStderrToOutPut];
+    try
+      Proc.Execute;
+      SL.LoadFromStream(Proc.Output);
+      if (SL.Count > 0) and (Trim(SL[0]) <> '') then
+        Result := Trim(SL[0]);
+    except
+    end;
+  finally
+    SL.Free;
+    Proc.Free;
+  end;
+  GMcpGitHash := Result;
+end;
+
+procedure WriteActiveConfig(APort: Word; const AVersion, AHash: string);
+var
+  Obj  : TJSONObject;
+  SL   : TStringList;
+  Path : string;
+begin
+  if not Assigned(LazarusIDE) then Exit;
+  Path := AppendPathDelim(LazarusIDE.GetPrimaryConfigPath) + 'mcp-active.json';
+  Obj := TJSONObject.Create;
+  SL  := TStringList.Create;
+  try
+    Obj.Add('url',     Format('http://127.0.0.1:%d/mcp', [APort]));
+    Obj.Add('version', AVersion);
+    Obj.Add('git_hash', AHash);
+    SL.Text := Obj.FormatJSON;
+    try
+      SL.SaveToFile(Path);
+    except
+      on E: Exception do
+        DebugLn('[MCP Server] Could not write mcp-active.json: ' + E.Message);
+    end;
+  finally
+    SL.Free;
+    Obj.Free;
+  end;
+end;
+
 procedure InitializeMcpServer;
 var
-  Port  : Word;
-  Token : string;
-  Tries : Integer;
+  Port    : Word;
+  Token   : string;
+  Tries   : Integer;
+  Ver     : string;
+  GitHash : string;
 begin
   if IsServerRunning then Exit;
 
@@ -869,6 +948,15 @@ begin
   McpSettings.SaveSettings;
 
   DebugLn(Format('[MCP Server] Listening on 127.0.0.1:%d.', [Port]));
+
+  { Report to IDE messages window and write stable discovery file }
+  Ver     := GetMcpVersion;
+  GitHash := GetMcpGitHash;
+  if Assigned(IDEMessagesWindow) then
+    IDEMessagesWindow.AddCustomMessage(mluImportant,
+      Format('MCP Assistant %s [%s] listening on http://127.0.0.1:%d/mcp',
+             [Ver, GitHash, Port]));
+  WriteActiveConfig(Port, Ver, GitHash);
 
   if McpSettings.LastConfigPath <> '' then
     WriteMcpConfig;

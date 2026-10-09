@@ -5,7 +5,8 @@ unit McpToolsDebugger;
   get_debug_state,
   run_debugger, pause_debugger, stop_debugger,
   step_over, step_into, step_out, run_to_line,
-  get_call_stack, evaluate_expression, get_local_variables.
+  get_call_stack, evaluate_expression,
+  get_local_variables, set_local_variable.
 
   Threading model:
     Non-blocking tools  — dispatched via DispatchDebuggerTool, which runs on
@@ -66,6 +67,11 @@ type
     OutCSThreadId : Integer;
     OutCSReady    : Boolean;
     OutCSJSON     : string;
+    { Local variables in/out }
+    InLocalsFrame  : Integer;
+    OutLocalsThread: Integer;
+    OutLocalsReady : Boolean;
+    OutLocalsJSON  : string;
     { Methods }
     procedure ReadState;
     procedure IssueCmd;
@@ -76,6 +82,8 @@ type
     procedure DoEvaluateAndWait;  { single Synchronize: starts eval + waits on main thread }
     procedure InitCallStack;
     procedure ReadCallStack;
+    procedure InitLocals;
+    procedure ReadLocals;
   end;
 
 procedure TDbgSyncHelper.ReadState;
@@ -251,6 +259,79 @@ begin
     end;
     OutCSJSON  := Arr.AsJSON;
     OutCSReady := True;
+  finally
+    Arr.Free;
+  end;
+end;
+
+procedure TDbgSyncHelper.InitLocals;
+var
+  TId    : Integer;
+  Locals : TIDELocals;
+begin
+  OutLocalsReady  := False;
+  OutLocalsJSON   := '[]';
+  OutLocalsThread := 0;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Locals) then
+  begin
+    OutLocalsReady := True; Exit;
+  end;
+  if Assigned(DebugBoss.Threads) and
+     Assigned(DebugBoss.Threads.CurrentThreads) then
+    TId := DebugBoss.Threads.CurrentThreads.CurrentThreadId
+  else
+    TId := 0;
+  OutLocalsThread := TId;
+  Locals := DebugBoss.Locals.CurrentLocalsList[TId, InLocalsFrame];
+  if Assigned(Locals) then
+    Locals.Count;  { trigger async load }
+end;
+
+procedure TDbgSyncHelper.ReadLocals;
+var
+  Locals : TIDELocals;
+  LVal   : TIdeLocalsValue;
+  Arr    : TJSONArray;
+  LObj   : TJSONObject;
+  I      : Integer;
+begin
+  OutLocalsReady := False;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Locals) then
+  begin
+    OutLocalsReady := True; Exit;
+  end;
+  Locals := DebugBoss.Locals.CurrentLocalsList[OutLocalsThread, InLocalsFrame];
+  if not Assigned(Locals) then
+  begin
+    OutLocalsReady := True;
+    OutLocalsJSON  := '[]';
+    Exit;
+  end;
+  if Locals is TCurrentLocals then
+  begin
+    case TCurrentLocals(Locals).Validity of
+      ddsValid   : ;  { fall through to build JSON }
+      ddsInvalid :
+      begin
+        OutLocalsReady := True;  { terminal failure — stop polling }
+        Exit;
+      end;
+    else
+      Exit;  { ddsUnknown/ddsRequested/ddsEvaluating — still loading, caller retries }
+    end;
+  end;
+  Arr := TJSONArray.Create;
+  try
+    for I := 0 to Locals.Count - 1 do
+    begin
+      LVal := TIdeLocalsValue(Locals.Entries[I]);
+      LObj := TJSONObject.Create;
+      LObj.Add('name',  LVal.DisplayName);
+      LObj.Add('value', LVal.Value);
+      Arr.Add(LObj);
+    end;
+    OutLocalsJSON  := Arr.AsJSON;
+    OutLocalsReady := True;
   finally
     Arr.Free;
   end;
@@ -471,15 +552,30 @@ begin
     Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
   end
 
-  else if Name = 'get_local_variables' then
+  else if Name = 'set_local_variable' then
   begin
     Result := True;
-    if (not Assigned(DebugBoss)) or (DebugBoss.State <> dsPause) then
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('name', '') = '') then
+    begin Ctx.Error := True; Ctx.Result := 'name required'; Exit; end;
+    if not Assigned(DebugBoss) or (DebugBoss.State <> dsPause) then
     begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    { Async Locals supplier wiring is a follow-up; use evaluate_expression. }
-    Ctx.Error  := True;
-    Ctx.Result := 'get_local_variables: not yet implemented; ' +
-                  'use evaluate_expression as a substitute';
+    Obj := TJSONObject.Create;
+    try
+      if DebugBoss.Modify(Ctx.Params.Get('name', ''),
+                          Ctx.Params.Get('value', '')) then
+      begin
+        Obj.Add('modified', True);
+        Obj.Add('name',  Ctx.Params.Get('name', ''));
+        Obj.Add('value', Ctx.Params.Get('value', ''));
+      end
+      else
+      begin
+        Ctx.Error := True;
+        Obj.Add('error',
+          'Modify rejected — dcModify not in Commands or debugger not ready');
+      end;
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
   end;
 
 end;
@@ -652,6 +748,29 @@ begin
     if not GSyncHelper.OutCSReady then
       GSyncHelper.OutCSJSON := '[]';  { timeout fallback }
     Ctx.Result := GSyncHelper.OutCSJSON;
+  end
+
+  else if Name = 'get_local_variables' then
+  begin
+    Result := True;
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    if GSyncHelper.OutState <> dsPause then
+    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+    GSyncHelper.InLocalsFrame := 0;
+    if Assigned(Ctx.Params) then
+      GSyncHelper.InLocalsFrame := Ctx.Params.Get('frame', 0);
+    TThread.Synchronize(nil, @GSyncHelper.InitLocals);
+    TimeoutMs := 5000;
+    Elapsed   := 0;
+    while not GSyncHelper.OutLocalsReady and (Elapsed < TimeoutMs) do
+    begin
+      Sleep(100);
+      Inc(Elapsed, 100);
+      TThread.Synchronize(nil, @GSyncHelper.ReadLocals);
+    end;
+    if not GSyncHelper.OutLocalsReady then
+      GSyncHelper.OutLocalsJSON := '[]';
+    Ctx.Result := GSyncHelper.OutLocalsJSON;
   end;
 
 end;
@@ -702,6 +821,12 @@ const
   SCHEMA_GET_LOCAL_VARIABLES =
     '{"type":"object","properties":{' +
     '"frame":{"type":"integer","description":"Stack frame index; default 0"}}}';
+
+  SCHEMA_SET_LOCAL_VARIABLE =
+    '{"type":"object","properties":{' +
+    '"name":{"type":"string","description":"Variable or parameter name"},' +
+    '"value":{"type":"string","description":"New value expressed as a string"}},' +
+    '"required":["name","value"]}';
 
 { ── Schema registration ──────────────────────────────────────────────────── }
 
@@ -766,6 +891,10 @@ begin
     'Return local variables and parameters in the current stack frame. ' +
     'Debugger must be paused.',
     SCHEMA_GET_LOCAL_VARIABLES, MCP_ANN_RO));
+  Tools.Add(MakeTool('set_local_variable',
+    'Modify a local variable or parameter in the current stack frame. ' +
+    'Debugger must be paused. Call get_local_variables afterwards to verify.',
+    SCHEMA_SET_LOCAL_VARIABLE, MCP_ANN_WRITE));
 end;
 
 initialization

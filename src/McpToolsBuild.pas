@@ -19,6 +19,7 @@ uses
   IDEMsgIntf, IDEExternToolIntf,
   Controls, Forms,
   fpjson,
+  LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
@@ -240,6 +241,8 @@ begin
     finally
       Obj.Free;
     end;
+    if Assigned(DebugBoss) and (DebugBoss.State in [dsRun, dsPause, dsInternalPause]) then
+      DebugBoss.DoStopProject;
     while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
       LazarusIDE.DoCloseEditorFile(
         SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
