@@ -10,6 +10,8 @@ unit McpToolsProject;
 
 interface
 
+function GetSystemPromptText: string;
+
 implementation
 
 uses
@@ -19,10 +21,11 @@ uses
   fpjson,
   McpToolContext;
 
-{ ── Compiled-in reference knowledge ─────────────────────────────────────── }
+{ ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
 const
-  KnowledgeText: string = {$I lazarus_knowledge.inc};
+  KnowledgeText   : string = {$I lazarus_knowledge.inc};
+  SystemPromptText: string = {$I system_prompt.inc};
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -107,11 +110,16 @@ begin
   Result := TProjectDescHack(Desc).DoInitDescriptorCode <> GBaseDoInitCode;
 end;
 
-{ ── Resource accessor ───────────────────────────────────────────────────── }
+{ ── Resource accessors ──────────────────────────────────────────────────── }
 
 function GetKnowledgeText: string;
 begin
   Result := KnowledgeText;
+end;
+
+function GetSystemPromptText: string;
+begin
+  Result := SystemPromptText;
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
@@ -455,5 +463,12 @@ initialization
     'about LCL controls, package installation, or component libraries.',
     'text/plain',
     @GetKnowledgeText);
+  RegisterMcpResource(
+    'lazarus-ide://system-prompt',
+    'MCP Assistant System Prompt',
+    'Behavioral instructions injected into Claude when launched from the IDE. ' +
+    'Describes available tools, recommended workflows, and common gotchas.',
+    'text/plain',
+    @GetSystemPromptText);
 
 end.

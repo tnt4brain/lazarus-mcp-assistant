@@ -375,6 +375,107 @@ end;
 
 ---
 
+## Debugger API (FpDebug / DebugBoss)
+
+All identifiers live in `IdeDebuggerIntf`, `Debugger`, `DebuggerIntf`, `IdeDebuggerWatchResult` unless noted.
+All debugger API calls **must** run on the main thread — use `TThread.Synchronize`.
+
+### State and control — `TDebugManager` (`Debugger` unit)
+
+```pascal
+uses Debugger, IdeDebuggerIntf;
+
+// Global — valid after IDE startup
+DebugBoss : TDebugManager;
+
+// Debugger state
+TDBGState = (dsNone, dsIdle, dsStop, dsPause, dsInit, dsRun, dsError, dsDestroying);
+DebugBoss.State : TDBGState;
+
+// Run control (main thread only)
+DebugBoss.RunDebugger;         // F9 — start or continue
+DebugBoss.DoPauseProject;      // pause running session
+DebugBoss.DoStopProject;       // terminate session (async)
+DebugBoss.DoStepOverProject;   // F8
+DebugBoss.DoStepIntoProject;   // F7
+DebugBoss.DoStepOutProject;    // Shift+F8
+```
+
+`DebugBoss.OnState` callback fires on every state transition (main thread).
+`DebugBoss.OnCurrent` fires when the current source line changes after a step or breakpoint.
+
+### Breakpoints — `TIDEBreakPoints`
+
+```pascal
+// Add
+BP := DebugBoss.BreakPoints.Add(AbsFilePath, Line);   // TIDEBreakPoint
+
+// Remove — iterate to find by source+line
+for I := DebugBoss.BreakPoints.Count - 1 downto 0 do
+begin
+  BP := DebugBoss.BreakPoints.Items[I];
+  if (BP.Source = AbsFilePath) and (BP.Line = Line) then
+  begin
+    BP.ReleaseReference;   // frees the object
+    Break;
+  end;
+end;
+
+// Enumerate
+for I := 0 to DebugBoss.BreakPoints.Count - 1 do
+  BP := DebugBoss.BreakPoints.Items[I];
+  // BP.Source, BP.Line, BP.Enabled, BP.Valid, BP.HitCount
+```
+
+### Call stack — `TIdeCallStack` (async load)
+
+```pascal
+uses IdeDebuggerIntf;
+
+// Must be called on main thread; returns nil if not paused
+Stack := TIdeCallStack(DebugBoss.CallStack.EntriesForRange(0, MaxFrames - 1, ThreadId));
+
+// CountValidity: dcvUnknown until async load completes; dcvValid when ready
+Stack.CountLimited(MaxFrames);   // trigger async load
+// Poll: repeat Synchronize(@ReadCallStack) until Stack.CountValidity = dcvValid
+
+// Per frame (TIdeCallStackEntry):
+Frame := TIdeCallStackEntry(Stack.Entries[I]);
+Frame.Source; Frame.Line; Frame.FunctionName; Frame.Address
+```
+
+### Locals — `TIDELocals` (async load)
+
+```pascal
+// Get locals for a thread+frame on main thread
+Locals := TIDELocals(DebugBoss.Locals.Entries[ThreadId, FrameIndex]);
+Locals.Count;   // trigger async load (may return 0 while loading)
+// Poll until Locals.Count > 0 or a validity field flips
+
+// Per entry (TIdeLocalsValue):
+LVal := TIdeLocalsValue(Locals.Entries[I]);
+LVal.Name; LVal.Value
+```
+
+### Evaluate expression — `DebugBoss.Evaluate` (async callback)
+
+```pascal
+// Returns True if evaluation started; callback fires on main thread
+OutStarted := DebugBoss.Evaluate(ExprStr, @MyCallback);
+
+procedure MyCallback(Sender: TObject; ASuccess: Boolean;
+  ResultText: string; ResultDBGType: TDBGType);
+// ResultDBGType.TypeName — may be nil for simple types
+```
+
+**Critical threading rule**: call `DebugBoss.Evaluate` inside a `TThread.Synchronize` callback,
+then return immediately. The callback fires via `Application.ProcessMessages` /
+`ProcessAsyncCallQueue` on the main thread. Never `Sleep` or `ProcessMessages` inside the
+Synchronize callback — that blocks the event loop and prevents the callback from being delivered.
+The worker thread polls a flag set by the callback.
+
+---
+
 ## Common Lazarus Gotchas
 
 - **No `TForm.Create(Application)` needed** — Lazarus auto-creates forms listed in Project Options unless you remove them.

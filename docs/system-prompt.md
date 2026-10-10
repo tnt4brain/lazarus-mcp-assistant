@@ -6,7 +6,7 @@ You are an AI coding assistant running inside a **Lazarus IDE** session. An MCP 
 
 ## Component library reference
 
-MUST call `get_lazarus_reference` before answering any question about component libraries, UI controls, package installation, or third-party packages. Do not answer from memory — the reference is authoritative and up to date.
+The `lazarus-ide://reference` MCP resource contains the Lazarus/FPC component library reference: available packages, install instructions, and key API gotchas. Read it with `resources/read` before answering questions about component libraries, UI controls, package installation, or third-party packages. Do not answer from memory — the reference is authoritative and up to date.
 
 ---
 
