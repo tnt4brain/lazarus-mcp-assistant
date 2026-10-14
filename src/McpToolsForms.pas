@@ -3,7 +3,10 @@ unit McpToolsForms;
 
 { Form designer tools: form_list_components, form_get_properties,
   form_set_properties, form_add_component, form_delete_component,
-  form_arrange, form_get_lfm, form_create_event_handler, form_search_palette.
+  form_arrange, form_get_lfm, form_create_event_handler, form_search_palette,
+  form_list_collection_items, form_add_collection_item,
+  form_delete_collection_item, form_move_collection_item,
+  form_get_menu, form_add_menu_item, form_move_menu_item.
 
   Property access goes through the Object Inspector's property editors
   (PropEdits), so values read and write exactly as in the Object Inspector:
@@ -13,6 +16,8 @@ unit McpToolsForms;
     - component references by name: PopupMenu1
     - events by handler name: the handler is created when it does not exist
     - Name: renames the component and its field/references in the source
+    - collection items by index: Columns[0].Caption, Panels[1].Width
+    - string lists (Memo.Lines, ListBox.Items) as a JSON array or as text
   "Parent" is accepted as a pseudo-property to move a control into another
   container.  Everything runs on the IDE main thread. }
 
@@ -25,7 +30,7 @@ implementation
 uses
   Classes, SysUtils, Math,
   LazIDEIntf, SrcEditorIntf, LazFileUtils,
-  Controls, Forms, FormEditingIntf, ComponentEditors,
+  Controls, Forms, Menus, LCLProc, FormEditingIntf, ComponentEditors,
   TypInfo, LResources,
   ComponentReg, PropEdits,
   fpjson,
@@ -52,12 +57,14 @@ const
   SCHEMA_FORM_SET_PROPERTIES =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
     '"component_name":{"type":"string","description":"Component name, or the form''s own name"},' +
-    '"properties":{"type":"object","additionalProperties":{"type":["string","number","boolean"]},' +
+    '"properties":{"type":"object","additionalProperties":{"type":["string","number","boolean","array"]},' +
       '"description":"Map of property path to value as the Object Inspector shows it, e.g. ' +
       '{\"Caption\":\"OK\",\"Align\":\"alBottom\",\"Anchors\":\"[akRight,akBottom]\",' +
       '\"BorderSpacing.Around\":6,\"Font.Style\":\"[fsBold]\",\"OnClick\":\"btnOKClick\",' +
-      '\"Parent\":\"Panel1\",\"Name\":\"btnOK\"}. Parent moves the control into another container; ' +
-      'Name renames it in the source as well. Applied in order Parent, others, Name."}},' +
+      '\"Parent\":\"Panel1\",\"Name\":\"btnOK\",\"Columns[0].Width\":120,\"Lines\":[\"first\",\"second\"]}. ' +
+      'Collection items are addressed by index (Columns[0].Caption, Panels[2].Text); string lists ' +
+      '(Lines, Items) take an array of strings or one text with line breaks. Parent moves the control ' +
+      'into another container; Name renames it in the source as well. Applied in order Parent, others, Name."}},' +
     '"required":["form_file","component_name","properties"]}';
 
   SCHEMA_FORM_ADD_COMPONENT =
@@ -105,6 +112,57 @@ const
     '{"type":"object","properties":{' +
     '"query":{"type":"string","description":"Substring to match against component class names (case-insensitive)"}},' +
     '"required":["query"]}';
+
+  COLLECTION_PROPS =
+    FORM_FILE_PROP + ',' +
+    '"component_name":{"type":"string","description":"Component that owns the collection (e.g. ListView1, StatusBar1, StringGrid1)"},' +
+    '"property":{"type":"string","description":"Collection property: Columns, Panels, Sections, Bands, ... ' +
+      '(an item path such as Bands[0].Controls also works)"}';
+
+  SCHEMA_FORM_LIST_COLLECTION_ITEMS =
+    '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
+    '"include_properties":{"type":"boolean","description":"Return each item''s properties (default true)"}},' +
+    '"required":["form_file","component_name","property"]}';
+
+  SCHEMA_FORM_ADD_COLLECTION_ITEM =
+    '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
+    '"index":{"type":"integer","description":"Position for the new item (default: at the end)"},' +
+    '"properties":{"type":"object","description":"Item properties to set, same format as form_set_properties, ' +
+      'e.g. {\"Caption\":\"Name\",\"Width\":120}"}},' +
+    '"required":["form_file","component_name","property"]}';
+
+  SCHEMA_FORM_DELETE_COLLECTION_ITEM =
+    '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
+    '"index":{"type":"integer","description":"Index of the item to delete"}},' +
+    '"required":["form_file","component_name","property","index"]}';
+
+  SCHEMA_FORM_MOVE_COLLECTION_ITEM =
+    '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
+    '"index":{"type":"integer","description":"Current index of the item"},' +
+    '"new_index":{"type":"integer","description":"Index it should have afterwards"}},' +
+    '"required":["form_file","component_name","property","index","new_index"]}';
+
+  SCHEMA_FORM_GET_MENU =
+    '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
+    '"menu_name":{"type":"string","description":"TMainMenu/TPopupMenu name, or a menu item to get only its submenu"}},' +
+    '"required":["form_file","menu_name"]}';
+
+  SCHEMA_FORM_ADD_MENU_ITEM =
+    '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
+    '"parent_name":{"type":"string","description":"Menu (TMainMenu/TPopupMenu) for a top-level item, or the menu item to add a submenu entry to"},' +
+    '"caption":{"type":"string","description":"Caption; \"-\" makes a separator. Use & for the accelerator key (&File)"},' +
+    '"name":{"type":"string","description":"Component name (default: derived by the IDE, MenuItem1, ...)"},' +
+    '"index":{"type":"integer","description":"Position among the parent''s items (default: at the end)"},' +
+    '"properties":{"type":"object","description":"More properties, same format as form_set_properties, ' +
+      'e.g. {\"ShortCut\":\"Ctrl+S\",\"OnClick\":\"mnuSaveClick\",\"Checked\":true}"}},' +
+    '"required":["form_file","parent_name","caption"]}';
+
+  SCHEMA_FORM_MOVE_MENU_ITEM =
+    '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
+    '"component_name":{"type":"string","description":"Menu item to move"},' +
+    '"parent_name":{"type":"string","description":"New parent menu or menu item (default: keep the parent)"},' +
+    '"index":{"type":"integer","description":"Position among the new parent''s items (default: at the end)"}},' +
+    '"required":["form_file","component_name"]}';
 
 { ── Property-editor helpers ──────────────────────────────────────────────── }
 
@@ -237,9 +295,189 @@ function SafeValue(AEditor: TPropertyEditor): string;
 begin
   try
     Result := AEditor.GetValue;
+    { the Boolean editor shows "(True)"; report the value as it is set }
+    if (AEditor.GetPropType^.Kind = tkBool) and (Length(Result) > 2) and
+       (Result[1] = '(') and (Result[Length(Result)] = ')') then
+      Result := Copy(Result, 2, Length(Result) - 2);
   except
     on E: Exception do Result := '(unreadable: ' + E.Message + ')';
   end;
+end;
+
+{ Is AEditor's property of class AClass (or a descendant)? }
+function EditsClass(AEditor: TPropertyEditor; AClass: TClass): Boolean;
+var
+  TD : PTypeData;
+begin
+  Result := False;
+  if AEditor.GetPropType^.Kind <> tkClass then Exit;
+  TD := GetTypeData(AEditor.GetPropType);
+  Result := Assigned(TD) and Assigned(TD^.ClassType) and
+            TD^.ClassType.InheritsFrom(AClass);
+end;
+
+{ TStrings properties (Memo.Lines, ListBox.Items) only have a dialog editor,
+  so they are read and written here directly. }
+function StringsJSON(AList: TStrings): TJSONArray;
+var
+  I : Integer;
+begin
+  Result := TJSONArray.Create;
+  if AList = nil then Exit;
+  for I := 0 to Min(AList.Count, 500) - 1 do
+    Result.Add(AList[I]);
+end;
+
+procedure SetStrings(AList: TStrings; AData: TJSONData);
+var
+  I : Integer;
+begin
+  AList.BeginUpdate;
+  try
+    if AData.JSONType = jtArray then
+    begin
+      AList.Clear;
+      for I := 0 to AData.Count - 1 do
+        AList.Add(AData.Items[I].AsString);
+    end
+    else if AData.JSONType = jtNull then
+      AList.Clear
+    else
+      AList.Text := AData.AsString;
+  finally
+    AList.EndUpdate;
+  end;
+end;
+
+{ Walk the part of APath up to its last collection index, e.g.
+  'Columns[2].Title.Caption' -> ATarget = item 2 of Columns,
+  ARest = 'Title.Caption'.  Paths without an index are returned unchanged. }
+function ResolveItemPath(ARoot: TPersistent; const APath: string;
+  out ATarget: TPersistent; out ARest: string; out AErr: string): Boolean;
+var
+  LastBr, P, Idx : Integer;
+  Head, Seg, PropName : string;
+  Obj : TObject;
+begin
+  ATarget := ARoot;
+  ARest   := APath;
+  AErr    := '';
+  LastBr  := LastDelimiter(']', APath);
+  if LastBr = 0 then Exit(True);
+  Result := False;
+  Head  := Copy(APath, 1, LastBr);
+  ARest := Copy(APath, LastBr + 1, MaxInt);
+  if ARest <> '' then
+  begin
+    if ARest[1] <> '.' then
+    begin
+      AErr := 'bad property path: ' + APath; Exit;
+    end;
+    Delete(ARest, 1, 1);
+  end;
+  while Head <> '' do
+  begin
+    P := Pos('.', Head);
+    if P > 0 then
+    begin
+      Seg := Copy(Head, 1, P - 1);
+      Delete(Head, 1, P);
+    end
+    else
+    begin
+      Seg  := Head;
+      Head := '';
+    end;
+    Idx := -1;
+    P := Pos('[', Seg);
+    if P > 0 then
+    begin
+      PropName := Copy(Seg, 1, P - 1);
+      if (Seg[Length(Seg)] <> ']') or
+         not TryStrToInt(Copy(Seg, P + 1, Length(Seg) - P - 1), Idx) then
+      begin
+        AErr := 'bad index in: ' + Seg; Exit;
+      end;
+    end
+    else
+      PropName := Seg;
+    if not IsPublishedProp(ATarget, PropName) or
+       (PropType(ATarget, PropName) <> tkClass) then
+    begin
+      AErr := PropName + ' is not an object property of ' + ATarget.ClassName; Exit;
+    end;
+    Obj := GetObjectProp(ATarget, PropName);
+    if P > 0 then
+    begin
+      if not (Obj is TCollection) then
+      begin
+        AErr := PropName + ' is not a collection'; Exit;
+      end;
+      if (Idx < 0) or (Idx >= TCollection(Obj).Count) then
+      begin
+        AErr := Format('%s[%d]: index out of range (count %d)',
+                       [PropName, Idx, TCollection(Obj).Count]);
+        Exit;
+      end;
+      ATarget := TCollection(Obj).Items[Idx];
+    end
+    else if Obj is TPersistent then
+      ATarget := TPersistent(Obj)
+    else
+    begin
+      AErr := PropName + ' is nil'; Exit;
+    end;
+  end;
+  Result := True;
+end;
+
+{ The collection at APath ('Columns', 'Bands[0].Controls') of AComp. }
+function FindCollection(AComp: TPersistent; const APath: string;
+  out AErr: string): TCollection;
+var
+  Target : TPersistent;
+  Rest   : string;
+  Obj    : TObject;
+begin
+  Result := nil;
+  if not ResolveItemPath(AComp, APath, Target, Rest, AErr) then Exit;
+  if Rest = '' then
+  begin
+    AErr := APath + ' is a collection item, not a collection'; Exit;
+  end;
+  Obj := Target;
+  while Rest <> '' do
+  begin
+    if Pos('.', Rest) > 0 then
+    begin
+      AErr := '';
+      if not IsPublishedProp(Obj, Copy(Rest, 1, Pos('.', Rest) - 1)) then
+      begin
+        AErr := 'property not found: ' + Copy(Rest, 1, Pos('.', Rest) - 1); Exit;
+      end;
+      Obj := GetObjectProp(Obj, Copy(Rest, 1, Pos('.', Rest) - 1));
+      Delete(Rest, 1, Pos('.', Rest));
+    end
+    else
+    begin
+      if (Obj = nil) or not IsPublishedProp(Obj, Rest) or
+         (PropType(Obj, Rest) <> tkClass) then
+      begin
+        AErr := 'property not found: ' + Rest; Exit;
+      end;
+      Obj  := GetObjectProp(Obj, Rest);
+      Rest := '';
+    end;
+    if Obj = nil then
+    begin
+      AErr := 'nil object in path: ' + APath; Exit;
+    end;
+  end;
+  if not (Obj is TCollection) then
+  begin
+    AErr := APath + ' is not a collection (it is ' + Obj.ClassName + ')'; Exit;
+  end;
+  Result := TCollection(Obj);
 end;
 
 { Resolve a dotted property path ('BorderSpacing.Around') to its editor. }
@@ -334,10 +572,16 @@ begin
         Obj.Add('name',  PName);
         Obj.Add('value', SafeValue(Ed));
         Obj.Add('kind',  KindName(Ed));
+        if EditsClass(Ed, TStrings) then
+          Obj.Add('lines', StringsJSON(TStrings(Ed.GetObjectValue)))
+        else if EditsClass(Ed, TCollection) and Assigned(Ed.GetObjectValue) then
+          Obj.Add('count', TCollection(Ed.GetObjectValue).Count);
         { sets and sub-objects report paReadOnly for their text field, yet
-          are settable as text / via their sub-properties }
+          are settable as text / via their sub-properties; string lists are
+          settable here, collections through form_*_collection_item }
         if (paReadOnly in Ed.GetAttributes) and
-           not (paSubProperties in Ed.GetAttributes) then
+           not (paSubProperties in Ed.GetAttributes) and
+           not EditsClass(Ed, TStrings) then
           Obj.Add('read_only', True);
         if Assigned(AFilter) and (AFilter.Count > 0) and
            (paValueList in Ed.GetAttributes) then
@@ -476,9 +720,9 @@ begin
   Result := True;
 end;
 
-{ Apply AProps to AComp; one result entry per property.  Returns the number
-  of failures. }
-function ApplyProperties(ADesigner: TIDesigner; AComp: TComponent;
+{ Apply AProps to AComp (a component or a collection item); one result entry
+  per property.  Returns the number of failures. }
+function ApplyProperties(ADesigner: TIDesigner; AComp: TPersistent;
   AProps: TJSONObject; AResults: TJSONArray): Integer;
 var
   Pool    : TEditorPool;
@@ -488,6 +732,9 @@ var
   Ed      : TPropertyEditor;
   Err     : string;
   R       : TJSONObject;
+  Target  : TPersistent;
+  Rest    : string;
+  List    : TStrings;
 begin
   Result := 0;
   if AProps = nil then Exit;
@@ -506,15 +753,36 @@ begin
         try
           if Pass = 0 then
           begin
-            if SetParentOf(ADesigner, AComp, Val, Err) then
+            if not (AComp is TComponent) then
+              Err := 'Parent applies to components only'
+            else if SetParentOf(ADesigner, TComponent(AComp), Val, Err) then
               R.Add('value', TControl(AComp).Parent.Name);
           end
+          else if not ResolveItemPath(AComp, Key, Target, Rest, Err) then
+            { Err set }
+          else if Rest = '' then
+            Err := 'path names a collection item, not a property'
           else
           begin
-            Ed := ResolvePath(Pool, AComp, Key, Err);
-            if Assigned(Ed) then
+            Ed := ResolvePath(Pool, Target, Rest, Err);
+            if Assigned(Ed) and EditsClass(Ed, TStrings) then
             begin
-              if (paReadOnly in Ed.GetAttributes) and not (paSubProperties in Ed.GetAttributes) then
+              List := TStrings(Ed.GetObjectValue);
+              if List = nil then
+                Err := 'string list is nil'
+              else
+              begin
+                SetStrings(List, AProps.Items[I]);
+                GlobalDesignHook.Modified(Target);
+                R.Add('value', Format('(%d lines)', [List.Count]));
+              end;
+            end
+            else if Assigned(Ed) then
+            begin
+              if EditsClass(Ed, TCollection) then
+                Err := 'collection: set item properties as ' + Rest + '[index].Prop, ' +
+                       'add/delete items with form_add_collection_item / form_delete_collection_item'
+              else if (paReadOnly in Ed.GetAttributes) and not (paSubProperties in Ed.GetAttributes) then
                 Err := 'read-only property'
               else
               begin
@@ -537,6 +805,104 @@ begin
     Pool.Free;
   end;
   ADesigner.Modified;
+end;
+
+{ ── Menu helpers ─────────────────────────────────────────────────────────── }
+
+{ Name of the menu (for top-level items) or menu item AItem belongs to. }
+function MenuParentName(AItem: TMenuItem): string;
+begin
+  Result := '';
+  if AItem.Parent = nil then Exit;
+  if Assigned(AItem.GetParentMenu) and (AItem.Parent = AItem.GetParentMenu.Items) then
+    Result := AItem.GetParentMenu.Name
+  else
+    Result := AItem.Parent.Name;
+end;
+
+{ The item list of a menu, or of a menu item (its submenu). }
+function MenuItemsOf(AComp: TComponent): TMenuItem;
+begin
+  if AComp is TMenu then
+    Result := TMenu(AComp).Items
+  else if AComp is TMenuItem then
+    Result := TMenuItem(AComp)
+  else
+    Result := nil;
+end;
+
+function MenuTreeJSON(AItem: TMenuItem): TJSONArray;
+var
+  I   : Integer;
+  MI  : TMenuItem;
+  Obj : TJSONObject;
+  H   : string;
+begin
+  Result := TJSONArray.Create;
+  for I := 0 to AItem.Count - 1 do
+  begin
+    MI  := AItem.Items[I];
+    Obj := TJSONObject.Create;
+    Obj.Add('name',    MI.Name);
+    Obj.Add('caption', MI.Caption);
+    if MI.IsLine then Obj.Add('separator', True);
+    if MI.ShortCut <> 0 then Obj.Add('shortcut', ShortCutToTextRaw(MI.ShortCut));
+    if not MI.Enabled then Obj.Add('enabled', False);
+    if not MI.Visible then Obj.Add('visible', False);
+    if MI.Checked then Obj.Add('checked', True);
+    if MI.RadioItem then Obj.Add('group_index', MI.GroupIndex);
+    if Assigned(MI.Action) then Obj.Add('action', MI.Action.Name);
+    H := GlobalDesignHook.GetMethodName(GetMethodProp(MI, 'OnClick'), MI);
+    if H <> '' then Obj.Add('on_click', H);
+    if MI.Count > 0 then Obj.Add('items', MenuTreeJSON(MI));
+    Result.Add(Obj);
+  end;
+end;
+
+{ The IDE's Menu Editor keeps its own view of the menu and does not notice
+  items added or removed elsewhere; hiding it frees that view (it is rebuilt
+  when the user opens it again). }
+function HideMenuEditor: Boolean;
+var
+  I : Integer;
+begin
+  Result := False;
+  for I := Screen.CustomFormCount - 1 downto 0 do
+    if Screen.CustomForms[I].ClassNameIs('TMenuDesignerForm') and
+       Screen.CustomForms[I].Visible then
+    begin
+      Screen.CustomForms[I].Hide;
+      Result := True;
+    end;
+end;
+
+{ Delete AItem and its submenu, as the Menu Editor does. }
+procedure DeleteMenuItem(AItem: TMenuItem);
+var
+  I : Integer;
+  P : TPersistent;
+begin
+  for I := AItem.Count - 1 downto 0 do
+    DeleteMenuItem(AItem.Items[I]);
+  if Assigned(AItem.Parent) then
+    AItem.Parent.Remove(AItem);
+  P := AItem;
+  GlobalDesignHook.DeletePersistent(P);
+end;
+
+{ Select APersistent in the Object Inspector (and nothing else). }
+procedure SelectOnly(APersistent: TPersistent);
+var
+  Sel : TPersistentSelectionList;
+begin
+  Sel := TPersistentSelectionList.Create;
+  try
+    if Assigned(APersistent) then
+      Sel.Add(APersistent);
+    GlobalDesignHook.SetSelection(Sel);
+  finally
+    Sel.Free;
+  end;
 end;
 
 function ControlInfo(AComp: TComponent; ARoot: TComponent): TJSONObject;
@@ -567,6 +933,13 @@ begin
       Result.Add('text', GetStrProp(C, 'Text'));
     if (C is TWinControl) and IsPublishedProp(C, 'TabOrder') then
       Result.Add('tab_order', TWinControl(C).TabOrder);
+  end
+  else if AComp is TMenuItem then
+  begin
+    { menu items have no position; form_get_menu shows the tree }
+    Result.Add('menu_item', True);
+    Result.Add('parent',  MenuParentName(TMenuItem(AComp)));
+    Result.Add('caption', TMenuItem(AComp).Caption);
   end
   else
   begin
@@ -812,7 +1185,283 @@ begin
   Result := (Name = 'form_list_components') or (Name = 'form_get_properties') or
             (Name = 'form_set_properties') or (Name = 'form_add_component') or
             (Name = 'form_delete_component') or (Name = 'form_arrange') or
-            (Name = 'form_get_lfm') or (Name = 'form_create_event_handler');
+            (Name = 'form_get_lfm') or (Name = 'form_create_event_handler') or
+            (Name = 'form_list_collection_items') or (Name = 'form_add_collection_item') or
+            (Name = 'form_delete_collection_item') or (Name = 'form_move_collection_item') or
+            (Name = 'form_get_menu') or (Name = 'form_add_menu_item') or
+            (Name = 'form_move_menu_item');
+end;
+
+{ form_*_collection_item and form_list_collection_items. }
+procedure DoCollectionTool(const Name: string; ADesigner: TIDesigner;
+  AComp: TComponent; var Ctx: TMcpToolCall);
+var
+  Coll      : TCollection;
+  Item      : TCollectionItem;
+  Err       : string;
+  Obj, IObj : TJSONObject;
+  Arr, Res  : TJSONArray;
+  Pool      : TEditorPool;
+  I, Idx, NewIdx, Failed : Integer;
+  Props     : TJSONObject;
+begin
+  if AComp = nil then
+  begin
+    Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
+  end;
+  Coll := FindCollection(AComp, Ctx.Params.Get('property', ''), Err);
+  if Coll = nil then
+  begin
+    Ctx.Error := True; Ctx.Result := Err; Exit;
+  end;
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('component_name', AComp.Name);
+    Obj.Add('property', Ctx.Params.Get('property', ''));
+
+    if Name = 'form_list_collection_items' then
+    begin
+      Obj.Add('collection_class', Coll.ClassName);
+      Obj.Add('item_class', Coll.ItemClass.ClassName);
+      Obj.Add('count', Coll.Count);
+      Arr  := TJSONArray.Create;
+      Obj.Add('items', Arr);
+      Pool := TEditorPool.Create;
+      try
+        for I := 0 to Coll.Count - 1 do
+        begin
+          IObj := TJSONObject.Create;
+          IObj.Add('index', I);
+          IObj.Add('display_name', Coll.Items[I].DisplayName);
+          if Ctx.Params.Get('include_properties', True) then
+          begin
+            Res := TJSONArray.Create;
+            Pool.CollectTop(Coll.Items[I], tkProperties);
+            ListLevel(Pool, '', 0, nil, Res);
+            IObj.Add('properties', Res);
+          end;
+          Arr.Add(IObj);
+        end;
+      finally
+        Pool.Free;
+      end;
+    end
+
+    else if Name = 'form_add_collection_item' then
+    begin
+      Item := Coll.Add;
+      Idx  := Ctx.Params.Get('index', -1);
+      if (Idx >= 0) and (Idx < Coll.Count) then
+        Item.Index := Idx;
+      Props := Ctx.Params.Get('properties', TJSONObject(nil));
+      Failed := 0;
+      if Assigned(Props) and (Props.Count > 0) then
+      begin
+        Res := TJSONArray.Create;
+        Obj.Add('results', Res);
+        Failed := ApplyProperties(ADesigner, Item, Props, Res);
+        if Failed > 0 then
+          Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
+      end;
+      Obj.Add('status', 'added');
+      Obj.Add('index', Item.Index);
+      Obj.Add('display_name', Item.DisplayName);
+      Obj.Add('count', Coll.Count);
+    end
+
+    else if Name = 'form_delete_collection_item' then
+    begin
+      Idx := Ctx.Params.Get('index', -1);
+      if (Idx < 0) or (Idx >= Coll.Count) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := Format('index out of range (count %d)', [Coll.Count]);
+        Exit;
+      end;
+      Obj.Add('display_name', Coll.Items[Idx].DisplayName);
+      { The Object Inspector may show the item; never free it under its feet. }
+      SelectOnly(AComp);
+      Coll.Items[Idx].Free;
+      Obj.Add('status', 'deleted');
+      Obj.Add('count', Coll.Count);
+    end
+
+    else if Name = 'form_move_collection_item' then
+    begin
+      Idx    := Ctx.Params.Get('index', -1);
+      NewIdx := Ctx.Params.Get('new_index', -1);
+      if (Idx < 0) or (Idx >= Coll.Count) or (NewIdx < 0) or (NewIdx >= Coll.Count) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := Format('index or new_index out of range (count %d)', [Coll.Count]);
+        Exit;
+      end;
+      Coll.Items[Idx].Index := NewIdx;
+      Obj.Add('status', 'moved');
+      Obj.Add('display_name', Coll.Items[NewIdx].DisplayName);
+      Obj.Add('index', NewIdx);
+    end;
+
+    if Name <> 'form_list_collection_items' then
+    begin
+      GlobalDesignHook.Modified(Coll);
+      GlobalDesignHook.RefreshPropertyValues;
+      ADesigner.Modified;
+    end;
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
+
+{ form_get_menu, form_add_menu_item, form_move_menu_item. }
+procedure DoMenuTool(const Name: string; ADesigner: TIDesigner;
+  AComp: TComponent; var Ctx: TMcpToolCall);
+var
+  Root       : TComponent;
+  Target     : TComponent;
+  Items      : TMenuItem;
+  MI         : TMenuItem;
+  Obj, Props : TJSONObject;
+  Given      : TJSONObject;
+  Res        : TJSONArray;
+  Idx, I, Failed : Integer;
+  Caption, NewName : string;
+  Walk       : TMenuItem;
+begin
+  Root := ADesigner.LookupRoot;
+  Obj  := TJSONObject.Create;
+  try
+    if Name = 'form_get_menu' then
+    begin
+      Target := FindComp(ADesigner, Ctx.Params.Get('menu_name', ''));
+      Items  := nil;
+      if Assigned(Target) then
+        Items := MenuItemsOf(Target);
+      if Items = nil then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Menu or menu item not found: ' + Ctx.Params.Get('menu_name', '');
+        Exit;
+      end;
+      Obj.Add('menu_name',  Target.Name);
+      Obj.Add('menu_class', Target.ClassName);
+      Obj.Add('items', MenuTreeJSON(Items));
+      Ctx.Result := Obj.AsJSON;
+      Exit;
+    end;
+
+    if Name = 'form_add_menu_item' then
+    begin
+      Target := FindComp(ADesigner, Ctx.Params.Get('parent_name', ''));
+      Items  := nil;
+      if Assigned(Target) then
+        Items := MenuItemsOf(Target);
+      if Items = nil then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'parent_name must name a TMainMenu/TPopupMenu or a menu item: ' +
+                      Ctx.Params.Get('parent_name', '');
+        Exit;
+      end;
+      if not (ADesigner is TComponentEditorDesigner) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Designer cannot create menu items'; Exit;
+      end;
+      Obj.Add('menu_editor_hidden', HideMenuEditor);
+      Caption := Ctx.Params.Get('caption', '');
+      MI := TMenuItem.Create(Root);
+      if Caption = cLineCaption then
+        NewName := 'Separator'
+      else
+        NewName := MI.ClassName;
+      MI.Name    := TComponentEditorDesigner(ADesigner).CreateUniqueComponentName(NewName);
+      MI.Caption := Caption;
+      Idx := Ctx.Params.Get('index', -1);
+      if (Idx < 0) or (Idx > Items.Count) then
+        Idx := Items.Count;
+      Items.Insert(Idx, MI);
+      { adds the field to the class, as for a palette drop }
+      GlobalDesignHook.PersistentAdded(MI, False);
+      GlobalDesignHook.Modified(MI);
+      Props := TJSONObject.Create;
+      try
+        Given := Ctx.Params.Get('properties', TJSONObject(nil));
+        if Assigned(Given) then
+          for I := 0 to Given.Count - 1 do
+            if not SameText(Given.Names[I], 'Name') then
+              Props.Add(Given.Names[I], Given.Items[I].Clone);
+        if Ctx.Params.Get('name', '') <> '' then
+          Props.Add('Name', Ctx.Params.Get('name', ''));
+        if Props.Count > 0 then
+        begin
+          Res := TJSONArray.Create;
+          Obj.Add('results', Res);
+          Failed := ApplyProperties(ADesigner, MI, Props, Res);
+          if Failed > 0 then
+            Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
+        end;
+      finally
+        Props.Free;
+      end;
+      Obj.Add('status', 'added');
+      Obj.Add('name',   MI.Name);
+      Obj.Add('parent', MenuParentName(MI));
+      Obj.Add('index',  MI.MenuIndex);
+    end
+
+    else if Name = 'form_move_menu_item' then
+    begin
+      if not (AComp is TMenuItem) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'component_name must name a menu item'; Exit;
+      end;
+      MI := TMenuItem(AComp);
+      Items := MI.Parent;
+      if Ctx.Params.Get('parent_name', '') <> '' then
+      begin
+        Target := FindComp(ADesigner, Ctx.Params.Get('parent_name', ''));
+        Items  := nil;
+        if Assigned(Target) then
+          Items := MenuItemsOf(Target);
+        if Items = nil then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'parent_name must name a menu or a menu item: ' +
+                        Ctx.Params.Get('parent_name', '');
+          Exit;
+        end;
+        Walk := Items;  { refuse moving an item into itself or its own submenu }
+        while Assigned(Walk) and (Walk <> MI) do
+          Walk := Walk.Parent;
+        if Walk = MI then
+        begin
+          Ctx.Error := True; Ctx.Result := 'cannot move a menu item into its own submenu'; Exit;
+        end;
+      end;
+      if Items = nil then
+      begin
+        Ctx.Error := True; Ctx.Result := 'menu item has no parent'; Exit;
+      end;
+      Obj.Add('menu_editor_hidden', HideMenuEditor);
+      if Assigned(MI.Parent) then
+        MI.Parent.Remove(MI);
+      Idx := Ctx.Params.Get('index', -1);
+      if (Idx < 0) or (Idx > Items.Count) then
+        Idx := Items.Count;
+      Items.Insert(Idx, MI);
+      GlobalDesignHook.Modified(MI);
+      Obj.Add('status', 'moved');
+      Obj.Add('name',   MI.Name);
+      Obj.Add('parent', MenuParentName(MI));
+      Obj.Add('index',  MI.MenuIndex);
+    end;
+
+    ADesigner.Modified;
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
 end;
 
 function DispatchFormsTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -907,7 +1556,13 @@ begin
     end;
   end;
 
-  if Name = 'form_list_components' then
+  if Pos('collection_item', Name) > 0 then
+    DoCollectionTool(Name, Designer, Comp, Ctx)
+
+  else if Pos('menu', Name) > 0 then
+    DoMenuTool(Name, Designer, Comp, Ctx)
+
+  else if Name = 'form_list_components' then
   begin
     Obj := TJSONObject.Create;
     try
@@ -1075,6 +1730,23 @@ begin
     if Comp = Root then
     begin
       Ctx.Error := True; Ctx.Result := 'Cannot delete the form itself'; Exit;
+    end;
+    if Comp is TMenuItem then
+    begin
+      { the designer's DeleteSelection would leave the submenu's fields behind }
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('menu_editor_hidden', HideMenuEditor);
+        Obj.Add('component', Comp.Name);
+        SelectOnly(Root);
+        DeleteMenuItem(TMenuItem(Comp));
+        Designer.Modified;
+        Obj.Add('status', 'deleted');
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+      Exit;
     end;
     if not (Designer is TComponentEditorDesigner) then
     begin
@@ -1260,7 +1932,8 @@ begin
     SCHEMA_FORM_ADD_COMPONENT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_delete_component',
     'Delete a component (and its child controls) from a form, as the designer''s ' +
-    'Delete command does; its field is removed from the source. Save with editor_save.',
+    'Delete command does; its field is removed from the source. Also deletes menu ' +
+    'items with their submenus. Save with editor_save.',
     SCHEMA_FORM_DELETE_COMPONENT, MCP_ANN_DEST));
   Tools.Add(MakeTool('form_arrange',
     'Arrange controls that share a parent: copy the first control''s size ' +
@@ -1279,6 +1952,41 @@ begin
     'source editor. If a handler is already assigned, shows the existing one and ' +
     'returns status=existing. Save the unit with editor_save.',
     SCHEMA_FORM_CREATE_EVENT_HANDLER, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('form_list_collection_items',
+    'List the items of a collection property (ListView Columns, StatusBar Panels, ' +
+    'StringGrid/DBGrid Columns, HeaderControl Sections, CoolBar Bands, ...) with ' +
+    'their index, display name and properties. Set item properties with ' +
+    'form_set_properties using indexed paths, e.g. {"Columns[0].Caption":"Name"}.',
+    SCHEMA_FORM_LIST_COLLECTION_ITEMS, MCP_ANN_RO));
+  Tools.Add(MakeTool('form_add_collection_item',
+    'Add an item to a collection property (Columns, Panels, Sections, Bands, ...), ' +
+    'optionally at an index and with initial properties, as the IDE''s collection ' +
+    'editor does. Returns the new item''s index. Save with editor_save.',
+    SCHEMA_FORM_ADD_COLLECTION_ITEM, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('form_delete_collection_item',
+    'Delete the item at index from a collection property. Later items shift down ' +
+    'by one. Save with editor_save.',
+    SCHEMA_FORM_DELETE_COLLECTION_ITEM, MCP_ANN_DEST));
+  Tools.Add(MakeTool('form_move_collection_item',
+    'Move a collection item from index to new_index (e.g. reorder grid columns). ' +
+    'Save with editor_save.',
+    SCHEMA_FORM_MOVE_COLLECTION_ITEM, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('form_get_menu',
+    'Return the item tree of a TMainMenu/TPopupMenu (or a submenu): name, caption, ' +
+    'shortcut, separator, checked/enabled/visible, action and OnClick handler. ' +
+    'Set item properties with form_set_properties; delete items (with their ' +
+    'submenus) with form_delete_component.',
+    SCHEMA_FORM_GET_MENU, MCP_ANN_RO));
+  Tools.Add(MakeTool('form_add_menu_item',
+    'Add a menu item to a TMainMenu/TPopupMenu (top level) or to a menu item ' +
+    '(submenu), optionally at an index and with properties such as ShortCut, ' +
+    'OnClick, Checked. Caption "-" adds a separator. Closes the IDE''s Menu Editor ' +
+    'window if open. Save with editor_save.',
+    SCHEMA_FORM_ADD_MENU_ITEM, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('form_move_menu_item',
+    'Move a menu item (with its submenu) to another position and/or another parent ' +
+    'menu or menu item. Closes the IDE''s Menu Editor window if open. Save with editor_save.',
+    SCHEMA_FORM_MOVE_MENU_ITEM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_search_palette',
     'Search the IDE component palette for classes whose name contains query. ' +
     'Returns class_name, unit_name and palette_page for each match.',
