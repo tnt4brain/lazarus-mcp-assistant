@@ -526,10 +526,14 @@ every response carries `Connection: close`.
   shared `TDbgSyncHelper` instance safe.
 - **Tool names**: [ADR-010](0010-tool-naming-scheme.md).
 
-### Known issue
+### Late results of a timed-out evaluation (fixed in dc979ab)
 
-**`debug_evaluate` after a timeout.** The callback of an evaluation that timed
-out can still arrive later. It then sets the flag and result fields of the shared
-helper, and the next `debug_evaluate` can report it as its own result. Never seen
-in testing, since the 5 s timeout has not fired since the socket fix. The fix is a
-per-call object, or a sequence number the callback checks.
+The callback of an evaluation that timed out can still arrive later. It used to
+set the result fields of the shared helper, so the next `debug_evaluate` could
+report it as its own result. Never seen in testing: the 5 s timeout has not fired
+since the socket fix.
+
+Now each evaluation gets its own callback object carrying a sequence number:
+- Only the callback of the latest evaluation writes a result.
+- An object whose callback has not come yet is freed by that callback when it
+  comes.

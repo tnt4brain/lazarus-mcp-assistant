@@ -21,7 +21,7 @@ type
     Params          : TJSONObject;
     Result          : string;
     Error           : Boolean;
-    ConnectionClose : Boolean;      { IDE-restart tools: ide_rebuild, install/package_uninstall }
+    ClientId        : string;       { Mcp-Session-Id / cookie, or 'anonymous' (ADR-012) }
     StopServer      : TMcpStopServerProc;  { set by SyncCallTool before dispatch }
   end;
 

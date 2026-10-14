@@ -320,7 +320,7 @@ begin
   begin
     Result := True;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    TmpCtx.StopServer := nil;
     McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin
@@ -334,7 +334,7 @@ begin
   begin
     Result := True;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    TmpCtx.StopServer := nil;
     McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin
@@ -486,7 +486,7 @@ begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
     end;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    TmpCtx.StopServer := nil;
     McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin
@@ -577,7 +577,7 @@ begin
       Exit;
     end;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    TmpCtx.StopServer := nil;
     McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin

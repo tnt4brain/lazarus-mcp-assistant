@@ -48,7 +48,8 @@ const
     '{"type":"object","properties":{' +
     '"test_project":{"type":"string","description":"Path to the FPCUnit test ' +
     'project .lpi (absolute, or relative to the active project directory). ' +
-    'Defaults to tests/mcpserver_tests.lpi next to the active project."},' +
+    'Defaults to the plugin''s own tests/mcpserver_tests.lpi, whatever project ' +
+    'is open; else tests/mcpserver_tests.lpi in the active project."},' +
     '"junit_out":{"type":"string","description":"If provided, also write ' +
     'JUnit-compatible XML to this absolute path. Readable by GitHub Actions, ' +
     'Jenkins, and other CI tools."}}}';
@@ -350,7 +351,6 @@ begin
     if GBuildHelper.PollCmd <> '' then
       Obj.Add('poll_command', GBuildHelper.PollCmd);
     Ctx.Result          := Obj.AsJSON;
-    Ctx.ConnectionClose := True;
   finally
     Obj.Free;
   end;

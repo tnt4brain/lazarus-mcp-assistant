@@ -401,7 +401,6 @@ begin
       if PollCmd <> '' then
         Obj.Add('poll_command', PollCmd);
       Ctx.Result          := Obj.AsJSON;
-      Ctx.ConnectionClose := True;
     finally
       Obj.Free;
     end;
@@ -449,7 +448,6 @@ begin
       if PollCmd <> '' then
         Obj.Add('poll_command', PollCmd);
       Ctx.Result          := Obj.AsJSON;
-      Ctx.ConnectionClose := True;
     finally
       Obj.Free;
     end;

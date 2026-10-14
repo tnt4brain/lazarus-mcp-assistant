@@ -96,8 +96,6 @@ type
     procedure IssueCmd;
     procedure AddBreakpoint;
     procedure RemoveBreakpoint;
-    procedure EvaluateCallback(Sender: TObject; ASuccess: Boolean;
-      ResultText: string; ResultDBGType: TDBGType);
     procedure DoEvaluateAndWait;  { single Synchronize: starts eval + waits on main thread }
     procedure InitCallStack;
     procedure ReadCallStack;
@@ -109,6 +107,9 @@ type
     procedure InitThreads;
     procedure ReadThreads;
   end;
+
+var
+  GSyncHelper : TDbgSyncHelper = nil;
 
 { Render a watch/local result the way the IDE's hints and Watches window do.
   The plain Value string is empty for structured values (objects, records). }
@@ -237,38 +238,65 @@ begin
   end;
 end;
 
-procedure TDbgSyncHelper.EvaluateCallback(Sender: TObject; ASuccess: Boolean;
+{ One evaluation's callback.  An evaluation that timed out can still call
+  back later; only the callback of the latest evaluation (Seq = GEvalSeq)
+  writes the result, so a late one cannot pass for the next call's result.
+  Everything here runs on the main thread. }
+type
+  TEvalCall = class
+    Seq     : Integer;
+    Started : Boolean;  { Evaluate returned True: the callback frees the object }
+    Fired   : Boolean;
+    procedure Callback(Sender: TObject; ASuccess: Boolean;
+      ResultText: string; ResultDBGType: TDBGType);
+  end;
+
+var
+  GEvalSeq : Integer = 0;
+
+procedure TEvalCall.Callback(Sender: TObject; ASuccess: Boolean;
   ResultText: string; ResultDBGType: TDBGType);
 begin
-  FEvalFired  := True;
-  OutEvalOk   := ASuccess;
-  OutEvalRes  := ResultText;
-  if Assigned(ResultDBGType) then
-    OutEvalType := ResultDBGType.TypeName
-  else
-    OutEvalType := '';
+  Fired := True;
+  if Seq = GEvalSeq then
+  begin
+    GSyncHelper.OutEvalOk  := ASuccess;
+    GSyncHelper.OutEvalRes := ResultText;
+    if Assigned(ResultDBGType) then
+      GSyncHelper.OutEvalType := ResultDBGType.TypeName
+    else
+      GSyncHelper.OutEvalType := '';
+    GSyncHelper.FEvalFired := True;
+  end;
+  if Started then
+    Free;  { else DoEvaluateAndWait frees it after Evaluate returns }
 end;
 
 procedure TDbgSyncHelper.DoEvaluateAndWait;
 { Runs on the main thread via TThread.Synchronize.  Starts the async evaluation
   and returns immediately — the HTTP thread polls FEvalFired while the main
-  thread's own event loop delivers DoCallback_DecRef via ProcessAsyncCallQueue.
+  thread's own event loop delivers the callback via ProcessAsyncCallQueue.
   OutEvalStarted records whether DebugBoss.Evaluate returned True. }
+var
+  Call : TEvalCall;
 begin
   OutEvalOk      := False;
   OutEvalRes     := '';
   OutEvalType    := '';
   FEvalFired     := False;
   OutEvalStarted := False;
+  Inc(GEvalSeq);  { from now on, earlier evaluations' callbacks are ignored }
   if not Assigned(DebugBoss) then
   begin
     FEvalFired := True;
     OutEvalRes := 'DebugBoss not assigned';
     Exit;
   end;
+  Call := TEvalCall.Create;
+  Call.Seq := GEvalSeq;
   try
-    OutEvalStarted := DebugBoss.Evaluate(InEvalExpr, @EvaluateCallback);
-    if not OutEvalStarted then
+    OutEvalStarted := DebugBoss.Evaluate(InEvalExpr, @Call.Callback);
+    if not OutEvalStarted and not FEvalFired then
     begin
       FEvalFired := True;
       OutEvalRes := 'Evaluate returned False (dcEvaluate not in Commands or ToolStatus<>itDebugger)';
@@ -279,8 +307,10 @@ begin
     OutEvalRes := 'Exception: ' + E.Message;
   end;
   end;
-  { Return immediately; the main thread's Application.Run loop will call
-    ProcessAsyncCallQueue which delivers DoCallback_DecRef → EvaluateCallback. }
+  if OutEvalStarted and not Call.Fired then
+    Call.Started := True  { the callback is still to come and frees it }
+  else
+    Call.Free;            { called back already, or never will be }
 end;
 
 procedure TDbgSyncHelper.InitCallStack;
@@ -633,9 +663,6 @@ begin
   end;
 end;
 
-var
-  GSyncHelper : TDbgSyncHelper = nil;
-
 { ── Internal helpers ─────────────────────────────────────────────────────── }
 
 function DbgStateStr(S: TDBGState): string;
@@ -978,20 +1005,6 @@ begin
 end;
 
 { ── Blocking dispatch (MCP worker thread) ───────────────────────────────── }
-
-{ Evaluate AExpr asynchronously (3 s timeout). Returns True on success.
-  Result value is in GSyncHelper.OutEvalRes / OutEvalOk on return. }
-function EvalExpr(const AExpr: string): Boolean;
-var
-  T, E : Integer;
-begin
-  GSyncHelper.InEvalExpr := AExpr;
-  TThread.Synchronize(nil, @GSyncHelper.DoEvaluateAndWait);
-  T := 3000; E := 0;
-  while not GSyncHelper.FEvalFired and (E < T) do
-  begin Sleep(50); Inc(E, 50); end;
-  Result := GSyncHelper.FEvalFired and GSyncHelper.OutEvalOk;
-end;
 
 function DispatchDebuggerBlockingTool(const Name: string;
   var Ctx: TMcpToolCall): Boolean;

@@ -8,7 +8,7 @@ unit LazMcpAssistant;
 interface
 
 uses
-  McpProcessWorker, McpIdeListeners, McpIdeState, McpLayoutPanel, 
+  McpIdeListeners, McpIdeState, McpLayoutPanel, 
   McpIdeServer, McpToolContext, McpToolHelpers, McpToolsPackages, 
   McpToolsEditor, McpToolsBuild, McpToolsCodeTools, McpToolsForms, 
   McpToolsProject, McpToolsGit, McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent,

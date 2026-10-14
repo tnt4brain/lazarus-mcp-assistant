@@ -481,7 +481,7 @@ begin
     Call.Ctx.Params          := AParams;
     Call.Ctx.Result          := '';
     Call.Ctx.Error           := False;
-    Call.Ctx.ConnectionClose := False;
+    Call.Ctx.ClientId        := AClientId;
     Call.Ctx.StopServer      := @Self.StopServer;
     TThread.Synchronize(nil, @Call.Run);
     Result := Call.Ctx.Result;
@@ -824,6 +824,7 @@ var
   Text        : string;
   ResolvedLpi : string;
   DirData     : TJSONData;
+  PkgArgs     : TJSONObject;
   ProjDir     : string;
   BCtx        : TMcpToolCall;
   BHandled    : Boolean;
@@ -856,29 +857,56 @@ begin
   end
   else if ToolName = 'ide_run_tests' then
   begin
+    { Default: the plugin's own test project (tests/ next to src/), whatever
+      project is open; else tests/ in the active project.  A relative
+      test_project is relative to the active project's directory. }
     ResolvedLpi := IfThen(Assigned(Args), Args.Get('test_project', ''), '');
+    ProjDir := '';
+    Text := CallOnMain('project_get_directory', nil, AClientId, Err);
+    if not Err and (Text <> '') then
+    begin
+      DirData := GetJSON(Text);
+      try
+        if DirData is TJSONObject then
+          ProjDir := TJSONObject(DirData).Get('directory', '');
+      finally
+        DirData.Free;
+      end;
+    end;
+    Err := False;
+    if (ResolvedLpi <> '') and not FilenameIsAbsolute(ResolvedLpi) and (ProjDir <> '') then
+      ResolvedLpi := CreateAbsolutePath(ResolvedLpi, ProjDir);
     if ResolvedLpi = '' then
     begin
-      // Resolve default .lpi path on the main thread
-      Text := CallOnMain('project_get_directory', nil, AClientId, Err);
-      if Err or (Text = '') then
-      begin
-        Text := 'Could not determine project directory for default test_project path';
-        Err  := True;
-      end else
+      PkgArgs := TJSONObject.Create(['package_name', 'LazMcpAssistant']);
+      try
+        Text := CallOnMain('package_get_info', PkgArgs, AClientId, Err);
+      finally
+        PkgArgs.Free;
+      end;
+      if not Err and (Text <> '') then
       begin
         DirData := GetJSON(Text);
         try
           if DirData is TJSONObject then
-            ProjDir := TJSONObject(DirData).Get('directory', '')
-          else
-            ProjDir := '';
+            ResolvedLpi := TJSONObject(DirData).Get('package_file', '');
         finally
           DirData.Free;
         end;
-        if ProjDir <> '' then
-          ResolvedLpi := IncludeTrailingPathDelimiter(ProjDir) +
+        if ResolvedLpi <> '' then
+          ResolvedLpi := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                           ExtractFilePath(ResolvedLpi))) +
                          'tests' + PathDelim + 'mcpserver_tests.lpi';
+      end;
+      Err := False;
+      if ((ResolvedLpi = '') or not FileExists(ResolvedLpi)) and (ProjDir <> '') then
+        ResolvedLpi := IncludeTrailingPathDelimiter(ProjDir) +
+                       'tests' + PathDelim + 'mcpserver_tests.lpi';
+      if ResolvedLpi = '' then
+      begin
+        Text := 'No test_project given, and no default found (the plugin''s ' +
+                'tests/mcpserver_tests.lpi, or tests/ in the active project)';
+        Err  := True;
       end;
     end;
     if not Err then
@@ -888,7 +916,7 @@ begin
   else
   begin
     BCtx.Params := Args; BCtx.Result := ''; BCtx.Error := False;
-    BCtx.ConnectionClose := False; BCtx.StopServer := @Self.StopServer;
+    BCtx.ClientId := AClientId; BCtx.StopServer := @Self.StopServer;
     McpBlockingDispatch(ToolName, BCtx, BHandled);
     if BHandled then
     begin
