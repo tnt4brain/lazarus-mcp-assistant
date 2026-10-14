@@ -303,6 +303,21 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 
 ---
 
+## Planned
+
+For v0.9:
+
+- **Undo for designer changes.** `form_*` changes can't be undone from the
+  assistant yet; today the way back is `editor_revert` or git.
+- **Install packages from the online repository.** Download a package found
+  with `package_search_online` into the Online Package Manager's folder, check
+  it against the catalog's MD5 hash, and install it through the same consent
+  dialog as any other new package. The dialog will say whether the code comes
+  from the official repository or from a third-party URL. See
+  [ADR-013](ADR-013.md#downloads-v09-not-built-yet).
+
+---
+
 ## Provenance
 Designed and directed by Sergei Pechenko: the requirements, design decisions (recorded as ADRs in [`docs/adr/`](docs/adr/)), reviews and acceptance. Most of the code, tests and docs were written by Claude (Anthropic) from his prompts and decisions, and checked by the test suite and by using the tools inside the IDE they extend. Because the code is largely AI-generated, no warranty of originality is given beyond the license's disclaimer.
 
