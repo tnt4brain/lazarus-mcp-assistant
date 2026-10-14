@@ -2,8 +2,9 @@
 unit McpToolsPackages;
 
 { Package management tools: package_get_info, package_find_unit, package_search_online,
-  project_list_packages, project_add_package, project_remove_package,
-  package_install, package_uninstall. }
+  package_add_file, package_remove_file, package_add_dependency,
+  package_remove_dependency, project_list_packages, project_add_package,
+  project_remove_package, package_install, package_uninstall. }
 
 {$mode objfpc}{$H+}
 
@@ -17,6 +18,10 @@ uses
   LazFileUtils, FileUtil,
   PackageDependencyIntf,
   PackageDefs, Project,   { IdePackager/IdeProject, linked via IdeDebugger: TPkgDependency }
+  PackageSystem,          { PackageGraph }
+  ParsedCompilerOpts, SearchPathProcs,  { IdeConfig: unit/include paths }
+  CodeToolManager, CodeCache,
+  Controls,               { mrOk }
   fpjson,
   McpToolContext, McpIdeState, McpConsent;
 
@@ -37,6 +42,29 @@ const
   SCHEMA_FIND_UNIT =
     '{"type":"object","properties":{"unit_name":{"type":"string",' +
     '"description":"Unit name, e.g. SynEdit or fpjson"}},"required":["unit_name"]}';
+
+  { package_add_file etc.: the package, by name or by .lpk file }
+  PKG_TARGET_PROPS =
+    '"package_name":{"type":"string","description":"A package loaded in the IDE"},' +
+    '"lpk_path":{"type":"string","description":"Or the .lpk file, loaded for this call ' +
+      'without a package editor"}';
+
+  SCHEMA_PKG_FILE =
+    '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
+    '"file":{"type":"string","description":"Absolute path of the file"}},' +
+    '"required":["file"]}';
+
+  SCHEMA_PKG_ADD_DEP =
+    '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
+    '"required_package":{"type":"string","description":"Name of the package to require"},' +
+    '"min_version":{"type":"string","description":"e.g. 1.2"},' +
+    '"max_version":{"type":"string"}},' +
+    '"required":["required_package"]}';
+
+  SCHEMA_PKG_REMOVE_DEP =
+    '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
+    '"required_package":{"type":"string"}},' +
+    '"required":["required_package"]}';
 
   SCHEMA_ADD_PACKAGE_TO_PROJECT =
     '{"type":"object","properties":{"package_name":{"type":"string",' +
@@ -496,6 +524,328 @@ begin
   end;
 end;
 
+{ ── Package editing ──────────────────────────────────────────────────────── }
+
+{ The package a package_add_file etc. call names, by package_name or
+  lpk_path.  A .lpk not loaded yet is opened without a package editor; one
+  whose name is already loaded from another file is refused (opening it would
+  ask whether to replace the loaded one). }
+function TargetPackage(AParams: TJSONObject; out APkg: TLazPackage;
+  out AErr: string): Boolean;
+var
+  Name, Lpk : string;
+  Other     : TLazPackage;
+begin
+  Result := False;
+  APkg   := nil;
+  AErr   := '';
+  Name := Trim(AParams.Get('package_name', ''));
+  Lpk  := Trim(AParams.Get('lpk_path', ''));
+  if Lpk <> '' then
+  begin
+    if not FilenameIsAbsolute(Lpk) or not FileExists(Lpk) then
+    begin AErr := 'No such .lpk: ' + Lpk; Exit; end;
+    APkg := PackageGraph.FindPackageWithFilename(Lpk);
+    if APkg = nil then
+    begin
+      Other := PackageGraph.FindPackageWithName(ExtractFileNameOnly(Lpk), nil);
+      if Assigned(Other) then
+      begin
+        AErr := Format('A package %s is already loaded from %s; it can''t be ' +
+                       'loaded from %s too', [Other.Name, Other.Filename, Lpk]);
+        Exit;
+      end;
+      PackageEditingInterface.DoOpenPackageFile(Lpk, [pofDoNotOpenEditor], False);
+      APkg := PackageGraph.FindPackageWithFilename(Lpk);
+      if APkg = nil then
+      begin AErr := 'Could not load ' + Lpk; Exit; end;
+    end;
+  end
+  else if Name <> '' then
+  begin
+    APkg := PackageGraph.FindPackageWithName(Name, nil);
+    if APkg = nil then
+    begin
+      AErr := 'Package not loaded: ' + Name + '. Give its lpk_path instead.';
+      Exit;
+    end;
+  end
+  else
+  begin
+    AErr := 'package_name or lpk_path required'; Exit;
+  end;
+  if APkg.IsVirtual then
+  begin AErr := APkg.Name + ' has not been saved yet'; Exit; end;
+  if APkg.ReadOnly then
+  begin AErr := APkg.Name + ' is read-only (' + APkg.Filename + ')'; Exit; end;
+  Result := True;
+end;
+
+{ Save APkg the way the package editor's Save button does, unless that would
+  write more than this change or ask the user something: DoSaveAllPackages
+  saves every modified package and the package's modified editor files, and
+  asks about files missing on disk.  '' = saved, else why not. }
+function SavePackage(APkg: TLazPackage; AWasModified: Boolean): string;
+var
+  I     : Integer;
+  Other : TIDEPackage;
+  F     : TLazPackageFile;
+  FN    : string;
+  Ed    : TSourceEditorInterface;
+begin
+  if AWasModified then
+    Exit(APkg.Name + ' already had unsaved changes in the IDE, and saving would ' +
+         'write them too');
+  for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+  begin
+    Other := PackageEditingInterface.GetPackages(I);
+    if (Other <> APkg) and Other.Modified then
+      Exit('package ' + Other.Name + ' has unsaved changes, and saving would write them too');
+  end;
+  for I := 0 to APkg.FileCount - 1 do
+  begin
+    F  := APkg.Files[I];
+    FN := F.GetFullFilename;
+    if (F.FileType = pftVirtualUnit) or (Pos('$(', FN) > 0) then Continue;
+    if not FileExists(FN) then
+      Exit('the package''s file ' + FN + ' is missing on disk');
+    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FN);
+    if Assigned(Ed) and Ed.Modified then
+      Exit(FN + ' has unsaved editor changes, and saving would write them too');
+  end;
+  if (PackageEditingInterface.DoSaveAllPackages([]) <> mrOk) or APkg.Modified then
+    Exit('saving failed');
+  Result := '';
+end;
+
+{ Result of a package edit: saved, or why not and what that means. }
+function EditResult(APkg: TLazPackage; AWasModified: Boolean; AObj: TJSONObject): string;
+var
+  Why : string;
+begin
+  AObj.Add('package', APkg.Name);
+  AObj.Add('lpk', APkg.Filename);
+  Why := SavePackage(APkg, AWasModified);
+  AObj.Add('saved', Why = '');
+  if Why <> '' then
+  begin
+    AObj.Add('not_saved_because', Why);
+    AObj.Add('note', 'The change is in the IDE only: the .lpk on disk is unchanged, so ' +
+      'package_compile does not see it until the package is saved in the package editor.');
+  end;
+  Result := AObj.AsJSON;
+end;
+
+{ Add AAdd (search paths) to the package's unit or include path, as the
+  package editor offers to; returns what was added, relative to the package. }
+function ExtendPath(APkg: TLazPackage; AAdd: string; AUnits: Boolean): string;
+var
+  Opt : TParsedCompilerOptString;
+begin
+  Result := '';
+  if AAdd = '' then Exit;
+  if AUnits then Opt := pcosUnitPath else Opt := pcosIncludePath;
+  AAdd := RemoveSearchPaths(AAdd, APkg.CompilerOptions.ParsedOpts.GetParsedValue(Opt));
+  if AAdd = '' then Exit;
+  AAdd := CreateRelativeSearchPath(AAdd, APkg.Directory);
+  if (AAdd = '') or (AAdd = '.') then Exit;
+  if AUnits then
+    APkg.CompilerOptions.MergeToUnitPaths(AAdd)
+  else
+    APkg.CompilerOptions.MergeToIncludePaths(AAdd);
+  Result := AAdd;
+end;
+
+function PackageAddFile(AParams: TJSONObject; out AErr: string): string;
+var
+  Pkg      : TLazPackage;
+  FN, UName, Added : string;
+  FType    : TPkgFileType;
+  Code     : TCodeBuffer;
+  WasMod   : Boolean;
+  UnitPaths, IncPaths : string;
+  PF       : TPkgFile;
+  Obj      : TJSONObject;
+begin
+  Result := '';
+  if not TargetPackage(AParams, Pkg, AErr) then Exit;
+  FN := AParams.Get('file', '');
+  if not FilenameIsAbsolute(FN) then
+  begin AErr := 'file must be an absolute path'; Exit; end;
+  if DirectoryExists(FN) then
+  begin AErr := FN + ' is a directory'; Exit; end;
+  if not FileExists(FN) then
+  begin AErr := 'No such file: ' + FN; Exit; end;
+  if Assigned(Pkg.FindPkgFile(FN, True, False)) then
+  begin AErr := FN + ' is already in ' + Pkg.Name; Exit; end;
+  FType := FileNameToPkgFileType(FN);
+  if FType = pftUnit then
+  begin
+    Code := CodeToolBoss.LoadFile(FN, True, False);
+    UName := '';
+    if Assigned(Code) then
+      UName := CodeToolBoss.GetSourceName(Code, False);
+    if UName = '' then
+    begin AErr := 'No unit name found in ' + FN; Exit; end;
+  end;
+  WasMod    := Pkg.Modified;
+  UnitPaths := '';
+  IncPaths  := '';
+  if not Pkg.AddFileByName(FN, UnitPaths, IncPaths) then
+  begin AErr := 'The IDE did not add ' + FN; Exit; end;
+  Obj := TJSONObject.Create;
+  try
+    PF := Pkg.FindPkgFile(FN, True, False);
+    Obj.Add('file', FN);
+    Obj.Add('type', PkgFileTypeIdents[FType]);
+    if Assigned(PF) and (PF.Unit_Name <> '') then
+      Obj.Add('unit', PF.Unit_Name);
+    if Assigned(PF) and (pffHasRegisterProc in PF.Flags) then
+      Obj.Add('has_register_proc', True);
+    { AddFileByName collects every non-unit file's directory as an include
+      path; only include files need one }
+    if FType = pftUnit then
+      Added := ExtendPath(Pkg, UnitPaths, True)
+    else if FType = pftInclude then
+      Added := ExtendPath(Pkg, IncPaths, False)
+    else
+      Added := '';
+    if Added <> '' then
+      if FType = pftUnit then
+        Obj.Add('unit_path_added', Added)
+      else
+        Obj.Add('include_path_added', Added);
+    Result := EditResult(Pkg, WasMod, Obj);
+  finally
+    Obj.Free;
+  end;
+end;
+
+function PackageRemoveFile(AParams: TJSONObject; out AErr: string): string;
+var
+  Pkg    : TLazPackage;
+  PF     : TPkgFile;
+  FN     : string;
+  WasMod : Boolean;
+  Obj    : TJSONObject;
+begin
+  Result := '';
+  if not TargetPackage(AParams, Pkg, AErr) then Exit;
+  FN := AParams.Get('file', '');
+  PF := Pkg.FindPkgFile(FN, True, False);
+  if PF = nil then
+  begin AErr := FN + ' is not in ' + Pkg.Name; Exit; end;
+  WasMod := Pkg.Modified;
+  Pkg.RemoveFile(PF);   { the file stays on disk }
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('removed', FN);
+    Result := EditResult(Pkg, WasMod, Obj);
+  finally
+    Obj.Free;
+  end;
+end;
+
+function PackageAddDependency(AParams: TJSONObject; out AErr: string): string;
+var
+  Pkg      : TLazPackage;
+  Dep, Old : TPkgDependency;
+  ReqName, S : string;
+  WasMod   : Boolean;
+  Obj      : TJSONObject;
+begin
+  Result := '';
+  if not TargetPackage(AParams, Pkg, AErr) then Exit;
+  ReqName := Trim(AParams.Get('required_package', ''));
+  if not IsValidPkgName(ReqName) then
+  begin AErr := 'Not a package name: ' + ReqName; Exit; end;
+  if SameText(ReqName, Pkg.Name) then
+  begin AErr := 'A package can''t require itself'; Exit; end;
+  Old := Pkg.FindDependencyByName(ReqName);
+  if Assigned(Old) then
+  begin
+    AErr := Pkg.Name + ' already requires ' + ReqName + '; remove it first to change ' +
+            'its version limits';
+    Exit;
+  end;
+  { ADR-013: a package in the IDE that starts requiring one that isn't would
+    bring it in at the next rebuild, past the user's consent }
+  if Assigned(PackageEditingInterface.IsPackageInstalled(Pkg.Name)) and
+     not Assigned(PackageEditingInterface.IsPackageInstalled(ReqName)) then
+  begin
+    AErr := Pkg.Name + ' is installed in the IDE and ' + ReqName + ' is not: the next ' +
+            'rebuild would bring ' + ReqName + ' into the IDE. Install it first ' +
+            '(package_install, which needs the user''s consent).';
+    Exit;
+  end;
+  Dep := TPkgDependency.Create;
+  Dep.DependencyType := pdtLazarus;
+  Dep.PackageName    := ReqName;
+  S := Trim(AParams.Get('min_version', ''));
+  if S <> '' then
+  begin
+    if not Dep.MinVersion.ReadString(S) then
+    begin Dep.Free; AErr := 'Bad min_version: ' + S; Exit; end;
+    Dep.Flags := Dep.Flags + [pdfMinVersion];
+  end;
+  S := Trim(AParams.Get('max_version', ''));
+  if S <> '' then
+  begin
+    if not Dep.MaxVersion.ReadString(S) then
+    begin Dep.Free; AErr := 'Bad max_version: ' + S; Exit; end;
+    Dep.Flags := Dep.Flags + [pdfMaxVersion];
+  end;
+  WasMod := Pkg.Modified;
+  PackageGraph.AddDependencyToPackage(Pkg, Dep);
+  { roll back what doesn't resolve, or would close a cycle }
+  if Dep.RequiredPackage = nil then
+    AErr := ReqName + ' could not be resolved (' + DepStatus(Dep) + ')'
+  else if Assigned(PackageGraph.FindDependencyRecursively(
+            Dep.RequiredPackage.FirstRequiredDependency, Pkg.Name)) then
+    AErr := ReqName + ' requires ' + Pkg.Name + ' already: that would be a cycle'
+  else if not Dep.IsCompatible(Dep.RequiredPackage.Version) then
+    AErr := ReqName + ' ' + Dep.RequiredPackage.Version.AsString +
+            ' is outside the version limits';
+  if AErr <> '' then
+  begin
+    PackageGraph.RemoveDependencyFromPackage(Pkg, Dep, False);
+    if not WasMod then Pkg.Modified := False;
+    Exit;
+  end;
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('added', DepJSON(Dep));
+    Result := EditResult(Pkg, WasMod, Obj);
+  finally
+    Obj.Free;
+  end;
+end;
+
+function PackageRemoveDependency(AParams: TJSONObject; out AErr: string): string;
+var
+  Pkg     : TLazPackage;
+  Dep     : TPkgDependency;
+  ReqName : string;
+  WasMod  : Boolean;
+  Obj     : TJSONObject;
+begin
+  Result := '';
+  if not TargetPackage(AParams, Pkg, AErr) then Exit;
+  ReqName := Trim(AParams.Get('required_package', ''));
+  Dep := Pkg.FindDependencyByName(ReqName);
+  if Dep = nil then
+  begin AErr := Pkg.Name + ' does not require ' + ReqName; Exit; end;
+  WasMod := Pkg.Modified;
+  PackageGraph.RemoveDependencyFromPackage(Pkg, Dep, True);
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('removed', ReqName);
+    Result := EditResult(Pkg, WasMod, Obj);
+  finally
+    Obj.Free;
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -513,6 +863,29 @@ var
   I        : Integer;
 begin
   Result := False;
+
+  if (Name = 'package_add_file') or (Name = 'package_remove_file') or
+     (Name = 'package_add_dependency') or (Name = 'package_remove_dependency') then
+  begin
+    Result := True;
+    if not Assigned(Ctx.Params) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
+    end;
+    if Name = 'package_add_file' then
+      Ctx.Result := PackageAddFile(Ctx.Params, PkgName)
+    else if Name = 'package_remove_file' then
+      Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
+    else if Name = 'package_add_dependency' then
+      Ctx.Result := PackageAddDependency(Ctx.Params, PkgName)
+    else
+      Ctx.Result := PackageRemoveDependency(Ctx.Params, PkgName);
+    if PkgName <> '' then
+    begin
+      Ctx.Error := True; Ctx.Result := PkgName;
+    end;
+    Exit;
+  end;
 
   if Name = 'package_search_online' then
   begin
@@ -737,6 +1110,21 @@ begin
     'Which loaded packages contain a unit, and whether the active project depends on ' +
     'them. Use for "Can''t find unit" errors.',
     SCHEMA_FIND_UNIT, MCP_ANN_RO));
+  Tools.Add(MakeTool('package_add_file',
+    'Add a file to a package (.lpk), as the package editor''s Add does: unit name ' +
+    'and Register procedure are detected; the unit or include path is extended if ' +
+    'needed. Saves the .lpk when nothing else is unsaved.',
+    SCHEMA_PKG_FILE, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('package_remove_file',
+    'Remove a file from a package (.lpk); the file stays on disk.',
+    SCHEMA_PKG_FILE, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('package_add_dependency',
+    'Make a package require another one, optionally with version limits. Refused for ' +
+    'cycles, unknown packages, and when it would bring a new package into the IDE.',
+    SCHEMA_PKG_ADD_DEP, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('package_remove_dependency',
+    'Remove a requirement from a package (.lpk).',
+    SCHEMA_PKG_REMOVE_DEP, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_add_package',
     'Add a package as a dependency to the active project (.lpi). ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +

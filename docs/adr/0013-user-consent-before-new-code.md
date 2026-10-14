@@ -55,6 +55,19 @@ plugin during its own development loop. That code is already in the IDE.
 
 `package_uninstall` removes code and needs no consent.
 
+### Requirements of installed packages (v0.9)
+
+`package_add_dependency` is a second way in. If an installed package starts
+requiring one that isn't installed, the next plain `ide_rebuild` compiles the
+new one into the IDE, and nothing asks. So the tool refuses when the target is
+installed and the required package isn't. It points to `package_install`, which
+goes through this gate. "Installed" is `IsPackageInstalled`, which is true for
+packages compiled into the IDE as dependencies too (`LazUtils`, `FCL`), so
+ordinary requirements are not refused.
+
+Adding a file to an installed package isn't gated. That's the same as editing
+the package's sources with the editor tools: the package is already in the IDE.
+
 ### Downloads (v0.9, not built yet)
 
 A future online-install tool will download into the Online Package Manager's

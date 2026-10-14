@@ -19,7 +19,7 @@ uses
   THttpHelper,
   TUtils, TProtocol, TAuth, TTestInfra,
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
-  TConsent, TDebugger;
+  TConsent, TDebugger, TPackageEdit;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -185,6 +185,7 @@ begin
     GetTestRegistry.AddTest(TTestSession.Suite);
     GetTestRegistry.AddTest(TTestToolSmoke.Suite);
     GetTestRegistry.AddTest(TTestConsent.Suite);
+    GetTestRegistry.AddTest(TTestPackageEdit.Suite);
     { opt-in: they switch the IDE's project and take about half a minute }
     if (GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1') or DebuggeeIsActive then
       GetTestRegistry.AddTest(TDebuggeeSetup.Create(TTestDebugger.Suite))

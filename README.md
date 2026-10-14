@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 105 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 109 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -158,6 +158,8 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 |---|---|
 | `package_get_info` | Load and install status; for a loaded package also version, requirements with their status, the packages using it, and (`files`) its files |
 | `package_find_unit` | Which loaded packages contain a unit, and whether the project depends on them — for "Can't find unit" |
+| `package_add_file` / `package_remove_file` | Files of a `.lpk`, as the package editor's Add/Remove: unit name and `Register` detected, unit/include path extended when needed |
+| `package_add_dependency` / `package_remove_dependency` | Required packages of a `.lpk`, with version limits; cycles, unknown packages and new code for the IDE are refused (ADR-013) |
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
 | `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE |
@@ -316,6 +318,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
 | `TTestToolSmoke` | 13 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
+| `TTestPackageEdit` | 4 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back) |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
@@ -358,9 +361,6 @@ For v0.9:
   dialog as any other new package. The dialog will say whether the code comes
   from the official repository or from a third-party URL. See
   [ADR-013](ADR-013.md#downloads-v09-not-built-yet).
-- **Package editing.** Adding and removing files and requirements in a `.lpk`.
-  Reading them is done: `project_list_packages`, `package_get_info`,
-  `package_find_unit`.
 
 ---
 
