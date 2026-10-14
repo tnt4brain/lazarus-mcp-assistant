@@ -317,11 +317,13 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-005](docs/adr/0005-fpcunit-test-suite.md) | FPCUnit test suite: testability boundary, standalone test project layout |
 | [ADR-006](docs/adr/0006-project-lifecycle-tools.md) | Project lifecycle tools: file management, project settings, component search, editor state, run configuration |
 | [ADR-008](docs/adr/0008-structural-source-editing.md) | Token-aware / structural source editing |
-| [ADR-009](docs/adr/0009-debugger-integration.md) | Debugger integration: blocking checkpoint model |
+| [ADR-009](docs/adr/0009-debugger-integration.md) | Debugger integration: blocking checkpoint model, and how it was built (polling, async data, the socket-inheritance hang) |
 | [ADR-010](docs/adr/0010-tool-naming-scheme.md) | Tool naming scheme `<category>_<action>`, titles, annotations; v0.7 → v0.8 rename table |
 | [ADR-011](docs/adr/0011-no-ide-modals-in-mcp-sessions.md) | No IDE modals in MCP-driven debug sessions |
 | [ADR-012](docs/adr/0012-multiple-clients.md) | Multiple clients: session identity, debug session lease, debugger lock |
 | [ADR-013](docs/adr/0013-user-consent-before-new-code.md) | User consent before new code enters the IDE (package installs) |
+
+ADR-007 was never assigned; no document is missing.
 
 ---
 

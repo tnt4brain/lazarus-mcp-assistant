@@ -1,7 +1,12 @@
 # ADR-009 — Debugger Integration
 
-**Status:** Proposed  
-**Date:** 2026-10-06
+**Status:** Accepted. Implemented in 19bdf1b and 4d4951a (2026-10-06), revised for v0.8.  
+**Date:** 2026-10-06 (proposal), 2026-10-14 (as built)
+
+> The sections up to *Consequences* are the original proposal, kept as written.
+> Where the implementation differs, [As built (v0.8)](#as-built-v08) at the end
+> is what the code does. Tool names here are the pre-v0.8 ones; see the mapping
+> there and [ADR-010](0010-tool-naming-scheme.md).
 
 ## Context
 
@@ -393,3 +398,138 @@ State inspection tools: `MCP_ANN_RO`.
   than hanging the MCP session.
 - No existing tools are modified.
 - `McpToolsDebugger.pas` is a new compilation unit; add to `lazmcpassistant.lpk`.
+
+---
+
+## As built (v0.8)
+
+### Tools
+
+| Proposed | Built |
+|---|---|
+| `set_breakpoint` / `remove_breakpoint` / `list_breakpoints` | `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` |
+| `get_debug_state` | `debug_get_state` (also reports the session lease, ADR-012) |
+| `run_debugger`, `pause_debugger`, `stop_debugger` | `debug_run`, `debug_pause`, `debug_stop` |
+| `step_over` / `step_into` / `step_out` / `run_to_line` | `debug_step_over` / `debug_step_into` / `debug_step_out` / `debug_run_to_line` |
+| `get_call_stack`, `evaluate_expression`, `get_local_variables` | `debug_get_call_stack`, `debug_evaluate`, `debug_get_locals` |
+
+Added beyond the proposal:
+- `debug_set_variable`
+- `debug_add_watch`, `debug_remove_watch`, `debug_list_watches`
+- `debug_list_threads`
+- `debug_get_output`: the program's console output and debugger output
+- `debug_get_exception`
+
+From the out-of-scope list, watch management and a read-only thread list were
+built. Conditional breakpoints, data breakpoints, address breakpoints, frame/thread
+selection, disassembly, registers and memory are planned for v0.9 (README,
+*Planned*).
+
+### Waiting: polling, not an event
+
+The proposal had the worker thread wait on an `RTLEvent` set from
+`DebugBoss.OnState`. The built tools poll instead:
+
+1. One `TThread.Synchronize` issues the command (`DoIssueCmd`).
+2. The worker thread then calls `Synchronize` every 100 ms to read
+   `DebugBoss.State` (`PollForPause`). It stops at `dsPause`, `dsStop`,
+   `dsError`, `dsNone`, `dsIdle` or `dsDestroying`, or at the timeout.
+
+Why:
+- A state-change handler sees transient states. `dsInternalPause`, for example,
+  is a pause the IDE resumes by itself. Reading the settled state is simpler than
+  filtering events.
+- No event has to be reset at the right moment, so the stale-signal hazard
+  described above cannot happen.
+- A poll costs one short main-thread call; 100 ms is far below how fast an
+  assistant reacts.
+
+**Rule that came out of debugging this: never wait inside a `Synchronize`
+callback.** The callback runs on the main thread, and while it waits the main
+thread delivers no debugger callbacks, so the wait can never end. Every wait
+happens on the worker thread, between short `Synchronize` calls.
+
+### Starting a session
+
+`debug_run` and `debug_run_to_line` start through
+`LazarusIDE.DoRunProjectWithDebug` (the F9 path), not `DebugBoss.RunDebugger`.
+Only the F9 path initializes the debugger backend when no session exists.
+
+`WaitForLaunch` then waits up to 10 s for an *active* state (`dsInit`, `dsRun`,
+`dsPause`, `dsInternalPause`). The first version waited for "not idle", which
+returned immediately after a previous session: `dsStop` is not idle either (fixed
+in 4d4951a).
+
+### Timeouts and results
+
+| Tool | Timeout |
+|---|---|
+| `debug_run`, `debug_step_out`, `debug_run_to_line` | 30 s (`timeout_s`) |
+| `debug_step_over`, `debug_step_into` | 10 s (`timeout_s`) |
+| `debug_pause` | 5 s |
+| `debug_evaluate` | 5 s |
+| `debug_get_call_stack` | 10 s |
+| `debug_get_locals`, `debug_list_watches`, `debug_list_threads` | 5 s |
+
+A tool that times out while the program is running returns `reason: "timeout"`;
+the session stays live. `file`/`line` in a paused state are the editor position
+the IDE jumped to.
+
+### Data that loads asynchronously
+
+Call stack, locals, watch values and threads are loaded by the debugger in the
+background. Each of these tools works in two steps:
+1. One main-thread call requests the data, once.
+2. Read-only polls collect it when nothing is pending any more (`ddsRequested`,
+   `ddsEvaluating`).
+
+The first `get_call_stack` returned `[]` or a single frame (fixed in 263bedf):
+- It waited for `CountValidity`, which stays unknown unless the backend happened
+  to read every frame. It now also accepts "at least `max_frames` + 1 frames".
+- It read the frames right away and stopped at the first one still loading. It
+  now waits until no frame is pending.
+
+Structured values (objects, records) are printed with the IDE's own watch printer
+(`HintWatchPrinter`), as hints and the Watches window show them, and cut at
+2000 characters.
+
+`debug_evaluate` starts `DebugBoss.Evaluate` with a callback in one `Synchronize`
+and returns at once. The worker thread then polls a flag the callback sets. The
+main loop delivers the callback through the async call queue.
+
+### Hang caused by socket inheritance
+
+Early versions hung on the first tool call after starting the debuggee. It looked
+like "evaluate fails for locals", but the debugger was not involved. The cause:
+1. `fphttpserver` (FPC 3.2.2) serves one request per connection and closes the
+   socket without sending `Connection: close`, so the client keeps the
+   connection for its next request.
+2. The debuggee inherited the server's sockets, as a process the IDE starts
+   inherits handles, including that connection.
+3. After the server closed its handle, the debuggee's copy kept the TCP
+   connection open, so the client never saw it close.
+4. The client sent its next request on that connection and waited forever for a
+   reply nobody would read.
+
+Fixed in 263bedf: the listening socket and every accepted socket are made
+non-inheritable (`SetHandleInformation` on Windows, `FD_CLOEXEC` on Unix), and
+every response carries `Connection: close`.
+
+### Covered by later ADRs
+
+- **No IDE modals in sessions these tools drive**: [ADR-011](0011-no-ide-modals-in-mcp-sessions.md).
+  Exceptions pause the program and come back as `reason: "exception"`; debugger
+  messages come back as `debugger_message`.
+- **Several clients**: [ADR-012](0012-multiple-clients.md). The first client that drives the
+  debugger owns the session, other clients are refused until it ends, and only
+  one debugger call runs at a time. That lock is also what makes the single
+  shared `TDbgSyncHelper` instance safe.
+- **Tool names**: [ADR-010](0010-tool-naming-scheme.md).
+
+### Known issue
+
+**`debug_evaluate` after a timeout.** The callback of an evaluation that timed
+out can still arrive later. It then sets the flag and result fields of the shared
+helper, and the next `debug_evaluate` can report it as its own result. Never seen
+in testing, since the 5 s timeout has not fired since the socket fix. The fix is a
+per-call object, or a sequence number the callback checks.
