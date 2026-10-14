@@ -2,7 +2,7 @@
 unit TToolSmoke;
 
 { TTestToolSmoke — one read-only call per tool group against the running IDE:
-  editor, CodeTools, forms, git, project, debugger.  The code and form tools
+  editor, CodeTools, forms, git, project, packages, debugger.  The code and form tools
   read tests/fixtures/fixtureform.pas (never modified); form_list_components
   opens it in the designer, and the test closes it again.
   Requires a running MCP server. }
@@ -25,6 +25,9 @@ type
     procedure TestGitStatus;
     procedure TestProjectGetSettings;
     procedure TestProjectOpenAlreadyOpen;
+    procedure TestPackageGetInfo;
+    procedure TestPackageFindUnit;
+    procedure TestProjectListPackages;
     procedure TestDebugGetState;
   end;
 
@@ -181,6 +184,41 @@ begin
   finally
     D.Free;
   end;
+end;
+
+procedure TTestToolSmoke.TestPackageGetInfo;
+{ The plugin's own package: resolved requirements, its files, and the IDE as user. }
+var
+  T : string;
+begin
+  T := Call('package_get_info', '{"package_name":"LazMcpAssistant","files":true}');
+  CheckNoError(Self, 'package_get_info', T);
+  CheckTrue(Pos('"name" : "IDEIntf", "status" : "ok"', T) > 0, 'IDEIntf resolved: ' + T);
+  CheckTrue(Pos('"unit" : "McpToolsPackages"', T) > 0, 'files listed: ' + T);
+  CheckTrue(Pos('"required_by" : ["IDE"]', T) > 0, 'installed in the IDE: ' + T);
+end;
+
+procedure TTestToolSmoke.TestPackageFindUnit;
+var
+  T : string;
+begin
+  T := Call('package_find_unit', '{"unit_name":"synedit"}');
+  CheckNoError(Self, 'package_find_unit', T);
+  CheckTrue(Pos('"package" : "SynEdit"', T) > 0, 'SynEdit unit is in package SynEdit: ' + T);
+  T := Call('package_find_unit', '{"unit_name":"NoSuchUnitXyz"}');
+  CheckTrue(Pos('"packages" : []', T) > 0, 'unknown unit: no packages: ' + T);
+end;
+
+procedure TTestToolSmoke.TestProjectListPackages;
+var
+  T : string;
+begin
+  T := Call('project_list_packages', '{"recursive":true}');
+  if (Pos('TOOL ERROR', T) = 1) and (Pos('project', LowerCase(T)) > 0) then
+    Ignore('no project open: ' + T);
+  CheckNoError(Self, 'project_list_packages', T);
+  CheckTrue(Pos('"requires"', T) > 0, 'direct requirements: ' + T);
+  CheckTrue(Pos('"compile_order"', T) > 0, 'recursive graph: ' + T);
 end;
 
 procedure TTestToolSmoke.TestDebugGetState;

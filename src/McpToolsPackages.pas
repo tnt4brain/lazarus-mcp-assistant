@@ -1,8 +1,9 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsPackages;
 
-{ Package management tools: package_get_info, package_search_online, project_add_package,
-  project_remove_package, package_install, package_uninstall. }
+{ Package management tools: package_get_info, package_find_unit, package_search_online,
+  project_list_packages, project_add_package, project_remove_package,
+  package_install, package_uninstall. }
 
 {$mode objfpc}{$H+}
 
@@ -14,16 +15,28 @@ uses
   Classes, SysUtils, Contnrs,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf,
   LazFileUtils, FileUtil,
+  PackageDependencyIntf,
+  PackageDefs, Project,   { IdePackager/IdeProject, linked via IdeDebugger: TPkgDependency }
   fpjson,
   McpToolContext, McpIdeState, McpConsent;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
 const
-  SCHEMA_GET_PACKAGE_INFO =
+  SCHEMA_GET_PACKAGE_INFO_EX =
     '{"type":"object","properties":{"package_name":{"type":"string",' +
-    '"description":"Package name as registered in the IDE (e.g. LazMcpAssistant)"}},' +
+    '"description":"Package name as registered in the IDE (e.g. LazMcpAssistant)"},' +
+    '"files":{"type":"boolean","description":"Include the package''s files (default false)"}},' +
     '"required":["package_name"]}';
+
+  SCHEMA_LIST_PROJECT_PACKAGES =
+    '{"type":"object","properties":{"recursive":{"type":"boolean",' +
+    '"description":"Also list every package the project needs indirectly, in compile ' +
+    'order, each with its own requirements (default false)"}}}';
+
+  SCHEMA_FIND_UNIT =
+    '{"type":"object","properties":{"unit_name":{"type":"string",' +
+    '"description":"Unit name, e.g. SynEdit or fpjson"}},"required":["unit_name"]}';
 
   SCHEMA_ADD_PACKAGE_TO_PROJECT =
     '{"type":"object","properties":{"package_name":{"type":"string",' +
@@ -253,6 +266,236 @@ begin
   end;
 end;
 
+{ ── Dependencies (IDE package graph) ─────────────────────────────────────── }
+
+function DepStatus(Dep: TPkgDependency): string;
+begin
+  if Assigned(Dep.RequiredPackage) then Exit('ok');
+  if Dep.DependencyType = pdtFPMake then Exit('fpmake');
+  case Dep.LoadPackageResult of
+    lprAvailableOnline: Result := 'available_online';
+    lprNotFound:        Result := 'not_found';
+    lprLoadError:       Result := 'load_error';
+  else                  Result := 'unresolved';
+  end;
+end;
+
+function OwnerName(AOwner: TObject): string;
+begin
+  if AOwner is TLazPackage then
+    Result := TLazPackage(AOwner).Name
+  else if AOwner is TProject then
+    Result := 'project ' + ExtractFileName(TProject(AOwner).ProjectInfoFile)
+  else
+    Result := 'IDE';
+end;
+
+{ One requirement as declared in the .lpi/.lpk, plus what it resolved to. }
+function DepJSON(Dep: TPkgDependency): TJSONObject;
+var
+  Pkg: TLazPackage;
+begin
+  Result := TJSONObject.Create;
+  Result.Add('name', Dep.PackageName);
+  if pdfMinVersion in Dep.Flags then
+    Result.Add('min_version', Dep.MinVersion.AsString);
+  if pdfMaxVersion in Dep.Flags then
+    Result.Add('max_version', Dep.MaxVersion.AsString);
+  Result.Add('status', DepStatus(Dep));
+  Pkg := Dep.RequiredPackage;
+  if Assigned(Pkg) then
+  begin
+    Result.Add('version', Pkg.Version.AsString);
+    Result.Add('file', Pkg.Filename);
+    Result.Add('type', LazPackageTypeIdents[Pkg.PackageType]);
+    Result.Add('installed', Pkg.Installed <> pitNope);
+  end;
+end;
+
+function DepNames(First: TPkgDependency): TJSONArray;
+begin
+  Result := TJSONArray.Create;
+  while Assigned(First) do
+  begin
+    if Assigned(First.RequiredPackage) then
+      Result.Add(First.PackageName)
+    else
+      Result.Add(First.PackageName + ' (' + DepStatus(First) + ')');
+    First := First.NextRequiresDependency;
+  end;
+end;
+
+function ProjectPackagesJSON(Proj: TProject; Recursive: Boolean): string;
+var
+  Obj, PObj : TJSONObject;
+  Arr       : TJSONArray;
+  Dep       : TPkgDependency;
+  List      : TFPList;
+  Pkg       : TLazPackage;
+  I         : Integer;
+begin
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('project', Proj.ProjectInfoFile);
+    Arr := TJSONArray.Create;
+    Obj.Add('requires', Arr);
+    Dep := Proj.FirstRequiredDependency;
+    while Assigned(Dep) do
+    begin
+      Arr.Add(DepJSON(Dep));
+      Dep := Dep.NextRequiresDependency;
+    end;
+    if Recursive then
+    begin
+      PackageEditingInterface.GetRequiredPackages(Proj, List, [pirCompileOrder]);
+      Arr := TJSONArray.Create;
+      Obj.Add('compile_order', Arr);
+      if Assigned(List) then
+      try
+        for I := 0 to List.Count - 1 do
+        begin
+          if not (TObject(List[I]) is TLazPackage) then Continue;
+          Pkg  := TLazPackage(List[I]);
+          PObj := TJSONObject.Create;
+          Arr.Add(PObj);
+          PObj.Add('name', Pkg.Name);
+          PObj.Add('version', Pkg.Version.AsString);
+          PObj.Add('file', Pkg.Filename);
+          PObj.Add('requires', DepNames(Pkg.FirstRequiredDependency));
+        end;
+      finally
+        List.Free;
+      end;
+    end;
+    Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
+
+{ package_get_info: install state, plus requirements, users and files of a loaded package. }
+function PackageInfoJSON(const PkgName: string; WithFiles: Boolean): string;
+var
+  Obj, FObj : TJSONObject;
+  Arr       : TJSONArray;
+  IDEPkg    : TIDEPackage;
+  Pkg       : TLazPackage;
+  Dep       : TPkgDependency;
+  F         : TLazPackageFile;
+  I         : Integer;
+begin
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('package_name', PkgName);
+    IDEPkg := PackageEditingInterface.IsPackageInstalled(PkgName);
+    Obj.Add('is_installed', Assigned(IDEPkg));
+    if Assigned(IDEPkg) then
+      Obj.Add('package_file', IDEPkg.Filename);
+    IDEPkg := PackageEditingInterface.FindPackageWithName(PkgName);
+    Obj.Add('is_loaded', Assigned(IDEPkg));
+    if IDEPkg is TLazPackage then
+    begin
+      Pkg := TLazPackage(IDEPkg);
+      Obj.Add('loaded_file', Pkg.Filename);
+      Obj.Add('version', Pkg.Version.AsString);
+      Obj.Add('type', LazPackageTypeIdents[Pkg.PackageType]);
+      if Pkg.Description <> '' then
+        Obj.Add('description', Capped(Pkg.Description, 400));
+      if Pkg.Modified then
+        Obj.Add('modified', True);
+      if Pkg.ReadOnly then
+        Obj.Add('read_only', True);
+      if Pkg.Missing then
+        Obj.Add('lpk_missing', True);
+      Arr := TJSONArray.Create;
+      Obj.Add('requires', Arr);
+      Dep := Pkg.FirstRequiredDependency;
+      while Assigned(Dep) do
+      begin
+        Arr.Add(DepJSON(Dep));
+        Dep := Dep.NextRequiresDependency;
+      end;
+      Arr := TJSONArray.Create;
+      Obj.Add('required_by', Arr);
+      Dep := Pkg.FirstUsedByDependency;
+      while Assigned(Dep) do
+      begin
+        Arr.Add(OwnerName(Dep.Owner));
+        Dep := Dep.NextUsedByDependency;
+      end;
+      Obj.Add('file_count', Pkg.FileCount);
+      if WithFiles then
+      begin
+        Arr := TJSONArray.Create;
+        Obj.Add('files', Arr);
+        for I := 0 to Pkg.FileCount - 1 do
+        begin
+          F := Pkg.Files[I];
+          FObj := TJSONObject.Create;
+          Arr.Add(FObj);
+          FObj.Add('file', F.GetShortFilename(False));
+          FObj.Add('type', PkgFileTypeIdents[F.FileType]);
+          if F.Unit_Name <> '' then
+            FObj.Add('unit', F.Unit_Name);
+          if (F.FileType in PkgFileRealUnitTypes) and not F.InUses then
+            FObj.Add('in_uses', False);
+        end;
+      end;
+    end;
+    Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
+
+{ Which loaded packages list a unit; whether the active project can see them. }
+function FindUnitJSON(const AUnit: string): string;
+var
+  Obj, PObj : TJSONObject;
+  Arr       : TJSONArray;
+  Pkg       : TIDEPackage;
+  F         : TLazPackageFile;
+  Proj      : TLazProject;
+  DepOwner  : TObject;
+  I, J      : Integer;
+begin
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('unit_name', AUnit);
+    Arr := TJSONArray.Create;
+    Obj.Add('packages', Arr);
+    Proj := LazarusIDE.ActiveProject;
+    for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+    begin
+      Pkg := PackageEditingInterface.GetPackages(I);
+      for J := 0 to Pkg.FileCount - 1 do
+      begin
+        F := Pkg.Files[J];
+        if not (F.FileType in PkgFileUnitTypes) or
+           (CompareText(F.Unit_Name, AUnit) <> 0) and
+           (CompareText(ExtractFileNameOnly(F.Filename), AUnit) <> 0) then
+          Continue;
+        PObj := TJSONObject.Create;
+        Arr.Add(PObj);
+        PObj.Add('package', Pkg.Name);
+        PObj.Add('package_file', Pkg.Filename);
+        PObj.Add('unit_file', F.GetFullFilename);
+        PObj.Add('installed', Assigned(PackageEditingInterface.IsPackageInstalled(Pkg.Name)));
+        if Assigned(Proj) then
+          PObj.Add('project_requires',
+            PackageEditingInterface.IsOwnerDependingOnPkg(Proj, Pkg.Name, DepOwner));
+        Break;
+      end;
+    end;
+    if Arr.Count = 0 then
+      Obj.Add('hint', 'No loaded package lists this unit. It may be an FPC unit ' +
+        '(check the unit path), or the package is not loaded: try package_search_online.');
+    Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -260,7 +503,6 @@ var
   PkgName  : string;
   LpkPath  : string;
   IDEPkg   : TIDEPackage;
-  IDEPkg2  : TIDEPackage;
   FPList   : TFPList;
   PkgList  : TObjectList;
   PkgID    : TLazPackageID;
@@ -290,22 +532,29 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
     end;
-    PkgName := Ctx.Params.Get('package_name', '');
-    IDEPkg  := PackageEditingInterface.IsPackageInstalled(PkgName);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('package_name', PkgName);
-      Obj.Add('is_installed', Assigned(IDEPkg));
-      if Assigned(IDEPkg) then
-        Obj.Add('package_file', IDEPkg.Filename);
-      IDEPkg2 := PackageEditingInterface.FindPackageWithName(PkgName);
-      Obj.Add('is_loaded', Assigned(IDEPkg2));
-      if Assigned(IDEPkg2) then
-        Obj.Add('loaded_file', IDEPkg2.Filename);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
+    Ctx.Result := PackageInfoJSON(Ctx.Params.Get('package_name', ''),
+                                  Ctx.Params.Get('files', False));
+  end
+
+  else if Name = 'project_list_packages' then
+  begin
+    Result := True;
+    if not (LazarusIDE.ActiveProject is TProject) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
     end;
+    Ctx.Result := ProjectPackagesJSON(TProject(LazarusIDE.ActiveProject),
+                    Assigned(Ctx.Params) and Ctx.Params.Get('recursive', False));
+  end
+
+  else if Name = 'package_find_unit' then
+  begin
+    Result := True;
+    if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('unit_name', '')) = '') then
+    begin
+      Ctx.Error := True; Ctx.Result := 'unit_name required'; Exit;
+    end;
+    Ctx.Result := FindUnitJSON(Trim(Ctx.Params.Get('unit_name', '')));
   end
 
   else if Name = 'project_add_package' then
@@ -476,8 +725,18 @@ begin
     'classes use form_search_palette. A result''s downloaded_lpk can go to package_install.',
     SCHEMA_SEARCH_ONLINE, MCP_ANN_RO));
   Tools.Add(MakeTool('package_get_info',
-    'Query a package''s load and install status in the running IDE.',
-    SCHEMA_GET_PACKAGE_INFO, MCP_ANN_RO));
+    'A package''s load and install status; for a loaded package also its version, ' +
+    'requirements (with status: not_found etc.), the packages using it, and optionally its files.',
+    SCHEMA_GET_PACKAGE_INFO_EX, MCP_ANN_RO));
+  Tools.Add(MakeTool('project_list_packages',
+    'The active project''s required packages as in Project Inspector: version ' +
+    'limits, the resolved .lpk, and status (ok, not_found, ...). recursive=true adds the ' +
+    'whole dependency graph in compile order.',
+    SCHEMA_LIST_PROJECT_PACKAGES, MCP_ANN_RO));
+  Tools.Add(MakeTool('package_find_unit',
+    'Which loaded packages contain a unit, and whether the active project depends on ' +
+    'them. Use for "Can''t find unit" errors.',
+    SCHEMA_FIND_UNIT, MCP_ANN_RO));
   Tools.Add(MakeTool('project_add_package',
     'Add a package as a dependency to the active project (.lpi). ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +

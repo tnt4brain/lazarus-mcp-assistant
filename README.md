@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 100 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 102 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -140,6 +140,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options |
 | `project_add_file` / `project_remove_file` | Project file list (files stay on disk) |
 | `project_create_unit` | New unit on disk, added to the project and opened |
+| `project_list_packages` | Required packages as in Project Inspector: version limits, resolved `.lpk`, status (`ok`, `not_found`, ...); `recursive` adds the whole graph in compile order |
 | `project_add_package` / `project_remove_package` | Package dependencies in the `.lpi` |
 | `project_search` | Case-insensitive text search across project files |
 | `project_list_todos` | `TODO` / `FIXME` / `DONE` comments, as the IDE's ToDo List shows them |
@@ -153,7 +154,8 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 
 | Tool | Description |
 |---|---|
-| `package_get_info` | Load and install status of a package |
+| `package_get_info` | Load and install status; for a loaded package also version, requirements with their status, the packages using it, and (`files`) its files |
+| `package_find_unit` | Which loaded packages contain a unit, and whether the project depends on them — for "Can't find unit" |
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
 | `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE |
@@ -306,7 +308,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
-| `TTestToolSmoke` | 8 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
+| `TTestToolSmoke` | 12 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
 | `TTestDebugger` | 12 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads (about 35 s) |
 
@@ -359,9 +361,9 @@ For v0.9:
   open in the editor, without passing paths: what changed in this file, who last
   touched this line and in which commit. Everything else stays with the client's
   own shell `git`; the existing `git_*` tools stay as they are.
-- **Package and dependency tools.** What the Project Inspector and the package
-  editor show: the project's required packages and their dependency tree, a
-  `.lpk`'s files and requirements, adding and removing files in a package.
+- **Package editing.** Adding and removing files and requirements in a `.lpk`.
+  Reading them is done: `project_list_packages`, `package_get_info`,
+  `package_find_unit`.
 
 ---
 
