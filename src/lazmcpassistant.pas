@@ -12,7 +12,7 @@ uses
   McpToolHelpers, McpToolsPackages, McpToolsEditor, McpToolsBuild, 
   McpToolsCodeTools, McpToolsForms, McpToolsProject, McpToolsGit, 
   McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent, McpLauncher, 
-  McpOptions, McpSettingsFile, LazarusPackageIntf;
+  McpOptions, McpSettingsFile, McpRefKeeper, LazarusPackageIntf;
 
 implementation
 

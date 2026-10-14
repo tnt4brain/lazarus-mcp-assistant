@@ -19,6 +19,7 @@ You are an AI coding assistant running inside a **Lazarus IDE** session. An MCP 
   - Prefer LCL layout over pixel positions: `Align`, `Anchors` + `AnchorSide*`, `BorderSpacing.*`, a container's `ChildSizing.*`.
   - Collections (`Columns`, `Panels`, …): `form_add_collection_item`, then indexed paths such as `{"Columns[0].Width":120}`. String lists: `{"Lines":["first","second"]}`.
   - Menus: a `TMainMenu`/`TPopupMenu` via `form_add_component`, then `form_add_menu_item` (parent = the menu or a menu item; caption `-` = separator).
+  - Undo: each changing `form_*` call is one step of the designer's undo list, shared with the user's Ctrl+Z. `form_undo` takes back the latest step, which may be the user's; check `form_get_lfm` afterwards. A result with `"undoable": false` cannot be taken back that way.
 - **Debugging:** `debug_set_breakpoint` → `debug_run` → `debug_get_locals` / `debug_evaluate` / `debug_get_call_stack` → `debug_step_*` | `debug_run` → `debug_stop`.
   - Run and step tools block until the program pauses. No IDE dialogs appear; an exception comes back as `reason: "exception"`.
   - After an exception, inspect and then `debug_stop`. Don't `debug_run` past it in a GUI program: the program's own message box waits for a click nobody gives.

@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 110 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 112 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -91,8 +91,21 @@ as `lines` and set from an array of strings.
 | `form_arrange` | Same size as the first control, distribute with a fixed gap or evenly, align edges/centres to the first control or the parent |
 | `form_create_event_handler` | Create (or show) the handler for a component event |
 | `form_search_palette` | Find palette classes by name: class, unit, palette page |
+| `form_undo` / `form_redo` | One step of the designer's undo list, as Edit > Undo / Redo (Ctrl+Z) in the designer; returns `can_undo` / `can_redo` |
 
 Designer changes are in memory until `editor_save` on the unit.
+
+**Undo.** Every changing `form_*` call is one step in the designer's own undo
+list, shared with the user's Ctrl+Z and with other clients; `form_undo` takes
+back the last step, whoever made it. Simple properties, `Name`, `Parent`, adds,
+deletes and `form_arrange` are recorded property by property. Changes the
+designer cannot replay that way (sub-properties such as `Font.Color`, string
+lists, collection items, menus, events, component references) are recorded as
+a replacement of the whole component (a menu item: its whole menu). References
+that other components held to it are restored. Results say `"undoable"`. The
+form itself cannot be replaced, so changes of that kind to the form itself
+(`Form1.Font.Color`, `Form1.Menu`, `Form1.OnCreate`) are not undoable. Undo restores the form, not the source: a field returns with its
+component, but a created event handler method stays. See [ADR-014](docs/adr/0014-designer-undo.md).
 
 ### Debugger — `debug_*`
 
@@ -320,6 +333,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
 | `TTestToolSmoke` | 13 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
 | `TTestPackageEdit` | 5 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
+| `TTestFormUndo` | 9 | MCP server reachable: `form_undo`/`form_redo` and what the `form_*` tools record, on a temp copy of the fixture form |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
@@ -345,6 +359,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-011](docs/adr/0011-no-ide-modals-in-mcp-sessions.md) | No IDE modals in MCP-driven debug sessions |
 | [ADR-012](docs/adr/0012-multiple-clients.md) | Multiple clients: session identity, debug session lease, debugger lock |
 | [ADR-013](docs/adr/0013-user-consent-before-new-code.md) | User consent before new code enters the IDE (package installs) |
+| [ADR-014](docs/adr/0014-designer-undo.md) | Designer undo: the IDE's undo list, replacement steps, keeping references |
 
 ADR-007 was never assigned; no document is missing.
 
@@ -354,8 +369,7 @@ ADR-007 was never assigned; no document is missing.
 
 For v1.0:
 
-- **Undo for designer changes.** `form_*` changes can't be undone from the
-  assistant yet; today the way back is `editor_revert` or git.
+- **Linux and macOS builds.** Never compiled or run there yet.
 
 ---
 

@@ -18,3 +18,4 @@ ADR-007 was never assigned; no document is missing.
 | [0011](0011-no-ide-modals-in-mcp-sessions.md) | # ADR-011 — No IDE Modals in MCP-Driven Sessions |
 | [0012](0012-multiple-clients.md) | # ADR-012 — Multiple Clients: Session Identity, Debug Session Lease, Debugger Lock |
 | [0013](0013-user-consent-before-new-code.md) | # ADR-013 — User Consent Before New Code Enters the IDE |
+| [0014](0014-designer-undo.md) | # ADR-014 — Designer Undo |

@@ -6,7 +6,7 @@ unit McpToolsForms;
   form_arrange, form_get_lfm, form_create_event_handler, form_search_palette,
   form_list_collection_items, form_add_collection_item,
   form_delete_collection_item, form_move_collection_item,
-  form_get_menu, form_add_menu_item, form_move_menu_item.
+  form_get_menu, form_add_menu_item, form_move_menu_item, form_undo, form_redo.
 
   Property access goes through the Object Inspector's property editors
   (PropEdits), so values read and write exactly as in the Object Inspector:
@@ -28,7 +28,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, Math,
+  Classes, SysUtils, Math, StrUtils,
   LazIDEIntf, SrcEditorIntf, LazFileUtils,
   Controls, Forms, Menus, LCLProc, FormEditingIntf, ComponentEditors,
   TypInfo, LResources,
@@ -314,6 +314,70 @@ begin
   TD := GetTypeData(AEditor.GetPropType);
   Result := Assigned(TD) and Assigned(TD^.ClassType) and
             TD^.ClassType.InheritsFrom(AClass);
+end;
+
+{ ── Designer undo ─────────────────────────────────────────────────────────── }
+
+type
+  { The changes of one tool call, recorded in the designer's undo list as one
+    group: what one Edit > Undo (Ctrl+Z, form_undo) takes back. }
+  TUndoGroup = record
+    Designer : TComponentEditorDesigner;
+    Started  : Boolean;
+  end;
+  PUndoGroup = ^TUndoGroup;
+
+function NewUndoGroup(ADesigner: TIDesigner): TUndoGroup;
+begin
+  Result.Designer := nil;
+  if ADesigner is TComponentEditorDesigner then
+    Result.Designer := TComponentEditorDesigner(ADesigner);
+  Result.Started := False;
+end;
+
+procedure AddUndo(var AGroup: TUndoGroup; APersistent: TPersistent;
+  AOp: TUndoOpType; const AField, AOld, ANew: string);
+begin
+  if AGroup.Designer = nil then Exit;
+  if (AOp = uopChange) and (AOld = ANew) then Exit;
+  if AGroup.Designer.AddUndoAction(APersistent, AOp, not AGroup.Started,
+                                   AField, AOld, ANew) then
+    AGroup.Started := True;
+end;
+
+{ Can the designer's undo replay a change made through AEditor?  It sets a
+  published property of simple type on a component it finds by name
+  (TDesigner.ExecuteUndoItem); sub-objects (Font.Color), collection items,
+  references, events and string lists are out of its reach.  (Menu items are
+  fine: the menu tools record their deletes and moves, so an entry naming an
+  item finds it again.) }
+function UndoableEditor(AEditor: TPropertyEditor): Boolean;
+begin
+  Result := (AEditor.GetPropInfo <> nil) and (AEditor.GetComponent(0) is TComponent) and
+            (AEditor.GetPropType^.Kind in [tkInteger, tkInt64, tkChar, tkWChar, tkUChar,
+              tkEnumeration, tkFloat, tkBool, tkSString, tkLString, tkAString,
+              tkUString, tkWString, tkSet]);
+end;
+
+{ The value as the Object Inspector records it for undo (its GetPropValue). }
+function UndoValue(AEditor: TPropertyEditor): string;
+begin
+  case AEditor.GetPropType^.Kind of
+    tkInteger, tkInt64:
+      Result := IntToStr(AEditor.GetInt64ValueAt(0));
+    tkChar, tkWChar, tkUChar:
+      Result := Char(AEditor.GetOrdValueAt(0));
+    tkEnumeration:
+      Result := AEditor.GetEnumValueAt(0);
+    tkFloat:
+      Result := FloatToStr(AEditor.GetFloatValueAt(0));
+    tkBool:
+      Result := BoolToStr(Boolean(AEditor.GetOrdValueAt(0)), 'True', 'False');
+    tkSet:
+      Result := AEditor.GetSetValueAt(0, True);
+  else
+    Result := AEditor.GetStrValueAt(0);
+  end;
 end;
 
 { TStrings properties (Memo.Lines, ListBox.Items) only have a dialog editor,
@@ -722,9 +786,11 @@ begin
 end;
 
 { Apply AProps to AComp (a component or a collection item); one result entry
-  per property.  Returns the number of failures. }
+  per property.  Returns the number of failures.  With AGroup the changes go
+  into the designer's undo list in that group, and each result tells whether
+  its change can be undone there. }
 function ApplyProperties(ADesigner: TIDesigner; AComp: TPersistent;
-  AProps: TJSONObject; AResults: TJSONArray): Integer;
+  AProps: TJSONObject; AResults: TJSONArray; AGroup: PUndoGroup): Integer;
 var
   Pool    : TEditorPool;
   Pass, I : Integer;
@@ -736,9 +802,14 @@ var
   Target  : TPersistent;
   Rest    : string;
   List    : TStrings;
+  ARecord : Boolean;
+  Undoable: Boolean;
+  OldVal  : string;
+  OldParent : TWinControl;
 begin
   Result := 0;
   if AProps = nil then Exit;
+  ARecord := AGroup <> nil;
   Pool := TEditorPool.Create;
   try
     { pass 0: Parent, pass 1: everything else, pass 2: Name }
@@ -751,13 +822,27 @@ begin
         Val := JSONValueAsString(AProps.Items[I]);
         R := TJSONObject.Create;
         R.Add('name', Key);
+        Undoable := False;
         try
           if Pass = 0 then
           begin
             if not (AComp is TComponent) then
               Err := 'Parent applies to components only'
-            else if SetParentOf(ADesigner, TComponent(AComp), Val, Err) then
-              R.Add('value', TControl(AComp).Parent.Name);
+            else
+            begin
+              OldParent := nil;
+              if AComp is TControl then
+                OldParent := TControl(AComp).Parent;
+              if SetParentOf(ADesigner, TComponent(AComp), Val, Err) then
+              begin
+                R.Add('value', TControl(AComp).Parent.Name);
+                { as the Object Inspector and the component tree record it }
+                Undoable := Assigned(OldParent);
+                if ARecord and Undoable then
+                  AddUndo(AGroup^, AComp, uopChange, 'Parent', OldParent.Name,
+                          TControl(AComp).Parent.Name);
+              end;
+            end;
           end
           else if not ResolveItemPath(AComp, Key, Target, Rest, Err) then
             { Err set }
@@ -787,8 +872,14 @@ begin
                 Err := 'read-only property'
               else
               begin
+                Undoable := UndoableEditor(Ed);
+                if Undoable then
+                  OldVal := UndoValue(Ed);
                 Ed.SetValue(Val);
                 R.Add('value', SafeValue(Ed));
+                if ARecord and Undoable then
+                  AddUndo(AGroup^, Ed.GetComponent(0), uopChange, Ed.GetName,
+                          OldVal, UndoValue(Ed));
               end;
             end;
           end;
@@ -799,7 +890,9 @@ begin
         begin
           R.Add('error', Err);
           Inc(Result);
-        end;
+        end
+        else if ARecord then
+          R.Add('undoable', Undoable);
         AResults.Add(R);
       end;
   finally
@@ -1015,6 +1108,106 @@ begin
   end;
 end;
 
+{ ── Undo by snapshot ─────────────────────────────────────────────────────── }
+
+{ Changes the designer's undo cannot replay property by property are
+  recorded as a replacement of the whole component: a delete entry before the
+  change (it streams the component as it is) and an add entry after it.  Undo
+  deletes the changed component and inserts the old one; references other
+  components held to it come back through McpRefKeeper.  A menu item is
+  replaced with its whole menu. }
+
+type
+  TSnapshot = record
+    Group   : TUndoGroup;
+    Targets : array of TComponent;
+  end;
+
+{ The component to replace for a change of AComp, or nil when there is none:
+  the form itself, inherited components and components of a frame cannot be
+  deleted and inserted again. }
+function SnapshotTarget(ARoot, AComp: TComponent): TComponent;
+begin
+  Result := AComp;
+  if Result is TMenuItem then
+    Result := TMenuItem(Result).GetParentMenu;
+  if (Result = nil) or (Result = ARoot) or (Result.Owner <> ARoot) or
+     (csAncestor in Result.ComponentState) then
+    Result := nil;
+end;
+
+{ Record the delete entries for AComps.  False, with nothing recorded, when
+  one of them has no snapshot target. }
+function SnapBegin(out ASnap: TSnapshot; ADesigner: TIDesigner;
+  const AComps: array of TComponent): Boolean;
+var
+  I, J, N : Integer;
+  T       : TComponent;
+  Dup     : Boolean;
+begin
+  ASnap.Group := NewUndoGroup(ADesigner);
+  ASnap.Targets := nil;
+  Result := ASnap.Group.Designer <> nil;
+  if not Result then Exit;
+  N := 0;
+  for I := 0 to High(AComps) do
+  begin
+    T := SnapshotTarget(ADesigner.LookupRoot, AComps[I]);
+    if T = nil then
+    begin
+      ASnap.Targets := nil;
+      Exit(False);
+    end;
+    Dup := False;
+    for J := 0 to N - 1 do
+      Dup := Dup or (ASnap.Targets[J] = T);
+    if Dup then Continue;
+    SetLength(ASnap.Targets, N + 1);
+    ASnap.Targets[N] := T;
+    Inc(N);
+  end;
+  for I := 0 to N - 1 do
+    AddUndo(ASnap.Group, ASnap.Targets[I], uopDelete, 'Name', ASnap.Targets[I].Name, '');
+end;
+
+{ Record the add entries, after the change. }
+procedure SnapEnd(var ASnap: TSnapshot);
+var
+  I : Integer;
+begin
+  for I := 0 to High(ASnap.Targets) do
+    AddUndo(ASnap.Group, ASnap.Targets[I], uopAdd, 'Name', '', ASnap.Targets[I].Name);
+end;
+
+{ Can every property in AProps be undone entry by entry (see UndoableEditor)? }
+function AllNativeUndoable(AComp: TComponent; AProps: TJSONObject): Boolean;
+var
+  Pool   : TEditorPool;
+  I      : Integer;
+  Key    : string;
+  Target : TPersistent;
+  Rest, Err : string;
+  Ed     : TPropertyEditor;
+begin
+  Result := True;
+  Pool := TEditorPool.Create;
+  try
+    for I := 0 to AProps.Count - 1 do
+    begin
+      Key := AProps.Names[I];
+      if SameText(Key, 'Parent') then Continue;
+      { paths that do not resolve fail without changing anything }
+      if not ResolveItemPath(AComp, Key, Target, Rest, Err) or (Rest = '') then Continue;
+      Ed := ResolvePath(Pool, Target, Rest, Err);
+      if Ed = nil then Continue;
+      if EditsClass(Ed, TStrings) or not UndoableEditor(Ed) then
+        Exit(False);
+    end;
+  finally
+    Pool.Free;
+  end;
+end;
+
 { ── form_arrange ─────────────────────────────────────────────────────────── }
 
 function ArrangeControls(ADesigner: TIDesigner; AParams: TJSONObject;
@@ -1034,6 +1227,8 @@ var
   C         : TComponent;
   Obj       : TJSONObject;
   RefL, RefT, RefR, RefB, RefW, RefH : Integer;
+  Old       : array of TRect;
+  Group     : TUndoGroup;
 begin
   Result := nil;
   AErr   := '';
@@ -1072,6 +1267,26 @@ begin
     AErr := 'nothing to do: give same_size, distribute and/or align';
     Exit;
   end;
+  { checked up front, so that the steps below either all run or none does }
+  if (Distrib <> '') and not HasGap and (N < 3) then
+  begin
+    AErr := 'distribute without spacing needs at least 3 controls';
+    Exit;
+  end;
+  if (AlignTo <> '') and (AnsiIndexStr(AlignTo,
+       ['left', 'right', 'top', 'bottom', 'hcenter', 'vcenter']) < 0) then
+  begin
+    AErr := 'unknown align: ' + AlignTo;
+    Exit;
+  end;
+  if (AlignTo <> '') and ToParent and (First.Parent = nil) then
+  begin
+    AErr := First.Name + ' has no parent';
+    Exit;
+  end;
+  SetLength(Old, N);
+  for I := 0 to N - 1 do
+    Old[I] := Ctls[I].BoundsRect;
 
   { 1. size }
   for I := 1 to N - 1 do
@@ -1093,7 +1308,7 @@ begin
         else
           Ctls[I].Top := Ctls[I - 1].Top + Ctls[I - 1].Height + Gap;
     end
-    else if N >= 3 then
+    else
     begin
       Total := 0;
       for I := 0 to N - 1 do
@@ -1119,11 +1334,6 @@ begin
           Ctls[I].Top := Pos0;
         end;
       end;
-    end
-    else
-    begin
-      AErr := 'distribute without spacing needs at least 3 controls';
-      Exit;
     end;
   end;
 
@@ -1132,11 +1342,6 @@ begin
   begin
     if ToParent then
     begin
-      if First.Parent = nil then
-      begin
-        AErr := First.Name + ' has no parent';
-        Exit;
-      end;
       RefL := 0; RefT := 0;
       RefW := First.Parent.ClientWidth;
       RefH := First.Parent.ClientHeight;
@@ -1156,13 +1361,18 @@ begin
       else if AlignTo = 'top' then     Ctls[I].Top  := RefT
       else if AlignTo = 'bottom' then  Ctls[I].Top  := RefB - Ctls[I].Height
       else if AlignTo = 'hcenter' then Ctls[I].Left := RefL + (RefW - Ctls[I].Width) div 2
-      else if AlignTo = 'vcenter' then Ctls[I].Top  := RefT + (RefH - Ctls[I].Height) div 2
-      else
-      begin
-        AErr := 'unknown align: ' + AlignTo;
-        Exit;
-      end;
+      else if AlignTo = 'vcenter' then Ctls[I].Top  := RefT + (RefH - Ctls[I].Height) div 2;
     end;
+  end;
+
+  { one undo step for the whole arrangement }
+  Group := NewUndoGroup(ADesigner);
+  for I := 0 to N - 1 do
+  begin
+    AddUndo(Group, Ctls[I], uopChange, 'Left',   IntToStr(Old[I].Left),   IntToStr(Ctls[I].Left));
+    AddUndo(Group, Ctls[I], uopChange, 'Top',    IntToStr(Old[I].Top),    IntToStr(Ctls[I].Top));
+    AddUndo(Group, Ctls[I], uopChange, 'Width',  IntToStr(Old[I].Width),  IntToStr(Ctls[I].Width));
+    AddUndo(Group, Ctls[I], uopChange, 'Height', IntToStr(Old[I].Height), IntToStr(Ctls[I].Height));
   end;
 
   ADesigner.Modified;
@@ -1190,7 +1400,8 @@ begin
             (Name = 'form_list_collection_items') or (Name = 'form_add_collection_item') or
             (Name = 'form_delete_collection_item') or (Name = 'form_move_collection_item') or
             (Name = 'form_get_menu') or (Name = 'form_add_menu_item') or
-            (Name = 'form_move_menu_item');
+            (Name = 'form_move_menu_item') or
+            (Name = 'form_undo') or (Name = 'form_redo');
 end;
 
 { form_*_collection_item and form_list_collection_items. }
@@ -1205,7 +1416,10 @@ var
   Pool      : TEditorPool;
   I, Idx, NewIdx, Failed : Integer;
   Props     : TJSONObject;
+  Snap      : TSnapshot;
+  Snapped   : Boolean;
 begin
+  Snapped := False;
   if AComp = nil then
   begin
     Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
@@ -1250,6 +1464,7 @@ begin
 
     else if Name = 'form_add_collection_item' then
     begin
+      Snapped := SnapBegin(Snap, ADesigner, [AComp]);
       Item := Coll.Add;
       Idx  := Ctx.Params.Get('index', -1);
       if (Idx >= 0) and (Idx < Coll.Count) then
@@ -1260,7 +1475,7 @@ begin
       begin
         Res := TJSONArray.Create;
         Obj.Add('results', Res);
-        Failed := ApplyProperties(ADesigner, Item, Props, Res);
+        Failed := ApplyProperties(ADesigner, Item, Props, Res, nil);
         if Failed > 0 then
           Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
       end;
@@ -1282,6 +1497,7 @@ begin
       Obj.Add('display_name', Coll.Items[Idx].DisplayName);
       { The Object Inspector may show the item; never free it under its feet. }
       SelectOnly(AComp);
+      Snapped := SnapBegin(Snap, ADesigner, [AComp]);
       Coll.Items[Idx].Free;
       Obj.Add('status', 'deleted');
       Obj.Add('count', Coll.Count);
@@ -1297,6 +1513,7 @@ begin
         Ctx.Result := Format('index or new_index out of range (count %d)', [Coll.Count]);
         Exit;
       end;
+      Snapped := SnapBegin(Snap, ADesigner, [AComp]);
       Coll.Items[Idx].Index := NewIdx;
       Obj.Add('status', 'moved');
       Obj.Add('display_name', Coll.Items[NewIdx].DisplayName);
@@ -1305,6 +1522,9 @@ begin
 
     if Name <> 'form_list_collection_items' then
     begin
+      if Snapped then
+        SnapEnd(Snap);
+      Obj.Add('undoable', Snapped);
       GlobalDesignHook.Modified(Coll);
       GlobalDesignHook.RefreshPropertyValues;
       ADesigner.Modified;
@@ -1329,8 +1549,12 @@ var
   Idx, I, Failed : Integer;
   Caption, NewName : string;
   Walk       : TMenuItem;
+  Snap       : TSnapshot;
+  Snapped    : Boolean;
 begin
   Root := ADesigner.LookupRoot;
+  Target  := nil;
+  Snapped := False;
   Obj  := TJSONObject.Create;
   try
     if Name = 'form_get_menu' then
@@ -1370,6 +1594,7 @@ begin
         Ctx.Error := True; Ctx.Result := 'Designer cannot create menu items'; Exit;
       end;
       Obj.Add('menu_editor_hidden', HideMenuEditor);
+      Snapped := SnapBegin(Snap, ADesigner, [Target]);
       Caption := Ctx.Params.Get('caption', '');
       MI := TMenuItem.Create(Root);
       if Caption = cLineCaption then
@@ -1398,7 +1623,7 @@ begin
         begin
           Res := TJSONArray.Create;
           Obj.Add('results', Res);
-          Failed := ApplyProperties(ADesigner, MI, Props, Res);
+          Failed := ApplyProperties(ADesigner, MI, Props, Res, nil);
           if Failed > 0 then
             Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
         end;
@@ -1445,6 +1670,10 @@ begin
         Ctx.Error := True; Ctx.Result := 'menu item has no parent'; Exit;
       end;
       Obj.Add('menu_editor_hidden', HideMenuEditor);
+      if Assigned(Target) then
+        Snapped := SnapBegin(Snap, ADesigner, [MI, Target])
+      else
+        Snapped := SnapBegin(Snap, ADesigner, [MI]);
       if Assigned(MI.Parent) then
         MI.Parent.Remove(MI);
       Idx := Ctx.Params.Get('index', -1);
@@ -1458,6 +1687,9 @@ begin
       Obj.Add('index',  MI.MenuIndex);
     end;
 
+    if Snapped then
+      SnapEnd(Snap);
+    Obj.Add('undoable', Snapped);
     ADesigner.Modified;
     Ctx.Result := Obj.AsJSON;
   finally
@@ -1493,6 +1725,11 @@ var
   NewMethod    : TMethod;
   EventName, HandlerName, ExistingName, EventSuffix : string;
   MethCompatible, MethPublished, IdentIsMethod : Boolean;
+  CEDesigner   : TComponentEditorDesigner;
+  Ok           : Boolean;
+  Group        : TUndoGroup;
+  Snap         : TSnapshot;
+  Others       : TJSONObject;
 begin
   Result := False;
 
@@ -1633,7 +1870,39 @@ begin
     try
       Arr := TJSONArray.Create;
       Obj.Add('component_name', Comp.Name);  { before a rename }
-      Failed := ApplyProperties(Designer, Comp, Props, Arr);
+      if not AllNativeUndoable(Comp, Props) and SnapBegin(Snap, Designer, [Comp]) then
+      begin
+        { Name is changed after the replacement, as an entry of its own: undo
+          renames back first (event handlers too), so each stream it inserts
+          matches the names in the source. }
+        Others := TJSONObject(Props.Clone);
+        NameProps := TJSONObject.Create;
+        try
+          I := Others.IndexOfName('Name', True);
+          if I >= 0 then
+          begin
+            NameProps.Add('Name', Others.Items[I].Clone);
+            Others.Delete(I);
+          end;
+          Failed := ApplyProperties(Designer, Comp, Others, Arr, nil);
+          SnapEnd(Snap);
+          if NameProps.Count > 0 then
+            Inc(Failed, ApplyProperties(Designer, Comp, NameProps, Arr, @Snap.Group));
+        finally
+          NameProps.Free;
+          Others.Free;
+        end;
+        Obj.Add('undoable', True);
+      end
+      else
+      begin
+        Group := NewUndoGroup(Designer);
+        Failed := ApplyProperties(Designer, Comp, Props, Arr, @Group);
+        Ok := True;
+        for I := 0 to Arr.Count - 1 do
+          Ok := Ok and TJSONObject(Arr[I]).Get('undoable', True);
+        Obj.Add('undoable', Ok);
+      end;
       Obj.Add('results', Arr);
       Obj.Add('component_name_now', Comp.Name);
       Ctx.Error  := Failed = Props.Count;  { error only if nothing applied }
@@ -1706,7 +1975,12 @@ begin
         NameProps.Add('Name', Ctx.Params.Get('name', ''));
       Failed := 0;
       if NameProps.Count > 0 then
-        Failed := ApplyProperties(Designer, NewComp, NameProps, Arr);
+        Failed := ApplyProperties(Designer, NewComp, NameProps, Arr, nil);
+      { One undo step for the whole call, recorded with the final name and
+        properties, as TDesigner.AddComponent does after a palette drop:
+        undo deletes the component, redo inserts it again. }
+      Group := NewUndoGroup(Designer);
+      AddUndo(Group, NewComp, uopAdd, 'Name', '', NewComp.Name);
       Obj.Add('status', 'ok');
       Obj.Add('component', ControlInfo(NewComp, Root));
       if Arr.Count > 0 then
@@ -1740,9 +2014,13 @@ begin
         Obj.Add('menu_editor_hidden', HideMenuEditor);
         Obj.Add('component', Comp.Name);
         SelectOnly(Root);
+        Ok := SnapBegin(Snap, Designer, [Comp]);   { the item's whole menu }
         DeleteMenuItem(TMenuItem(Comp));
+        if Ok then
+          SnapEnd(Snap);
         Designer.Modified;
         Obj.Add('status', 'deleted');
+        Obj.Add('undoable', Ok);
         Ctx.Result := Obj.AsJSON;
       finally
         Obj.Free;
@@ -1801,6 +2079,46 @@ begin
       Ctx.Result := Arr.AsJSON;
     finally
       Arr.Free;
+    end;
+  end
+
+  else if (Name = 'form_undo') or (Name = 'form_redo') then
+  begin
+    { What Edit > Undo / Redo does while the designer is active. }
+    if not (Designer is TComponentEditorDesigner) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Designer does not support undo'; Exit;
+    end;
+    CEDesigner := TComponentEditorDesigner(Designer);
+    Obj := TJSONObject.Create;
+    try
+      try
+        if Name = 'form_undo' then
+        begin
+          Ok := CEDesigner.CanUndo and CEDesigner.Undo;
+          if Ok then Obj.Add('status', 'undone') else Obj.Add('status', 'nothing to undo');
+        end
+        else
+        begin
+          Ok := CEDesigner.CanRedo and CEDesigner.Redo;
+          if Ok then Obj.Add('status', 'redone') else Obj.Add('status', 'nothing to redo');
+        end;
+      except
+        { an entry whose component is gone (renamed or deleted without an
+          undo entry of its own) }
+        on E: Exception do
+        begin
+          Ok := False;
+          Obj.Add('status', 'failed');
+          Obj.Add('error', E.Message);
+        end;
+      end;
+      Ctx.Error := not Ok;
+      Obj.Add('can_undo', CEDesigner.CanUndo);
+      Obj.Add('can_redo', CEDesigner.CanRedo);
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
     end;
   end
 
@@ -1886,7 +2204,11 @@ begin
       Exit;
     end;
 
+    { undo unassigns the event; the method stays in the source }
+    Ok := SnapBegin(Snap, Designer, [Comp]);
     SetMethodProp(Comp, PropInfo, NewMethod);
+    if Ok then
+      SnapEnd(Snap);
     Designer.Modified;
     GlobalDesignHook.ShowMethod(HandlerName);
 
@@ -1894,6 +2216,7 @@ begin
     try
       Obj.Add('status',       'created');
       Obj.Add('handler_name', HandlerName);
+      Obj.Add('undoable',     Ok);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -1975,6 +2298,15 @@ begin
     'Search the IDE component palette for classes whose name contains query. ' +
     'Returns class_name, unit_name and palette_page for each match.',
     SCHEMA_FORM_SEARCH_PALETTE, MCP_ANN_RO));
+  Tools.Add(MakeTool('form_undo',
+    'Undo the last change on a form, as Edit > Undo in the designer: one step of ' +
+    'the designer''s undo list, shared with the user and other clients. Returns ' +
+    'can_undo and can_redo.',
+    SCHEMA_FORM_LIST_COMPONENTS, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('form_redo',
+    'Redo the last undone change on a form, as Edit > Redo in the designer. ' +
+    'Returns can_undo and can_redo.',
+    SCHEMA_FORM_LIST_COMPONENTS, MCP_ANN_WRITE));
 end;
 
 initialization
