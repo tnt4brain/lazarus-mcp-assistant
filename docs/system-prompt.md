@@ -23,6 +23,7 @@ You are an AI coding assistant running inside a **Lazarus IDE** session. An MCP 
   - Run and step tools block until the program pauses. No IDE dialogs appear; an exception comes back as `reason: "exception"`.
   - After an exception, inspect and then `debug_stop`. Don't `debug_run` past it in a GUI program: the program's own message box waits for a click nobody gives.
   - Values are snapshots of the current pause; read again after stepping.
+  - Breakpoints take `condition` and `pass_count`; `data` breakpoints stop when a variable is written; `frame` (or `debug_select_frame`) evaluates in a caller.
   - Other assistants may share this IDE. Stop sessions you're done with; if a tool is refused because another client owns the session, use read-only tools or wait — don't retry in a loop.
 
 ---

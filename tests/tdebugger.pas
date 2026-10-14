@@ -29,6 +29,14 @@ type
     procedure TestLeaseRefusesOtherClient;
     procedure TestLockSerialisesDebugCalls;
     procedure TestLeaseExpiresAndStopsSession;
+    { v0.9: breakpoint kinds and frames }
+    procedure TestConditionalBreakpoint;
+    procedure TestPassCount;
+    procedure TestRunToLineKeepsUserBreakpoint;
+    procedure TestDataBreakpoint;
+    procedure TestSymbolBreakpoint;
+    procedure TestFrames;
+    procedure TestThreads;
   end;
 
   { Opens the debuggee project before the suite and the previous one after. }
@@ -185,14 +193,50 @@ end;
 
 { ── Tests ────────────────────────────────────────────────────────────────── }
 
-procedure TTestDebugger.TearDown;
+{ Remove every breakpoint, of every kind, as debug_list_breakpoints shows
+  them.  Address breakpoints in particular must not outlive the session: they
+  are saved with the project and the address means nothing next time. }
+procedure RemoveAllBreakpoints(const ASession: string);
 var
-  M : string;
+  D  : TJSONData;
+  B  : TJSONObject;
+  I  : Integer;
+  Kd : string;
+begin
+  try
+    D := GetJSON(Call(ASession, 'debug_list_breakpoints', '{}'));
+  except
+    Exit;
+  end;
+  try
+    if not (D is TJSONArray) then Exit;
+    for I := 0 to TJSONArray(D).Count - 1 do
+    begin
+      B  := TJSONArray(D).Objects[I];
+      Kd := B.Get('kind', 'source');
+      if Kd = 'address' then
+        Call(ASession, 'debug_remove_breakpoint',
+             '{"address":' + JsonStr(B.Get('address', '')) + '}')
+      else if Kd = 'data' then
+        Call(ASession, 'debug_remove_breakpoint',
+             '{"data":' + JsonStr(B.Get('data', '')) + ',"scope":' + JsonStr(B.Get('scope', '')) +
+             ',"watch":' + JsonStr(B.Get('watch', '')) + '}')
+      else
+        Call(ASession, 'debug_remove_breakpoint',
+             '{"file_path":' + JsonStr(B.Get('file', '')) + ',"line":' +
+             IntToStr(B.Get('line', 0)) + '}');
+    end;
+  finally
+    D.Free;
+  end;
+end;
+
+procedure TTestDebugger.TearDown;
 begin
   { whatever a test left behind: stop, drop the breakpoints, free the lease }
   Call(GSessA, 'debug_stop', '{}');
-  for M in ['work', 'inc', 'sleep'] do
-    Call(GSessA, 'debug_remove_breakpoint', BpArgs(MarkLine(M)));
+  RemoveAllBreakpoints(GSessA);
+  Call(GSessA, 'debug_remove_watch', '{"expression":"*"}');  { watches persist too }
   WaitQuiet(5000);
 end;
 
@@ -339,6 +383,202 @@ begin
   T := CallToolText('ide_get_messages', '{}', []);
   CheckTrue(Pos('expired after 10 s without calls; session stopped', T) > 0,
     'the expiry is logged in the Messages window: ' + Copy(T, 1, 400));
+end;
+
+{ ── v0.9: breakpoint kinds and frames ──────────────────────────────────── }
+
+function LoopBp(const AExtra: string): string;
+begin
+  Result := '{"file_path":' + JsonStr(DebuggeeSrc) + ',"line":' +
+            IntToStr(MarkLine('loop')) + AExtra + '}';
+end;
+
+function EvalI(const ASession: string): string;
+begin
+  Result := JPath(Call(ASession, 'debug_evaluate', '{"expression":"I"}'), 'value');
+end;
+
+procedure TTestDebugger.TestConditionalBreakpoint;
+var
+  T : string;
+begin
+  T := Call(GSessA, 'debug_set_breakpoint', LoopBp(',"condition":"I = 3"'));
+  CheckEquals('I = 3', JPath(T, 'condition'), 'set: ' + T);
+  T := Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  CheckEquals('paused', JPath(T, 'state'), 'run: ' + T);
+  CheckEquals('3', EvalI(GSessA), 'paused only when the condition holds');
+end;
+
+procedure TTestDebugger.TestPassCount;
+var
+  T : string;
+begin
+  T := Call(GSessA, 'debug_set_breakpoint', LoopBp(',"pass_count":4'));
+  CheckEquals('4', JPath(T, 'pass_count'), 'set: ' + T);
+  Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  CheckEquals('4', EvalI(GSessA), 'first pause on the 4th hit');
+  Call(GSessA, 'debug_run', '{"timeout_s":60}');
+  CheckEquals('5', EvalI(GSessA), 'and on every hit after it');
+end;
+
+procedure TTestDebugger.TestRunToLineKeepsUserBreakpoint;
+var
+  T : string;
+begin
+  Call(GSessA, 'debug_set_breakpoint', LoopBp(',"condition":"I = 2"'));
+  T := Call(GSessA, 'debug_run_to_line', LoopBp(',"timeout_s":60'));
+  CheckEquals('paused', JPath(T, 'state'), 'run_to_line: ' + T);
+  CheckEquals('2', EvalI(GSessA), 'the existing breakpoint''s condition applied');
+  T := Call(GSessA, 'debug_list_breakpoints', '{}');
+  CheckTrue(Pos('"condition" : "I = 2"', T) > 0,
+    'the user''s breakpoint is still there, condition intact: ' + T);
+end;
+
+procedure TTestDebugger.TestDataBreakpoint;
+var
+  T : string;
+begin
+  T := Call(GSessA, 'debug_set_breakpoint', '{"data":"Counter"}');
+  CheckEquals('data', JPath(T, 'kind'), 'set: ' + T);
+  CheckEquals('write', JPath(T, 'watch'), T);
+  T := Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  CheckEquals('paused', JPath(T, 'state'), 'first write: ' + T);
+  CheckEquals('41', JPath(Call(GSessA, 'debug_evaluate', '{"expression":"Counter"}'), 'value'));
+  T := Call(GSessA, 'debug_run', '{"timeout_s":60}');
+  CheckEquals('paused', JPath(T, 'state'), 'second write: ' + T);
+  CheckEquals('42', JPath(Call(GSessA, 'debug_evaluate', '{"expression":"Counter"}'), 'value'));
+end;
+
+procedure TTestDebugger.TestSymbolBreakpoint;
+var
+  T : string;
+begin
+  T := Call(GSessA, 'debug_set_breakpoint', '{"address":"Sum"}');
+  CheckEquals(1, Pos('TOOL ERROR', T), 'a symbol needs a paused session: ' + T);
+
+  Call(GSessA, 'debug_set_breakpoint', BpArgs(MarkLine('work')));
+  Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  T := Call(GSessA, 'debug_set_breakpoint', '{"address":"Counter"}');
+  CheckTrue(Pos('is data', T) > 0, 'a variable is refused, not patched: ' + T);
+  T := Call(GSessA, 'debug_set_breakpoint', '{"address":"Beep"}');
+  CheckTrue(Pos('debug info', T) > 0, 'no debug info, no symbol: ' + T);
+  T := Call(GSessA, 'debug_set_breakpoint', '{"address":"Sum"}');
+  CheckEquals('address', JPath(T, 'kind'), 'resolved while paused: ' + T);
+  CheckEquals(1, Pos('$', JPath(T, 'address')), 'as a number: ' + T);
+  Call(GSessA, 'debug_remove_breakpoint', BpArgs(MarkLine('work')));
+
+  T := Call(GSessA, 'debug_run', '{"timeout_s":60}');
+  CheckEquals('paused', JPath(T, 'state'), 'run to Sum: ' + T);
+  T := Call(GSessA, 'debug_get_call_stack', '{"max_frames":1}');
+  CheckTrue(Pos('"Sum', T) > 0, 'paused at Sum''s entry: ' + T);
+end;
+
+procedure TTestDebugger.TestFrames;
+var
+  T : string;
+begin
+  Call(GSessA, 'debug_set_breakpoint', LoopBp(',"condition":"I = 2"'));
+  Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+
+  { frame for one evaluation only }
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit"}');
+  CheckEquals('5', JPath(T, 'value'), 'frame 0 (Sum): ' + T);
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit","frame":1}');
+  CheckEquals(1, Pos('TOOL ERROR', T), 'ALimit is not visible in frame 1: ' + T);
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"Total","frame":1}');
+  CheckEquals('1', JPath(T, 'value'), 'a global in frame 1: ' + T);
+  CheckEquals('$main', JPath(T, 'frame.function'), T);
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit"}');
+  CheckEquals('5', JPath(T, 'value'), 'the selection was restored: ' + T);
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit","frame":7}');
+  CheckTrue(Pos('Frame 7 does not exist', T) > 0, 'no such frame: ' + T);
+
+  { locals and watches read a given frame directly }
+  T := Call(GSessA, 'debug_get_locals', '{"frame":0}');
+  CheckTrue((Pos('"ALimit"', T) > 0) and (Pos('"I"', T) > 0), 'Sum''s locals: ' + T);
+  Call(GSessA, 'debug_add_watch', '{"expression":"ALimit"}');
+  T := Call(GSessA, 'debug_list_watches', '{"frame":0}');
+  CheckEquals('5', JPath(T, 'watches[0].value'), 'watch in frame 0: ' + T);
+  T := Call(GSessA, 'debug_list_watches', '{"frame":1}');
+  CheckNotEquals('', JPath(T, 'watches[0].error'), 'watch in frame 1: ' + T);
+
+  { selection that stays }
+  T := Call(GSessA, 'debug_select_frame', '{"frame":1}');
+  CheckEquals('1', JPath(T, 'frame.index'), 'select frame 1: ' + T);
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit"}');
+  CheckEquals(1, Pos('TOOL ERROR', T), 'later evaluations use frame 1: ' + T);
+  Call(GSessA, 'debug_select_frame', '{"frame":0}');
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit"}');
+  CheckEquals('5', JPath(T, 'value'), 'back in frame 0: ' + T);
+
+  { selecting drives the session: another client may not }
+  T := Call(GSessB, 'debug_select_frame', '{"frame":1}');
+  CheckEquals(1, Pos('TOOL ERROR: Refused', T), 'B selects a frame: ' + T);
+end;
+
+{ id of the thread debug_list_threads marks current, '' if none }
+function CurrentThread(const ASession: string): string;
+var
+  D : TJSONData;
+  I : Integer;
+begin
+  Result := '';
+  try
+    D := GetJSON(Call(ASession, 'debug_list_threads', '{}'));
+  except
+    Exit;
+  end;
+  try
+    if D is TJSONArray then
+      for I := 0 to TJSONArray(D).Count - 1 do
+        if TJSONArray(D).Objects[I].Get('current', False) then
+          Exit(IntToStr(TJSONArray(D).Objects[I].Get('id', 0)));
+  finally
+    D.Free;
+  end;
+end;
+
+procedure TTestDebugger.TestThreads;
+{ The RTL starts worker threads (waiting in ntdll); the program runs in the
+  main one.  Select a worker, evaluate in the main thread for one call, and
+  check that the worker is still selected afterwards. }
+var
+  T, MainId, WorkerId : string;
+  D : TJSONData;
+  I : Integer;
+begin
+  Call(GSessA, 'debug_set_breakpoint', LoopBp(',"condition":"I = 2"'));
+  Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  T := Call(GSessA, 'debug_list_threads', '{}');
+  MainId := '';
+  WorkerId := '';
+  D := GetJSON(T);
+  try
+    for I := 0 to TJSONArray(D).Count - 1 do
+      with TJSONArray(D).Objects[I] do
+        if Get('current', False) then
+          MainId := IntToStr(Get('id', 0))
+        else if WorkerId = '' then
+          WorkerId := IntToStr(Get('id', 0));
+  finally
+    D.Free;
+  end;
+  if WorkerId = '' then
+    Ignore('the debuggee has no second thread here: ' + T);
+
+  T := Call(GSessA, 'debug_select_frame', '{"thread":' + WorkerId + ',"frame":0}');
+  CheckEquals(WorkerId, JPath(T, 'thread'), 'worker selected: ' + T);
+  T := Call(GSessA, 'debug_get_call_stack', '{"max_frames":1}');
+  CheckEquals(0, Pos('"Sum', T), 'the stack is the worker''s now: ' + T);
+
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit","thread":' + MainId + ',"frame":0}');
+  CheckEquals('5', JPath(T, 'value'), 'main thread for one evaluation: ' + T);
+  CheckEquals(WorkerId, CurrentThread(GSessA), 'the worker is selected again afterwards');
+
+  T := Call(GSessA, 'debug_select_frame', '{"thread":' + MainId + ',"frame":0}');
+  CheckEquals(MainId, JPath(T, 'thread'), 'back to the main thread: ' + T);
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit"}');
+  CheckEquals('5', JPath(T, 'value'), T);
 end;
 
 initialization

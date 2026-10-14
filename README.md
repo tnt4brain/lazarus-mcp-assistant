@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 99 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 100 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -115,18 +115,19 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 
 | Tool | Description |
 |---|---|
-| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source breakpoints (no session needed) |
+| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`data` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
 | `debug_run` | Start, or continue from a pause (F9) |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
 | `debug_step_over` / `debug_step_into` / `debug_step_out` | F8 / F7 / Shift+F8 |
 | `debug_pause` / `debug_stop` | Pause / stop the session |
 | `debug_get_state` | State and source location, in any state |
 | `debug_get_call_stack` | Frames with file, line, function and address (`max_frames`) |
-| `debug_get_locals` | Locals and parameters of a frame |
-| `debug_evaluate` | Evaluate a Pascal expression in the current context |
+| `debug_get_locals` | Locals and parameters of a frame (`thread`, `frame`) |
+| `debug_evaluate` | Evaluate a Pascal expression in the selected frame, or in `thread`/`frame` for this call only |
+| `debug_select_frame` | Select a thread and stack frame, as the Threads and Call Stack windows do |
 | `debug_set_variable` | Modify a variable or expression |
 | `debug_get_exception` | The exception the program is paused at |
-| `debug_add_watch` / `debug_remove_watch` / `debug_list_watches` | Watches window; values for the current thread and frame |
+| `debug_add_watch` / `debug_remove_watch` / `debug_list_watches` | Watches window; values for the selected (or given) thread and frame |
 | `debug_list_threads` | Threads with state and top frame |
 | `debug_get_output` | What the program wrote to its console, and debugger output |
 
@@ -307,7 +308,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
 | `TTestToolSmoke` | 8 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
-| `TTestDebugger` | 5 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry (about 25 s) |
+| `TTestDebugger` | 12 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads (about 35 s) |
 
 The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped. With `MCP_DEBUG_TESTS=1` the debugger suite opens the debuggee project itself and reopens yours afterwards; it stops with an error instead if your project or an editor has unsaved changes.
 
@@ -348,12 +349,6 @@ For v0.9:
   dialog as any other new package. The dialog will say whether the code comes
   from the official repository or from a third-party URL. See
   [ADR-013](ADR-013.md#downloads-v09-not-built-yet).
-- **Debugger: breakpoints and context.**
-  - Data breakpoints (stop when a variable changes).
-  - Breakpoints at an address or symbol (`Beep+12`), for code without source.
-  - Conditional breakpoints and pass counts.
-  - `thread`/`frame` parameters for `debug_evaluate` and watches, plus
-    `debug_select_frame`.
 - **Debugger: low-level.** `debug_disassemble` around the current position or
   an address, `debug_get_registers` (general-purpose registers and flags), and
   `debug_read_memory` (hex and ASCII).

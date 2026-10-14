@@ -23,7 +23,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, Forms, Controls, LazLogger,
+  Classes, SysUtils, Math, Forms, Controls, LazLogger,
   LazIDEIntf, LazFileUtils, SrcEditorIntf,
   BaseDebugManager,
   LazDebuggerIntfBaseTypes,  { TDBGState }
@@ -61,12 +61,25 @@ type
     OutFeedback : string;   { suppressed debugger messages, accumulated; worker resets }
     { IssueCmd input }
     InCmd       : Integer;  { 0=run 1=pause 2=stop 3=stepover 4=stepinto 5=stepout }
-    { Breakpoint in/out }
-    InBpFile    : string;
-    InBpLine    : Integer;
-    InBpEnabled : Boolean;
-    OutBp       : TIDEBreakPoint;
-    OutBpFound  : Boolean;
+    { Breakpoint in/out: the location (one kind), then the properties to set;
+      a property is changed only when its InBpSet* flag is True }
+    InBpKind       : TDBGBreakPointKind;
+    InBpFile       : string;
+    InBpLine       : Integer;
+    InBpAddr       : TDBGPtr;
+    InBpData       : string;
+    InBpScope      : TDBGWatchPointScope;
+    InBpWatch      : TDBGWatchPointKind;
+    InBpEnabled    : Boolean;
+    InBpSetEnabled : Boolean;
+    InBpCond       : string;
+    InBpSetCond    : Boolean;
+    InBpPass       : Integer;
+    InBpSetPass    : Boolean;
+    InBpOnlyIfNew  : Boolean;  { leave an existing breakpoint as it is (run_to_line) }
+    OutBp          : TIDEBreakPoint;
+    OutBpCreated   : Boolean;
+    OutBpFound     : Boolean;
     { Evaluate in/out }
     InEvalExpr     : string;
     OutEvalRes     : string;
@@ -80,12 +93,20 @@ type
     OutCSCount    : Integer;  { -1 = count not known yet; else frames to return }
     OutCSReady    : Boolean;
     OutCSJSON     : string;
+    { Thread/frame selection in/out (debug_select_frame, evaluate) }
+    InSelThread    : Integer;
+    InSelFrame     : Integer;
+    OutSelThread   : Integer;
+    OutSelFrame    : Integer;
     { Local variables in/out }
+    InLocalsThread : Integer;   { 0 = the current thread }
     InLocalsFrame  : Integer;
     OutLocalsThread: Integer;
     OutLocalsReady : Boolean;
     OutLocalsJSON  : string;
     { Watches / threads out (same init-once / read-only-poll pattern) }
+    InWatchThread  : Integer;   { -1 = the current thread and selected frame }
+    InWatchFrame   : Integer;
     OutWatchThread : Integer;
     OutWatchFrame  : Integer;
     OutWatchReady  : Boolean;
@@ -95,9 +116,13 @@ type
     { Methods }
     procedure ReadState;
     procedure IssueCmd;
-    procedure AddBreakpoint;
+    function FindBreakpoint: TIDEBreakPoint;
+    procedure AddBreakpoint;     { find or create, then apply the InBpSet* properties }
     procedure RemoveBreakpoint;
     procedure DoEvaluateAndWait;  { single Synchronize: starts eval + waits on main thread }
+    procedure ReadSelection;      { current thread and selected frame }
+    procedure RequestThread;      { ask for InSelThread; applied asynchronously }
+    procedure RequestFrame;       { ask for InSelFrame in the current thread }
     procedure InitCallStack;
     procedure ReadCallStack;
     procedure InitLocals;
@@ -250,31 +275,197 @@ begin
   end;
 end;
 
-procedure TDbgSyncHelper.AddBreakpoint;
-begin
-  OutBp := nil;
-  if not Assigned(DebugBoss) or not Assigned(DebugBoss.BreakPoints) then Exit;
-  OutBp := DebugBoss.BreakPoints.Add(InBpFile, InBpLine);
-  if Assigned(OutBp) then
-    OutBp.Enabled := InBpEnabled;
-end;
-
-procedure TDbgSyncHelper.RemoveBreakpoint;
+function TDbgSyncHelper.FindBreakpoint: TIDEBreakPoint;
 var
   I  : Integer;
   BP : TIDEBreakPoint;
 begin
-  OutBpFound := False;
+  Result := nil;
   if not Assigned(DebugBoss) or not Assigned(DebugBoss.BreakPoints) then Exit;
-  for I := DebugBoss.BreakPoints.Count - 1 downto 0 do
+  for I := 0 to DebugBoss.BreakPoints.Count - 1 do
   begin
     BP := DebugBoss.BreakPoints.Items[I];
-    if (CompareFilenames(BP.Source, InBpFile) = 0) and (BP.Line = InBpLine) then
-    begin
-      BP.Free;
-      OutBpFound := True;
-      Break;
+    if BP.Kind <> InBpKind then Continue;
+    case InBpKind of
+      bpkSource  : if (BP.Line = InBpLine) and
+                      (CompareFilenames(BP.Source, InBpFile) = 0) then Exit(BP);
+      bpkAddress : if BP.Address = InBpAddr then Exit(BP);
+      bpkData    : if (BP.WatchScope = InBpScope) and (BP.WatchKind = InBpWatch) and
+                      SameText(BP.WatchData, InBpData) then Exit(BP);
     end;
+  end;
+end;
+
+procedure TDbgSyncHelper.AddBreakpoint;
+begin
+  OutBpCreated := False;
+  OutBp := FindBreakpoint;
+  if Assigned(OutBp) and InBpOnlyIfNew then Exit;
+  if not Assigned(OutBp) then
+  begin
+    if not Assigned(DebugBoss) or not Assigned(DebugBoss.BreakPoints) then Exit;
+    case InBpKind of
+      bpkSource  : OutBp := DebugBoss.BreakPoints.Add(InBpFile, InBpLine);
+      bpkAddress : OutBp := DebugBoss.BreakPoints.Add(InBpAddr);
+      bpkData    : OutBp := DebugBoss.BreakPoints.Add(InBpData, InBpScope, InBpWatch);
+    end;
+    if not Assigned(OutBp) then Exit;
+    OutBpCreated := True;
+    OutBp.Enabled := not InBpSetEnabled or InBpEnabled;
+  end
+  else if InBpSetEnabled then
+    OutBp.Enabled := InBpEnabled;
+  if InBpSetCond then
+    OutBp.Expression := InBpCond;
+  if InBpSetPass then
+    OutBp.BreakHitCount := InBpPass;
+end;
+
+procedure TDbgSyncHelper.RemoveBreakpoint;
+var
+  BP : TIDEBreakPoint;
+begin
+  BP := FindBreakpoint;
+  OutBpFound := Assigned(BP);
+  if OutBpFound then
+    BP.Free;
+end;
+
+const
+  WATCH_KINDS : array[TDBGWatchPointKind] of string = ('write', 'read', 'readwrite', 'exec');
+  WATCH_SCOPES: array[TDBGWatchPointScope] of string = ('local', 'global');
+
+{ A number in Pascal ($1F), C (0x1F) or decimal notation. }
+function ParseAddress(const S: string; out AAddr: TDBGPtr): Boolean;
+var
+  T : string;
+  Q : QWord;
+begin
+  T := Trim(S);
+  if SameText(Copy(T, 1, 2), '0x') then
+    T := '$' + Copy(T, 3, MaxInt);
+  Result := (T <> '') and TryStrToQWord(T, Q);
+  if Result then
+    AAddr := Q;
+end;
+
+{ Fill GSyncHelper's InBp* fields from the arguments of debug_set_breakpoint
+  / debug_remove_breakpoint / debug_run_to_line.  Exactly one location:
+  file_path + line, address, or data.  ASymbol receives an address that is
+  not a number (a symbol, resolved by the caller while paused); '' else. }
+function ReadBreakpointArgs(P: TJSONObject; out ASymbol, AErr: string): Boolean;
+var
+  Forms : Integer;
+  S     : string;
+  I     : TDBGWatchPointKind;
+begin
+  Result  := False;
+  ASymbol := '';
+  AErr    := '';
+  if not Assigned(P) then
+  begin
+    AErr := 'Give file_path and line, address, or data';
+    Exit;
+  end;
+  Forms := Ord(P.Get('file_path', '') <> '') + Ord(P.Get('address', '') <> '') +
+           Ord(P.Get('data', '') <> '');
+  if Forms <> 1 then
+  begin
+    AErr := 'Give exactly one location: file_path and line, address, or data';
+    Exit;
+  end;
+  with GSyncHelper do
+  begin
+    InBpSetEnabled := Assigned(P.Find('enabled'));
+    InBpEnabled    := P.Get('enabled', True);
+    InBpSetCond    := Assigned(P.Find('condition'));
+    InBpCond       := Trim(P.Get('condition', ''));
+    InBpSetPass    := Assigned(P.Find('pass_count'));
+    InBpPass       := P.Get('pass_count', 0);
+    InBpOnlyIfNew  := False;
+    if P.Get('file_path', '') <> '' then
+    begin
+      InBpKind := bpkSource;
+      InBpFile := CleanAndExpandFilename(P.Get('file_path', ''));
+      InBpLine := P.Get('line', 0);
+      if InBpLine < 1 then
+      begin
+        AErr := 'line required (1-based)';
+        Exit;
+      end;
+    end
+    else if P.Get('address', '') <> '' then
+    begin
+      InBpKind := bpkAddress;
+      S := Trim(P.Get('address', ''));
+      if not ParseAddress(S, InBpAddr) then
+        ASymbol := S;
+    end
+    else
+    begin
+      InBpKind  := bpkData;
+      InBpData  := Trim(P.Get('data', ''));
+      S := LowerCase(P.Get('scope', 'global'));
+      if S = 'global' then InBpScope := wpsGlobal
+      else if S = 'local' then InBpScope := wpsLocal
+      else
+      begin
+        AErr := 'scope must be global or local';
+        Exit;
+      end;
+      S := LowerCase(P.Get('watch', 'write'));
+      InBpWatch := wpkWrite;
+      for I := wpkWrite to wpkReadWrite do
+        if S = WATCH_KINDS[I] then
+        begin
+          InBpWatch := I;
+          S := '';
+        end;
+      if S <> '' then
+      begin
+        AErr := 'watch must be write, read or readwrite';
+        Exit;
+      end;
+    end;
+  end;
+  Result := True;
+end;
+
+{ The breakpoint as debug_set_breakpoint / debug_list_breakpoints report it }
+function BreakpointJSON(BP: TIDEBreakPoint): TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  case BP.Kind of
+    bpkSource :
+    begin
+      Result.Add('kind', 'source');
+      Result.Add('file', BP.Source);
+      Result.Add('line', BP.Line);
+    end;
+    bpkAddress :
+    begin
+      Result.Add('kind', 'address');
+      Result.Add('address', Format('$%x', [BP.Address]));
+    end;
+    bpkData :
+    begin
+      Result.Add('kind',  'data');
+      Result.Add('data',  BP.WatchData);
+      Result.Add('scope', WATCH_SCOPES[BP.WatchScope]);
+      Result.Add('watch', WATCH_KINDS[BP.WatchKind]);
+    end;
+  end;
+  Result.Add('enabled', BP.Enabled);
+  if BP.Expression <> '' then
+    Result.Add('condition', BP.Expression);
+  if BP.BreakHitCount > 0 then
+    Result.Add('pass_count', BP.BreakHitCount);
+  Result.Add('hit_count', BP.HitCount);
+  case BP.Valid of
+    vsValid    : Result.Add('valid', 'valid');
+    vsInvalid  : Result.Add('valid', 'invalid');
+    vsPending  : Result.Add('valid', 'pending');
+  else            Result.Add('valid', 'unknown');
   end;
 end;
 
@@ -351,6 +542,41 @@ begin
     Call.Started := True  { the callback is still to come and frees it }
   else
     Call.Free;            { called back already, or never will be }
+end;
+
+procedure TDbgSyncHelper.ReadSelection;
+var
+  Stack : TIdeCallStack;
+begin
+  OutSelThread := 0;
+  OutSelFrame  := 0;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Threads) or
+     not Assigned(DebugBoss.Threads.CurrentThreads) then Exit;
+  OutSelThread := DebugBoss.Threads.CurrentThreads.CurrentThreadId;
+  if Assigned(DebugBoss.CallStack) then
+  begin
+    Stack := DebugBoss.CallStack.CurrentCallStackList.EntriesForThreads[OutSelThread];
+    if Assigned(Stack) then
+      OutSelFrame := Stack.CurrentIndex;
+  end;
+end;
+
+procedure TDbgSyncHelper.RequestThread;
+begin
+  if Assigned(DebugBoss) and Assigned(DebugBoss.Threads) then
+    DebugBoss.Threads.ChangeCurrentThread(InSelThread);
+end;
+
+procedure TDbgSyncHelper.RequestFrame;
+var
+  Stack : TIdeCallStack;
+begin
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.CallStack) or
+     not Assigned(DebugBoss.Threads) then Exit;
+  Stack := DebugBoss.CallStack.CurrentCallStackList.EntriesForThreads[
+             DebugBoss.Threads.CurrentThreads.CurrentThreadId];
+  if Assigned(Stack) then
+    Stack.ChangeCurrentIndex(InSelFrame);
 end;
 
 procedure TDbgSyncHelper.InitCallStack;
@@ -479,6 +705,8 @@ begin
     TId := DebugBoss.Threads.CurrentThreads.CurrentThreadId
   else
     TId := 0;
+  if InLocalsThread > 0 then
+    TId := InLocalsThread;
   OutLocalsThread := TId;
   Locals := DebugBoss.Locals.CurrentLocalsList[TId, InLocalsFrame];
   if Assigned(Locals) then
@@ -567,6 +795,12 @@ begin
     OutWatchReady := True; Exit;
   end;
   CurrentThreadAndFrame(OutWatchThread, OutWatchFrame);
+  if InWatchThread >= 0 then
+  begin
+    if InWatchThread > 0 then
+      OutWatchThread := InWatchThread;
+    OutWatchFrame := InWatchFrame;
+  end;
   W := DebugBoss.Watches.CurrentWatches;
   for I := 0 to W.Count - 1 do
     if W[I].Enabled then
@@ -868,10 +1102,10 @@ var
   Lease : TJSONObject;
   Obj   : TJSONObject;
   Arr   : TJSONArray;
-  BpObj : TJSONObject;
-  BP    : TIDEBreakPoint;
   Watch : TCurrentWatch;
   I     : Integer;
+  Sym   : string;
+  Err   : string;
 begin
   Result := False;
 
@@ -902,21 +1136,22 @@ begin
   else if Name = 'debug_set_breakpoint' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
-    begin Ctx.Error := True; Ctx.Result := 'file_path required'; Exit; end;
     if not Assigned(DebugBoss) then
     begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
-    GSyncHelper.InBpFile    := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
-    GSyncHelper.InBpLine    := Ctx.Params.Get('line', 0);
-    GSyncHelper.InBpEnabled := Ctx.Params.Get('enabled', True);
+    if not ReadBreakpointArgs(Ctx.Params, Sym, Err) then
+    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+    if Sym <> '' then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'address must be a number ($401000, 0x401000)';
+      Exit;
+    end;
     GSyncHelper.AddBreakpoint;   { already on main thread }
     if not Assigned(GSyncHelper.OutBp) then
     begin Ctx.Error := True; Ctx.Result := 'Failed to add breakpoint'; Exit; end;
-    Obj := TJSONObject.Create;
+    Obj := BreakpointJSON(GSyncHelper.OutBp);
     try
-      Obj.Add('file',    GSyncHelper.InBpFile);
-      Obj.Add('line',    GSyncHelper.InBpLine);
-      Obj.Add('enabled', GSyncHelper.InBpEnabled);
+      Obj.Add('created', GSyncHelper.OutBpCreated);
       Ctx.Result := Obj.AsJSON;
     finally Obj.Free; end;
   end
@@ -924,11 +1159,14 @@ begin
   else if Name = 'debug_remove_breakpoint' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
-    begin Ctx.Error := True; Ctx.Result := 'file_path required'; Exit; end;
-    GSyncHelper.InBpFile  := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
-    GSyncHelper.InBpLine  := Ctx.Params.Get('line', 0);
-    GSyncHelper.OutBpFound := False;
+    if not ReadBreakpointArgs(Ctx.Params, Sym, Err) then
+    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+    if Sym <> '' then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'address must be a number; debug_list_breakpoints shows it';
+      Exit;
+    end;
     GSyncHelper.RemoveBreakpoint;   { already on main thread }
     Obj := TJSONObject.Create;
     try
@@ -946,21 +1184,7 @@ begin
     try
       if Assigned(DebugBoss) and Assigned(DebugBoss.BreakPoints) then
         for I := 0 to DebugBoss.BreakPoints.Count - 1 do
-        begin
-          BP    := DebugBoss.BreakPoints.Items[I];
-          BpObj := TJSONObject.Create;
-          BpObj.Add('file',      BP.Source);
-          BpObj.Add('line',      BP.Line);
-          BpObj.Add('enabled',   BP.Enabled);
-          BpObj.Add('hit_count', BP.HitCount);
-          case BP.Valid of
-            vsValid    : BpObj.Add('valid', 'valid');
-            vsInvalid  : BpObj.Add('valid', 'invalid');
-            vsPending  : BpObj.Add('valid', 'pending');
-          else            BpObj.Add('valid', 'unknown');
-          end;
-          Arr.Add(BpObj);
-        end;
+          Arr.Add(BreakpointJSON(DebugBoss.BreakPoints.Items[I]));
       Ctx.Result := Arr.AsJSON;
     finally Arr.Free; end;
   end
@@ -1084,6 +1308,170 @@ end;
 
 { ── Blocking dispatch (MCP worker thread) ───────────────────────────────── }
 
+{ Evaluate AExpr in the selected thread and frame and wait up to 5 s for the
+  result.  Worker thread; the debugger must be paused.  On failure AErr says
+  why and the result is False. }
+function EvaluateOnWorker(const AExpr: string; out AValue, AType, AErr: string): Boolean;
+var
+  Elapsed : Integer;
+begin
+  AValue := '';
+  AType  := '';
+  AErr   := '';
+  GSyncHelper.InEvalExpr := AExpr;
+  { start on the main thread (returns at once); the main loop delivers the
+    callback, so only poll here }
+  TThread.Synchronize(nil, @GSyncHelper.DoEvaluateAndWait);
+  Elapsed := 0;
+  while not GSyncHelper.FEvalFired and (Elapsed < 5000) do
+  begin
+    Sleep(50);
+    Inc(Elapsed, 50);
+  end;
+  Result := GSyncHelper.FEvalFired and GSyncHelper.OutEvalOk;
+  if Result then
+  begin
+    AValue := GSyncHelper.OutEvalRes;
+    AType  := GSyncHelper.OutEvalType;
+  end
+  else if not GSyncHelper.FEvalFired then
+    AErr := 'Evaluation timed out (5 s) — Evaluate returned: ' +
+            BoolToStr(GSyncHelper.OutEvalStarted, True)
+  else
+    AErr := 'Evaluation failed: ' + GSyncHelper.OutEvalRes;
+end;
+
+{ Symbol or Symbol+Offset (decimal, $hex or 0xhex) to a code address, by
+  evaluating @Symbol: FpDebug prints '^procedure($00000001000016E0)'.
+  Worker thread; the debugger must be paused. }
+function ResolveSymbol(const ASpec: string; out AAddr: TDBGPtr; out AErr: string): Boolean;
+var
+  Sym, Value, Typ : string;
+  P, E            : Integer;
+  Offset          : TDBGPtr;
+begin
+  Result := False;
+  AErr   := '';
+  P := Pos('+', ASpec);
+  Offset := 0;
+  if P > 0 then
+  begin
+    Sym := Trim(Copy(ASpec, 1, P - 1));
+    if not ParseAddress(Copy(ASpec, P + 1, MaxInt), Offset) then
+    begin
+      AErr := 'Bad offset in ' + ASpec;
+      Exit;
+    end;
+  end
+  else
+    Sym := Trim(ASpec);
+  if not EvaluateOnWorker('@' + Sym, Value, Typ, AErr) then
+  begin
+    AErr := 'Could not resolve ' + Sym + '. Symbols resolve only from debug ' +
+            'info (your own code); for other code give the address as a number, ' +
+            'e.g. from debug_get_call_stack. (' + AErr + ')';
+    Exit;
+  end;
+  { @Variable is an address too, but a code breakpoint there would write
+    into the variable's memory }
+  if (Pos('procedure', LowerCase(Typ)) = 0) and (Pos('function', LowerCase(Typ)) = 0) then
+  begin
+    AErr := Sym + ' is data (' + Typ + '), not code. Use data to stop when it changes.';
+    Exit;
+  end;
+  P := Pos('$', Value);
+  E := P + 1;
+  while (E <= Length(Value)) and (Value[E] in ['0'..'9', 'a'..'f', 'A'..'F']) do
+    Inc(E);
+  if (P = 0) or not ParseAddress(Copy(Value, P, E - P), AAddr) then
+  begin
+    AErr := 'No address in the value of @' + Sym + ': ' + Value;
+    Exit;
+  end;
+  Inc(AAddr, Offset);
+  Result := True;
+end;
+
+{ Make AThread (0 = keep the current one) and its frame AFrame the IDE's
+  selection, as clicking them in the Threads and Call Stack windows would,
+  and wait until the debugger has applied it.  AFrameJSON describes the
+  frame.  Worker thread; the debugger must be paused. }
+function SelectThreadFrame(AThread, AFrame: Integer;
+  out AFrameJSON, AErr: string): Boolean;
+var
+  Elapsed : Integer;
+  Frames  : TJSONData;
+begin
+  Result     := False;
+  AFrameJSON := '';
+  AErr       := '';
+  if AFrame < 0 then
+  begin
+    AErr := 'frame must be 0 or more';
+    Exit;
+  end;
+  TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
+  if (AThread > 0) and (GSyncHelper.OutSelThread <> AThread) then
+  begin
+    GSyncHelper.InSelThread := AThread;
+    TThread.Synchronize(nil, @GSyncHelper.RequestThread);
+    Elapsed := 0;
+    repeat
+      Sleep(50);
+      Inc(Elapsed, 50);
+      TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
+    until (GSyncHelper.OutSelThread = AThread) or (Elapsed >= 5000);
+    if GSyncHelper.OutSelThread <> AThread then
+    begin
+      AErr := Format('Thread %d could not be selected; debug_list_threads shows the ids',
+                     [AThread]);
+      Exit;
+    end;
+  end;
+
+  { load the stack far enough to know the frame exists, and to describe it }
+  GSyncHelper.InMaxFrames := AFrame + 1;
+  TThread.Synchronize(nil, @GSyncHelper.InitCallStack);
+  Elapsed := 0;
+  while not GSyncHelper.OutCSReady and (Elapsed < 10000) do
+  begin
+    Sleep(100);
+    Inc(Elapsed, 100);
+    TThread.Synchronize(nil, @GSyncHelper.ReadCallStack);
+  end;
+  if not GSyncHelper.OutCSReady or (GSyncHelper.OutCSCount <= AFrame) then
+  begin
+    AErr := Format('Frame %d does not exist (the stack has %d frames)',
+                   [AFrame, Max(GSyncHelper.OutCSCount, 0)]);
+    Exit;
+  end;
+  Frames := GetJSON(GSyncHelper.OutCSJSON);
+  try
+    if (Frames is TJSONArray) and (TJSONArray(Frames).Count > AFrame) then
+      AFrameJSON := TJSONArray(Frames).Items[AFrame].AsJSON;
+  finally
+    Frames.Free;
+  end;
+
+  if GSyncHelper.OutSelFrame <> AFrame then
+  begin
+    GSyncHelper.InSelFrame := AFrame;
+    TThread.Synchronize(nil, @GSyncHelper.RequestFrame);
+    Elapsed := 0;
+    repeat
+      Sleep(50);
+      Inc(Elapsed, 50);
+      TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
+    until (GSyncHelper.OutSelFrame = AFrame) or (Elapsed >= 5000);
+    if GSyncHelper.OutSelFrame <> AFrame then
+    begin
+      AErr := Format('Frame %d could not be selected', [AFrame]);
+      Exit;
+    end;
+  end;
+  Result := True;
+end;
+
 function DispatchDebuggerBlockingTool(const Name: string;
   var Ctx: TMcpToolCall): Boolean;
 var
@@ -1093,6 +1481,15 @@ var
   FinalFile : string;
   FinalLine : Integer;
   Obj       : TJSONObject;
+  TempBp    : Boolean;
+  Value     : string;
+  Typ       : string;
+  Err       : string;
+  Addr      : TDBGPtr;
+  Selected  : Boolean;
+  OldThread : Integer;
+  OldFrame  : Integer;
+  FrameJSON : string;
 
   procedure Finish(const AReason: string);
   var
@@ -1170,18 +1567,24 @@ begin
     TimeoutMs := 30000;
     if Assigned(Ctx.Params) then
       TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
-    { Add temp breakpoint on main thread }
-    GSyncHelper.InBpFile    := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
-    GSyncHelper.InBpLine    := Ctx.Params.Get('line', 0);
-    GSyncHelper.InBpEnabled := True;
+    { Temporary breakpoint, unless the line has one already: that one is the
+      user's, with its condition and pass count, and is left exactly as it is }
+    GSyncHelper.InBpKind       := bpkSource;
+    GSyncHelper.InBpFile       := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
+    GSyncHelper.InBpLine       := Ctx.Params.Get('line', 0);
+    GSyncHelper.InBpSetEnabled := False;
+    GSyncHelper.InBpSetCond    := False;
+    GSyncHelper.InBpSetPass    := False;
+    GSyncHelper.InBpOnlyIfNew  := True;
     TThread.Synchronize(nil, @GSyncHelper.AddBreakpoint);
     if not Assigned(GSyncHelper.OutBp) then
     begin Ctx.Error := True; Ctx.Result := 'Failed to add temp breakpoint'; Exit; end;
+    TempBp := GSyncHelper.OutBpCreated;
     { Run until pause }
     DoIssueCmd(0);
     S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
-    { Remove the temp breakpoint }
-    TThread.Synchronize(nil, @GSyncHelper.RemoveBreakpoint);
+    if TempBp then
+      TThread.Synchronize(nil, @GSyncHelper.RemoveBreakpoint);
     Finish('breakpoint');
   end
 
@@ -1193,39 +1596,89 @@ begin
     TThread.Synchronize(nil, @GSyncHelper.ReadState);
     if GSyncHelper.OutState <> dsPause then
     begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    GSyncHelper.InEvalExpr := Ctx.Params.Get('expression', '');
-    { Start evaluation on the main thread (returns immediately). }
-    TThread.Synchronize(nil, @GSyncHelper.DoEvaluateAndWait);
-    { Poll: the main thread's Application.Run loop delivers DoCallback_DecRef
-      via ProcessAsyncCallQueue — we just wait here for FEvalFired to flip. }
-    TimeoutMs := 5000;
-    Elapsed   := 0;
-    while not GSyncHelper.FEvalFired and (Elapsed < TimeoutMs) do
+    { thread/frame: select them for this evaluation only, then restore }
+    Selected := Assigned(Ctx.Params.Find('thread')) or Assigned(Ctx.Params.Find('frame'));
+    if Selected then
     begin
-      Sleep(50);
-      Inc(Elapsed, 50);
+      TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
+      OldThread := GSyncHelper.OutSelThread;
+      OldFrame  := GSyncHelper.OutSelFrame;
+      if not SelectThreadFrame(Ctx.Params.Get('thread', 0), Ctx.Params.Get('frame', 0),
+                               FrameJSON, Err) then
+      begin
+        SelectThreadFrame(OldThread, OldFrame, FrameJSON, Typ);
+        Ctx.Error := True; Ctx.Result := Err; Exit;
+      end;
     end;
     Obj := TJSONObject.Create;
     try
-      Obj.Add('expression', GSyncHelper.InEvalExpr);
-      if GSyncHelper.OutEvalOk then
+      Obj.Add('expression', Ctx.Params.Get('expression', ''));
+      if EvaluateOnWorker(Ctx.Params.Get('expression', ''), Value, Typ, Err) then
       begin
-        Obj.Add('value', GSyncHelper.OutEvalRes);
-        Obj.Add('type',  GSyncHelper.OutEvalType);
-      end
-      else if not GSyncHelper.FEvalFired then
-      begin
-        Ctx.Error := True;
-        Obj.Add('error', 'Evaluation timed out (5 s) — Evaluate returned: ' +
-          BoolToStr(GSyncHelper.OutEvalStarted, True));
+        Obj.Add('value', Value);
+        Obj.Add('type',  Typ);
       end
       else
       begin
         Ctx.Error := True;
-        Obj.Add('error', 'Evaluation failed: ' + GSyncHelper.OutEvalRes);
+        Obj.Add('error', Err);
+      end;
+      if Selected then
+      begin
+        Obj.Add('frame', GetJSON(FrameJSON));
+        SelectThreadFrame(OldThread, OldFrame, FrameJSON, Err);
       end;
       Ctx.Result := Obj.AsJSON;
     finally Obj.Free; end;
+  end
+
+  else if Name = 'debug_select_frame' then
+  begin
+    Result := True;
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    if GSyncHelper.OutState <> dsPause then
+    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+    if not Assigned(Ctx.Params) or not Assigned(Ctx.Params.Find('frame')) then
+    begin Ctx.Error := True; Ctx.Result := 'frame required (0 = top)'; Exit; end;
+    if not SelectThreadFrame(Ctx.Params.Get('thread', 0), Ctx.Params.Get('frame', 0),
+                             FrameJSON, Err) then
+    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+    TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('thread', GSyncHelper.OutSelThread);
+      Obj.Add('frame',  GetJSON(FrameJSON));
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
+  end
+
+  else if ((Name = 'debug_set_breakpoint') or (Name = 'debug_remove_breakpoint')) and
+          Assigned(Ctx.Params) and (Ctx.Params.Get('address', '') <> '') and
+          not ParseAddress(Ctx.Params.Get('address', ''), Addr) then
+  begin
+    { A symbol: resolve it here, where waiting for the debugger is allowed,
+      then let the main-thread handler work with the number. }
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    if GSyncHelper.OutState <> dsPause then
+    begin
+      Result := True;
+      Ctx.Error := True;
+      if Name = 'debug_remove_breakpoint' then
+        Ctx.Result := 'A symbol needs a paused session; give the address as ' +
+                      'debug_list_breakpoints shows it'
+      else
+        Ctx.Result := 'A symbol address needs a paused session; give a number, ' +
+                      'or pause first';
+      Exit;
+    end;
+    if not ResolveSymbol(Ctx.Params.Get('address', ''), Addr, Err) then
+    begin
+      Result := True;
+      Ctx.Error := True; Ctx.Result := Err;
+      Exit;
+    end;
+    Ctx.Params.Strings['address'] := Format('$%x', [Addr]);
+    Result := False;   { not handled: dispatch continues on the main thread }
   end
 
   else if Name = 'debug_get_call_stack' then
@@ -1258,9 +1711,13 @@ begin
     TThread.Synchronize(nil, @GSyncHelper.ReadState);
     if GSyncHelper.OutState <> dsPause then
     begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    GSyncHelper.InLocalsFrame := 0;
+    GSyncHelper.InLocalsFrame  := 0;
+    GSyncHelper.InLocalsThread := 0;
     if Assigned(Ctx.Params) then
-      GSyncHelper.InLocalsFrame := Ctx.Params.Get('frame', 0);
+    begin
+      GSyncHelper.InLocalsFrame  := Ctx.Params.Get('frame', 0);
+      GSyncHelper.InLocalsThread := Ctx.Params.Get('thread', 0);
+    end;
     TThread.Synchronize(nil, @GSyncHelper.InitLocals);
     TimeoutMs := 5000;
     Elapsed   := 0;
@@ -1279,6 +1736,13 @@ begin
   begin
     Result := True;
     TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    GSyncHelper.InWatchThread := -1;   { the current selection }
+    if Assigned(Ctx.Params) and
+       (Assigned(Ctx.Params.Find('thread')) or Assigned(Ctx.Params.Find('frame'))) then
+    begin
+      GSyncHelper.InWatchThread := Ctx.Params.Get('thread', 0);
+      GSyncHelper.InWatchFrame  := Ctx.Params.Get('frame', 0);
+    end;
     TThread.Synchronize(nil, @GSyncHelper.InitWatches);
     if GSyncHelper.OutState = dsPause then
     begin
@@ -1353,18 +1817,25 @@ end;
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
 const
-  SCHEMA_SET_BREAKPOINT =
-    '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path"},' +
+  { one location: file_path + line, address, or data (+ scope, watch) }
+  BP_LOCATION_PROPS =
+    '"file_path":{"type":"string","description":"Absolute path (source breakpoint)"},' +
     '"line":{"type":"integer","description":"1-based line number"},' +
-    '"enabled":{"type":"boolean","description":"Default true"}},' +
-    '"required":["file_path","line"]}';
+    '"address":{"type":"string","description":"Code address ($401000, 0x401000), or ' +
+      'Proc / Proc+12 from code with debug info (resolved while paused; valid ' +
+      'for this session only)"},' +
+    '"data":{"type":"string","description":"Variable to watch (data breakpoint)"},' +
+    '"scope":{"type":"string","enum":["global","local"],"description":"For data; default global"},' +
+    '"watch":{"type":"string","enum":["write","read","readwrite"],"description":"For data; default write"}';
+
+  SCHEMA_SET_BREAKPOINT =
+    '{"type":"object","properties":{' + BP_LOCATION_PROPS + ',' +
+    '"condition":{"type":"string","description":"Break only when this Pascal expression is true; \"\" clears"},' +
+    '"pass_count":{"type":"integer","description":"Break from the Nth hit on; 0 clears"},' +
+    '"enabled":{"type":"boolean","description":"Default true"}}}';
 
   SCHEMA_REMOVE_BREAKPOINT =
-    '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path"},' +
-    '"line":{"type":"integer","description":"1-based line number of the breakpoint"}},' +
-    '"required":["file_path","line"]}';
+    '{"type":"object","properties":{' + BP_LOCATION_PROPS + '}}';
 
   SCHEMA_NO_PARAMS =
     '{"type":"object","properties":{}}';
@@ -1386,10 +1857,22 @@ const
     '"timeout_s":{"type":"integer","description":"Default 30"}},' +
     '"required":["file_path","line"]}';
 
+  THREAD_FRAME_PROPS =
+    '"thread":{"type":"integer","description":"Thread id (debug_list_threads); default current"},' +
+    '"frame":{"type":"integer","description":"Stack frame, 0 = top; default selected"}';
+
   SCHEMA_EVALUATE_EXPRESSION =
     '{"type":"object","properties":{' +
-    '"expression":{"type":"string","description":"Pascal expression to evaluate"}},' +
+    '"expression":{"type":"string","description":"Pascal expression to evaluate"},' +
+    THREAD_FRAME_PROPS + '},' +
     '"required":["expression"]}';
+
+  SCHEMA_SELECT_FRAME =
+    '{"type":"object","properties":{' + THREAD_FRAME_PROPS + '},' +
+    '"required":["frame"]}';
+
+  SCHEMA_LIST_WATCHES =
+    '{"type":"object","properties":{' + THREAD_FRAME_PROPS + '}}';
 
   SCHEMA_GET_CALL_STACK =
     '{"type":"object","properties":{' +
@@ -1397,6 +1880,7 @@ const
 
   SCHEMA_GET_LOCAL_VARIABLES =
     '{"type":"object","properties":{' +
+    '"thread":{"type":"integer","description":"Thread id (debug_list_threads); default current"},' +
     '"frame":{"type":"integer","description":"Stack frame index; default 0"}}}';
 
   SCHEMA_SET_LOCAL_VARIABLE =
@@ -1429,13 +1913,16 @@ procedure RegisterDebuggerSchemas(Tools: TJSONArray);
 begin
   { Group 1 — Breakpoints }
   Tools.Add(MakeTool('debug_set_breakpoint',
-    'Add a source line breakpoint. Does not require an active debug session.',
+    'Add a source, address or data breakpoint, or change one that exists at ' +
+    'that location (condition, pass_count, enabled). No session needed, except ' +
+    'to resolve a symbol.',
     SCHEMA_SET_BREAKPOINT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_remove_breakpoint',
-    'Remove a breakpoint by file and line.',
+    'Remove the breakpoint at a location, given as for debug_set_breakpoint.',
     SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_list_breakpoints',
-    'List all current breakpoints with file, line, enabled state, and hit count.',
+    'List all breakpoints: kind and location, condition, pass count, hit count, ' +
+    'enabled and valid.',
     SCHEMA_NO_PARAMS, MCP_ANN_RO));
   { Group 2 — State query (escape hatch) }
   Tools.Add(MakeTool('debug_get_state',
@@ -1470,9 +1957,9 @@ begin
     'pauses after returning.',
     SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_run_to_line',
-    'Set a temporary breakpoint at (file_path, line), run the debugger, and ' +
-    'block until that breakpoint is hit. Removes the temporary breakpoint on ' +
-    'pause.',
+    'Run until (file_path, line) is reached, through a temporary breakpoint ' +
+    'removed on pause. A breakpoint already on that line is used and kept, ' +
+    'with its condition.',
     SCHEMA_RUN_TO_LINE, MCP_ANN_WRITE));
   { Group 4 — State inspection }
   Tools.Add(MakeTool('debug_get_call_stack',
@@ -1480,9 +1967,13 @@ begin
     'max_frames frames with file, line, function name and address.',
     SCHEMA_GET_CALL_STACK, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_evaluate',
-    'Evaluate a Pascal expression in the current debug context. Debugger must ' +
-    'be paused.',
+    'Evaluate a Pascal expression while paused, in the selected frame or in ' +
+    'the given thread/frame (selected for this call only).',
     SCHEMA_EVALUATE_EXPRESSION, MCP_ANN_RO));
+  Tools.Add(MakeTool('debug_select_frame',
+    'Select a thread and stack frame while paused, as the Threads and Call ' +
+    'Stack windows do; later evaluations and watches use it.',
+    SCHEMA_SELECT_FRAME, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_get_locals',
     'Return local variables and parameters in the current stack frame. ' +
     'Debugger must be paused.',
@@ -1500,8 +1991,8 @@ begin
     SCHEMA_REMOVE_WATCH, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_list_watches',
     'List the Watches window entries. While paused, each comes with its value ' +
-    'and type in the current thread and selected stack frame.',
-    SCHEMA_NO_PARAMS, MCP_ANN_RO));
+    'and type in the selected (or given) thread and stack frame.',
+    SCHEMA_LIST_WATCHES, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_list_threads',
     'List the debuggee''s threads (id, name, state, current flag, top frame ' +
     'function/file/line). Debugger must be paused.',

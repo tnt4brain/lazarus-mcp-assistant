@@ -537,3 +537,83 @@ Now each evaluation gets its own callback object carrying a sequence number:
 - Only the callback of the latest evaluation writes a result.
 - An object whose callback has not come yet is freed by that callback when it
   comes.
+
+## v0.9: breakpoint kinds and frames
+
+Everything is built on the IDE's own debugger interfaces (`TIDEBreakPoints`,
+the thread and call stack monitors), not on one backend. Measured with FpDebug
+on Windows x86-64.
+
+### Breakpoints
+
+- **One location, three kinds.** `debug_set_breakpoint` /
+  `debug_remove_breakpoint` take `file_path` + `line`, `address`, or `data`
+  (+ `scope`, `watch`), and refuse anything else. A breakpoint is identified
+  by its location. Setting one again at an existing location changes its
+  `condition`, `pass_count` or `enabled` instead of adding a duplicate.
+  `BreakPoints.Add` would have added a second one.
+- **`debug_run_to_line` keeps an existing breakpoint.** If the target line
+  already has one, the run uses it with its condition, and it is not removed
+  afterwards. Before, the temporary breakpoint's cleanup could delete the
+  user's breakpoint.
+- **Conditions** are evaluated by the debugger, which reports a hit only when
+  the condition holds.
+- **Pass counts** are applied by `TDBGBreakPoint.Hit` for every backend. A pass
+  count of N breaks on the Nth hit and on every hit after it. It counts only
+  hits whose condition held. The hit count starts again with each session;
+  `debug_list_breakpoints` shows the last session's count until the next one
+  starts.
+- **Symbols.** The IDE's address breakpoints take numbers only. `Proc` and
+  `Proc+Offset` are resolved by evaluating `@Proc` while paused; FpDebug
+  prints `^procedure($00000001000016E0)`, and the number in it is used. This
+  happens on the worker thread, before the normal main-thread handler runs.
+  An address means nothing in a later session, so remove such breakpoints by
+  number, as `debug_list_breakpoints` shows them.
+  - **Only code with debug info.** `@Beep`, `@Sleep` and RTL routines don't
+    evaluate. FpDebug knows such names internally (the call stack shows
+    `ntdll:Zw…+20`), but the IDE's debugger interfaces have no name-to-address
+    lookup, and this ADR doesn't reach into one backend. So the roadmap's
+    example, `Beep+12` for code without source, works only as a number. The
+    error says so and points to `debug_get_call_stack` for addresses. The
+    disassembler (batch 2) would give another way to find them.
+  - **Code only.** `@Counter` evaluates to `^LongInt($…)`, and a code
+    breakpoint there would write an int3 byte into the variable. A symbol is
+    accepted only if its type is a procedure or function; otherwise the error
+    points to `data`.
+- **Data breakpoints** are hardware watchpoints. A global one can be set before
+  the session starts. The pause is reported after the writing instruction, so
+  at the next line. The IDE's "Watchpoint was triggered" notice comes back as
+  `debugger_message` (ADR-011), not as a dialog. Local scope is passed through
+  but not tested. What happens when the watched local goes out of scope is
+  unknown.
+
+### Threads and frames
+
+- `debug_select_frame` changes the IDE's current thread and the stack's current
+  frame (`ChangeCurrentThread`, `ChangeCurrentIndex`). Both take effect
+  asynchronously, so the worker thread polls until the IDE reports the new
+  selection. Before selecting, the stack is loaded far enough to know the
+  frame exists; a missing frame is an error, never a silent fallback. It drives
+  the session, so it needs the lease (ADR-012).
+- `debug_evaluate` evaluates in the selected frame (`DebugBoss.Evaluate` has no
+  thread or frame argument). With `thread`/`frame` it selects them, evaluates
+  and restores the previous selection. The debugger lock keeps other calls out
+  meanwhile. The editor did not move while this happened.
+- `debug_get_locals` and `debug_list_watches` read the requested thread and
+  frame directly; no selection is needed.
+
+### Tests
+
+`TTestDebugger` (ADR-005) covers:
+- conditions and pass counts;
+- `debug_run_to_line` on an existing conditional breakpoint;
+- a data breakpoint on a global;
+- a symbol breakpoint, plus the refusals for a variable and for `Beep`;
+- per-call frames, `debug_select_frame` and a missing frame;
+- `frame` for locals and watches;
+- selecting a worker thread, then evaluating in the main thread for one call
+  (the worker stays selected);
+- a second client refused `debug_select_frame`.
+
+The debuggee's `Sum(ALimit)` tells frames apart: `ALimit` exists only in
+frame 0.

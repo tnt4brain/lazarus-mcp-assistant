@@ -277,7 +277,10 @@ The tool tests found a bug on their first run. `form_*` tools failed for
   debugger lock (`debug_get_state` answers during a blocking `debug_run`,
   `debug_evaluate` waits for it); a 10 s lease expiring and stopping the
   session (ADR-012). Two clients are simulated with two `Mcp-Session-Id`
-  values.
+  values. v0.9 added 7 more (12 now): conditions, pass counts, run-to-line on
+  an existing breakpoint, data and symbol breakpoints, frames, threads (ADR-009).
+  Teardown removes every watch and every breakpoint `debug_list_breakpoints` shows, whatever
+  its kind.
 
 The debugger suite debugs `tests/debuggee/mcpdebuggee.lpr`, a console program
 (no message box waits for a click after its exception). The tests find their
@@ -293,8 +296,8 @@ suite runs only when asked to:
 - **Or the debuggee is already the active project:** the suite runs, for
   example from `ide_run_tests`, and leaves the project as it is.
 
-It takes about 25 s, most of it the lease expiry. Run twice in a row, all 73
-tests passed both times.
+It takes about 35 s, most of it the lease expiry. Run twice in a row, all
+tests passed both times (73 then; 84 with the v0.9 tests).
 
 Still not tested automatically: answering the exception dialog of a session
 the user started (that dialog only appears in user-driven sessions), and the
