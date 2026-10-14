@@ -617,3 +617,47 @@ on Windows x86-64.
 
 The debuggee's `Sum(ALimit)` tells frames apart: `ALimit` exists only in
 frame 0.
+
+## v0.9: registers and disassembly
+
+Both tools read the objects behind the IDE's Registers and Assembler windows
+(`DebugBoss.Registers`, `DebugBoss.Disassembler`), so they work for any
+backend that fills those windows. A backend without a register supplier or a
+disassembler (`Supplier` / `Master` is nil) gets "does not provide registers"
+or "does not disassemble", not an empty result. Measured with FpDebug on
+Windows x86-64.
+
+- **`debug_get_registers`** (`thread`, `frame`). `TCurrentIDERegisters.Count`
+  requests the data when it is unknown, so the Registers window doesn't have to
+  be open. The worker thread polls `DataValidity` (5 s). `value` is the
+  window's text. The window's display format is shared state and isn't changed,
+  so a decimal value also gets `hex`, converted from the text. This happens only
+  when the format is default or decimal; hex, octal or binary text would be
+  misread as a decimal number. `changed` marks registers that changed since the
+  previous pause. For frame > 0 the stack is loaded down to that frame first:
+  FpDebug reads a caller's registers from the loaded stack. A missing frame
+  gets "Frame N does not exist".
+- **`debug_disassemble`** (`address` or `thread`/`frame`, `lines_before`,
+  `lines_after`). The address is a number, a symbol resolved as for
+  breakpoints, or the frame's address: where frame 0 stopped, or where a higher
+  frame returns to. `PrepareRange` returns True once the range is known. FpDebug
+  disassembles synchronously inside it. A backend that loads in the background
+  is asked again on each poll, and repeated requests are merged (10 s). Entries
+  come from the backend's object (`Master`). The Assembler window shares it,
+  so it may move to the requested range if it is open. Each instruction has
+  address, bytes, `asm`, `function+offset`, the call/jump `target` name, and
+  `file`/`line` on the first instruction of a source line. `at` marks the
+  requested address.
+- **Not built: reading memory.** The IDE's debugger interfaces have no
+  memory-read call. Evaluating a typed pointer works only with debug info. The
+  other route is the one CPU-View takes: FpDebug's process object
+  (`TFpDebugDebugger.DbgController.CurrentProcess`) can read memory and look up
+  exported names (which would also make `Beep+12` work). That is FpDebug-only
+  and an internal API. The units are already linked into the IDE (IdeDebugger
+  requires LazDebuggerFp), but whether to depend on them is open.
+
+`TTestDebugger.TestRegistersAndDisassembly` checks:
+- the refusal while not paused;
+- `rip` = frame 0's address, and registers of frame 1;
+- disassembly at the stop, at `Sum` (its entry, no offset), and at frame 1's
+  return address in `main`.

@@ -6,7 +6,8 @@ unit McpToolsDebugger;
   debug_run, debug_pause, debug_stop,
   debug_step_over, debug_step_into, debug_step_out, debug_run_to_line,
   debug_get_call_stack, debug_evaluate,
-  debug_get_locals, debug_set_variable.
+  debug_get_locals, debug_set_variable,
+  debug_get_registers, debug_disassemble.
 
   Threading model:
     Non-blocking tools  — dispatched via DispatchDebuggerTool, which runs on
@@ -89,6 +90,7 @@ type
     OutEvalStarted : Boolean;  { True = DebugBoss.Evaluate returned True }
     { CallStack in/out }
     InMaxFrames   : Integer;
+    InCSThread    : Integer;  { 0 = the current thread; reset to 0 after use }
     OutCSThreadId : Integer;
     OutCSCount    : Integer;  { -1 = count not known yet; else frames to return }
     OutCSReady    : Boolean;
@@ -113,6 +115,20 @@ type
     OutWatchJSON   : string;
     OutThrReady    : Boolean;
     OutThrJSON     : string;
+    { Registers in/out }
+    InRegThread    : Integer;   { 0 = the current thread }
+    InRegFrame     : Integer;
+    OutRegThread   : Integer;
+    OutRegReady    : Boolean;
+    OutRegJSON     : string;
+    OutRegErr      : string;
+    { Disassembler in/out }
+    InAsmAddr      : TDBGPtr;
+    InAsmBefore    : Integer;
+    InAsmAfter     : Integer;
+    OutAsmReady    : Boolean;
+    OutAsmJSON     : string;
+    OutAsmErr      : string;
     { Methods }
     procedure ReadState;
     procedure IssueCmd;
@@ -132,6 +148,9 @@ type
     procedure ReadWatchNames;  { expressions only — not paused or timed out }
     procedure InitThreads;
     procedure ReadThreads;
+    procedure InitRegisters;
+    procedure ReadRegisters;
+    procedure PrepareDisasm;   { first call starts loading; later calls poll }
     procedure BreakAtExceptionDialog;
     procedure StopLater(Data: PtrInt);
   end;
@@ -598,6 +617,8 @@ begin
     TId := DebugBoss.Threads.CurrentThreads.CurrentThreadId
   else
     TId := 0;
+  if InCSThread > 0 then
+    TId := InCSThread;
   OutCSThreadId := TId;
   Stack := DebugBoss.CallStack.CurrentCallStackList.EntriesForThreads[TId];
   if not Assigned(Stack) then Exit;
@@ -780,6 +801,144 @@ begin
     Stack := DebugBoss.CallStack.CurrentCallStackList.EntriesForThreads[AThread];
     if Assigned(Stack) and (Stack.CurrentIndex > 0) then
       AFrame := Stack.CurrentIndex;  { frame selected in the Call Stack window }
+  end;
+end;
+
+{ Registers: the Registers window's data, which Count requests when unknown,
+  so no window has to be open.  DisplayFormat is left alone: it is shared
+  with that window. }
+procedure TDbgSyncHelper.InitRegisters;
+var
+  Regs : TRegisters;
+begin
+  OutRegReady := False;
+  OutRegJSON  := '';
+  OutRegErr   := '';
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Registers) or
+     not Assigned(DebugBoss.Registers.Supplier) then
+  begin
+    OutRegErr   := 'This debugger backend does not provide registers';
+    OutRegReady := True;
+    Exit;
+  end;
+  OutRegThread := InRegThread;
+  if (OutRegThread <= 0) and Assigned(DebugBoss.Threads) and
+     Assigned(DebugBoss.Threads.CurrentThreads) then
+    OutRegThread := DebugBoss.Threads.CurrentThreads.CurrentThreadId;
+  Regs := DebugBoss.Registers.CurrentRegistersList[OutRegThread, InRegFrame];
+  if Assigned(Regs) then
+    Regs.Count;   { trigger async load }
+end;
+
+procedure TDbgSyncHelper.ReadRegisters;
+var
+  Regs : TRegisters;
+  R    : TRegisterValue;
+  Arr  : TJSONArray;
+  RObj : TJSONObject;
+  I    : Integer;
+  Num  : QWord;
+begin
+  if OutRegReady then Exit;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Registers) then
+  begin
+    OutRegErr := 'The debug session ended'; OutRegReady := True; Exit;
+  end;
+  Regs := DebugBoss.Registers.CurrentRegistersList[OutRegThread, InRegFrame];
+  if not Assigned(Regs) then
+  begin
+    OutRegErr := 'No registers for this thread and frame'; OutRegReady := True; Exit;
+  end;
+  case Regs.DataValidity of
+    ddsValid: ;
+    ddsInvalid, ddsError:
+      begin
+        OutRegErr := 'The debugger could not read the registers of this thread and frame';
+        OutRegReady := True;
+        Exit;
+      end;
+  else
+    Exit;   { still loading; caller retries }
+  end;
+  Arr := TJSONArray.Create;
+  try
+    for I := 0 to Regs.Count - 1 do
+    begin
+      R := Regs.Entries[I];
+      RObj := TJSONObject.Create;
+      Arr.Add(RObj);
+      RObj.Add('name', R.Name);
+      RObj.Add('value', R.Value);
+      { the window's format may be decimal; addresses read better in hex.
+        Hex, octal and binary text would be misread as decimal. }
+      if (R.DisplayFormat in [rdDefault, rdDecimal]) and (R.Value <> '') and
+         (R.Value[1] in ['0'..'9']) and TryStrToQWord(R.Value, Num) then
+        RObj.Add('hex', '$' + IntToHex(Num, 1));
+      if R.Modified then
+        RObj.Add('changed', True);   { since the previous pause }
+    end;
+    OutRegJSON  := Arr.AsJSON;
+    OutRegReady := True;
+  finally
+    Arr.Free;
+  end;
+end;
+
+{ Disassembler: the Assembler window's object.  PrepareRange answers at once
+  when the range is known (FpDebug disassembles synchronously); otherwise the
+  backend loads it and a later call finds it, repeated requests are merged. }
+procedure TDbgSyncHelper.PrepareDisasm;
+var
+  Dis  : TDBGDisassembler;
+  E    : TDisassemblerEntry;
+  Arr  : TJSONArray;
+  EObj : TJSONObject;
+  I, Lo, Hi : Integer;
+  S    : string;
+begin
+  if OutAsmReady then Exit;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Disassembler) or
+     not Assigned(DebugBoss.Disassembler.Master) then
+  begin
+    OutAsmErr   := 'This debugger backend does not disassemble';
+    OutAsmReady := True;
+    Exit;
+  end;
+  Dis := DebugBoss.Disassembler.Master;
+  if not Dis.PrepareRange(InAsmAddr, InAsmBefore, InAsmAfter) then
+    Exit;   { still loading; caller retries }
+  Lo := -Min(InAsmBefore, Dis.CountBefore);
+  Hi := Min(InAsmAfter, Dis.CountAfter) - 1;
+  Arr := TJSONArray.Create;
+  try
+    for I := Lo to Hi do
+    begin
+      E := Dis.Entries[I];
+      EObj := TJSONObject.Create;
+      Arr.Add(EObj);
+      EObj.Add('address', Format('$%x', [E.Addr]));
+      if E.Addr = InAsmAddr then
+        EObj.Add('at', True);
+      if (E.SrcFileName <> '') and (E.SrcStatementIndex = 0) then
+      begin
+        EObj.Add('file', E.SrcFileName);
+        EObj.Add('line', E.SrcFileLine);
+      end;
+      if E.FuncName <> '' then
+      begin
+        S := E.FuncName;
+        if E.Offset <> 0 then S := S + '+' + IntToStr(E.Offset);
+        EObj.Add('function', S);
+      end;
+      EObj.Add('bytes', E.Dump);
+      EObj.Add('asm', E.Statement);
+      if E.TargetName <> '' then
+        EObj.Add('target', E.TargetName);
+    end;
+    OutAsmJSON  := Arr.AsJSON;
+    OutAsmReady := True;
+  finally
+    Arr.Free;
   end;
 end;
 
@@ -1472,6 +1631,47 @@ begin
   Result := True;
 end;
 
+{ Load AThread's stack (0 = current thread) down to AFrame, so the frame is
+  known to exist and backends that read per-frame data from the loaded stack
+  (FpDebug's registers) find it; AFrameJSON describes the frame.  Worker
+  thread; the debugger must be paused. }
+function LoadStackTo(AThread, AFrame: Integer; out AFrameJSON, AErr: string): Boolean;
+var
+  Elapsed : Integer;
+  Frames  : TJSONData;
+begin
+  Result     := False;
+  AFrameJSON := '';
+  AErr       := '';
+  GSyncHelper.InCSThread  := AThread;
+  GSyncHelper.InMaxFrames := AFrame + 1;
+  TThread.Synchronize(nil, @GSyncHelper.InitCallStack);
+  GSyncHelper.InCSThread  := 0;
+  Elapsed := 0;
+  while not GSyncHelper.OutCSReady and (Elapsed < 10000) do
+  begin
+    Sleep(100);
+    Inc(Elapsed, 100);
+    TThread.Synchronize(nil, @GSyncHelper.ReadCallStack);
+  end;
+  if not GSyncHelper.OutCSReady or (GSyncHelper.OutCSCount <= AFrame) then
+  begin
+    AErr := Format('Frame %d does not exist (the stack has %d frames)',
+                   [AFrame, Max(GSyncHelper.OutCSCount, 0)]);
+    Exit;
+  end;
+  Frames := GetJSON(GSyncHelper.OutCSJSON);
+  try
+    if (Frames is TJSONArray) and (TJSONArray(Frames).Count > AFrame) then
+      AFrameJSON := TJSONArray(Frames).Items[AFrame].AsJSON;
+  finally
+    Frames.Free;
+  end;
+  Result := AFrameJSON <> '';
+  if not Result then
+    AErr := Format('Frame %d could not be read', [AFrame]);
+end;
+
 function DispatchDebuggerBlockingTool(const Name: string;
   var Ctx: TMcpToolCall): Boolean;
 var
@@ -1490,6 +1690,7 @@ var
   OldThread : Integer;
   OldFrame  : Integer;
   FrameJSON : string;
+  FrameData : TJSONData;
 
   procedure Finish(const AReason: string);
   var
@@ -1732,6 +1933,110 @@ begin
     Ctx.Result := GSyncHelper.OutLocalsJSON;
   end
 
+  else if Name = 'debug_get_registers' then
+  begin
+    Result := True;
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    if GSyncHelper.OutState <> dsPause then
+    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+    GSyncHelper.InRegThread := 0;
+    GSyncHelper.InRegFrame  := 0;
+    if Assigned(Ctx.Params) then
+    begin
+      GSyncHelper.InRegThread := Ctx.Params.Get('thread', 0);
+      GSyncHelper.InRegFrame  := Max(Ctx.Params.Get('frame', 0), 0);
+    end;
+    { FpDebug reads a higher frame's registers from the loaded stack }
+    if (GSyncHelper.InRegFrame > 0) and
+       not LoadStackTo(GSyncHelper.InRegThread, GSyncHelper.InRegFrame, FrameJSON, Err) then
+    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+    TThread.Synchronize(nil, @GSyncHelper.InitRegisters);
+    Elapsed := 0;
+    while not GSyncHelper.OutRegReady and (Elapsed < 5000) do
+    begin
+      Sleep(100);
+      Inc(Elapsed, 100);
+      TThread.Synchronize(nil, @GSyncHelper.ReadRegisters);
+    end;
+    if not GSyncHelper.OutRegReady then
+      GSyncHelper.OutRegErr := 'Registers did not arrive within 5 s';
+    if GSyncHelper.OutRegErr <> '' then
+    begin Ctx.Error := True; Ctx.Result := GSyncHelper.OutRegErr; Exit; end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('thread', GSyncHelper.OutRegThread);
+      Obj.Add('frame', GSyncHelper.InRegFrame);
+      Obj.Add('registers', GetJSON(GSyncHelper.OutRegJSON));
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
+  end
+
+  else if Name = 'debug_disassemble' then
+  begin
+    Result := True;
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    if GSyncHelper.OutState <> dsPause then
+    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+    GSyncHelper.InAsmBefore := 5;
+    GSyncHelper.InAsmAfter  := 15;
+    Value := '';
+    if Assigned(Ctx.Params) then
+    begin
+      GSyncHelper.InAsmBefore := EnsureRange(Ctx.Params.Get('lines_before', 5), 0, 100);
+      GSyncHelper.InAsmAfter  := EnsureRange(Ctx.Params.Get('lines_after', 15), 1, 200);
+      Value := Trim(Ctx.Params.Get('address', ''));
+    end;
+    if Value <> '' then
+    begin
+      if not ParseAddress(Value, Addr) and not ResolveSymbol(Value, Addr, Err) then
+      begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+    end
+    else
+    begin
+      { the frame's address: where it executes (frame 0) or returns to }
+      OldThread := 0;
+      OldFrame  := 0;
+      if Assigned(Ctx.Params) then
+      begin
+        OldThread := Ctx.Params.Get('thread', 0);
+        OldFrame  := Max(Ctx.Params.Get('frame', 0), 0);
+      end;
+      if not LoadStackTo(OldThread, OldFrame, FrameJSON, Err) then
+      begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+      Addr := 0;
+      FrameData := GetJSON(FrameJSON);
+      try
+        if FrameData is TJSONObject then
+          ParseAddress(TJSONObject(FrameData).Get('address', ''), Addr);
+      finally
+        FrameData.Free;
+      end;
+      if Addr = 0 then
+      begin Ctx.Error := True; Ctx.Result := 'The frame has no address'; Exit; end;
+    end;
+    GSyncHelper.InAsmAddr   := Addr;
+    GSyncHelper.OutAsmReady := False;
+    GSyncHelper.OutAsmErr   := '';
+    Elapsed := 0;
+    TThread.Synchronize(nil, @GSyncHelper.PrepareDisasm);
+    while not GSyncHelper.OutAsmReady and (Elapsed < 10000) do
+    begin
+      Sleep(100);
+      Inc(Elapsed, 100);
+      TThread.Synchronize(nil, @GSyncHelper.PrepareDisasm);
+    end;
+    if not GSyncHelper.OutAsmReady then
+      GSyncHelper.OutAsmErr := 'The disassembly did not arrive within 10 s';
+    if GSyncHelper.OutAsmErr <> '' then
+    begin Ctx.Error := True; Ctx.Result := GSyncHelper.OutAsmErr; Exit; end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('address', Format('$%x', [Addr]));
+      Obj.Add('instructions', GetJSON(GSyncHelper.OutAsmJSON));
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
+  end
+
   else if Name = 'debug_list_watches' then
   begin
     Result := True;
@@ -1883,6 +2188,22 @@ const
     '"thread":{"type":"integer","description":"Thread id (debug_list_threads); default current"},' +
     '"frame":{"type":"integer","description":"Stack frame index; default 0"}}}';
 
+  SCHEMA_GET_REGISTERS =
+    '{"type":"object","properties":{' +
+    '"thread":{"type":"integer","description":"Thread id (debug_list_threads); default current"},' +
+    '"frame":{"type":"integer","description":"Stack frame index; default 0"}}}';
+
+  SCHEMA_DISASSEMBLE =
+    '{"type":"object","properties":{' +
+    '"address":{"type":"string","description":"$hex, 0xhex, decimal, or Proc / Proc+12 ' +
+      '(debug info only). Default: the frame''s address"},' +
+    '"thread":{"type":"integer","description":"Thread id; default current"},' +
+    '"frame":{"type":"integer","description":"Stack frame index; default 0 (where the ' +
+      'program stopped); higher frames show their return address"},' +
+    '"lines_before":{"type":"integer","description":"Default 5, at most 100"},' +
+    '"lines_after":{"type":"integer","description":"Including the instruction at the ' +
+      'address. Default 15, at most 200"}}}';
+
   SCHEMA_SET_LOCAL_VARIABLE =
     '{"type":"object","properties":{' +
     '"name":{"type":"string","description":"Variable or parameter name"},' +
@@ -1978,6 +2299,14 @@ begin
     'Return local variables and parameters in the current stack frame. ' +
     'Debugger must be paused.',
     SCHEMA_GET_LOCAL_VARIABLES, MCP_ANN_RO));
+  Tools.Add(MakeTool('debug_get_registers',
+    'CPU registers of a thread and frame while paused, as the Registers window ' +
+    'shows them; "changed" marks values that changed since the previous pause.',
+    SCHEMA_GET_REGISTERS, MCP_ANN_RO));
+  Tools.Add(MakeTool('debug_disassemble',
+    'Machine code around an address or a stack frame while paused, with source ' +
+    'lines, function+offset and call/jump targets; "at" marks the requested instruction.',
+    SCHEMA_DISASSEMBLE, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_set_variable',
     'Modify a local variable or parameter in the current stack frame. ' +
     'Debugger must be paused. Call debug_get_locals afterwards to verify.',

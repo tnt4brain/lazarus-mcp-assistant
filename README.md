@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 103 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 105 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -129,6 +129,8 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `debug_get_exception` | The exception the program is paused at |
 | `debug_add_watch` / `debug_remove_watch` / `debug_list_watches` | Watches window; values for the selected (or given) thread and frame |
 | `debug_list_threads` | Threads with state and top frame |
+| `debug_get_registers` | CPU registers of a thread and frame, as the Registers window shows them, plus `hex`; `changed` since the previous pause |
+| `debug_disassemble` | Machine code around an address, a symbol, or a frame: bytes, instruction, function+offset, source lines, call/jump targets |
 | `debug_get_output` | What the program wrote to its console, and debugger output |
 
 ### Project — `project_*`
@@ -305,7 +307,7 @@ tests/mcpserver_tests.exe --all --format=plain
 
 | Suite | Count | Requires |
 |---|---|---|
-| `TTestUtils` | 7 | Nothing (always runs) |
+| `TTestUtils` | 10 | Nothing (always runs) |
 | `TTestJUnitWriter` | 8 | Nothing (always runs) |
 | `TTestLauncher` | 10 | Nothing (always runs): sh quoting, launch script, terminal choice |
 | `TTestSettingsFile` | 3 | Nothing (always runs): settings save/load, obsolete keys removed |
@@ -315,7 +317,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
 | `TTestToolSmoke` | 13 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
-| `TTestDebugger` | 12 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads (about 35 s) |
+| `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
 The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped. With `MCP_DEBUG_TESTS=1` the debugger suite opens the debuggee project itself and reopens yours afterwards; it stops with an error instead if your project or an editor has unsaved changes.
 
@@ -356,12 +358,9 @@ For v0.9:
   dialog as any other new package. The dialog will say whether the code comes
   from the official repository or from a third-party URL. See
   [ADR-013](ADR-013.md#downloads-v09-not-built-yet).
-- **Debugger: low-level.** `debug_disassemble` around the current position or
-  an address, `debug_get_registers` (general-purpose registers and flags), and
-  `debug_read_memory` (hex and ASCII).
-  - Built on the IDE's debugger interfaces, not on one backend.
-  - Register sets differ per CPU, and macOS uses LLDB rather than FpDebug.
-  - A backend that can't provide something is reported as unsupported.
+- **Debugger: reading memory.** `debug_read_memory` (hex and ASCII). The IDE's
+  debugger interfaces have no memory-read call; see
+  [ADR-009](ADR-009.md#v09-registers-and-disassembly).
 - **Package editing.** Adding and removing files and requirements in a `.lpk`.
   Reading them is done: `project_list_packages`, `package_get_info`,
   `package_find_unit`.

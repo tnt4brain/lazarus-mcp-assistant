@@ -37,6 +37,7 @@ type
     procedure TestSymbolBreakpoint;
     procedure TestFrames;
     procedure TestThreads;
+    procedure TestRegistersAndDisassembly;
   end;
 
   { Opens the debuggee project before the suite and the previous one after. }
@@ -579,6 +580,74 @@ begin
   CheckEquals(MainId, JPath(T, 'thread'), 'back to the main thread: ' + T);
   T := Call(GSessA, 'debug_evaluate', '{"expression":"ALimit"}');
   CheckEquals('5', JPath(T, 'value'), T);
+end;
+
+{ The "at" instruction of a debug_disassemble result, as JSON; '' if none. }
+function AtInstruction(const T: string): string;
+var
+  D   : TJSONData;
+  Arr : TJSONData;
+  I   : Integer;
+begin
+  Result := '';
+  if IsError(T) then Exit;
+  D := GetJSON(T);
+  try
+    Arr := D.FindPath('instructions');
+    if Arr is TJSONArray then
+      for I := 0 to TJSONArray(Arr).Count - 1 do
+        if TJSONArray(Arr).Objects[I].Get('at', False) then
+          Exit(TJSONArray(Arr).Objects[I].AsJSON);
+  finally
+    D.Free;
+  end;
+end;
+
+procedure TTestDebugger.TestRegistersAndDisassembly;
+var
+  T, Pc, Frame0, At : string;
+begin
+  T := Call(GSessA, 'debug_get_registers', '{}');
+  CheckTrue(Pos('not paused', T) > 0, 'registers need a pause: ' + T);
+
+  Call(GSessA, 'debug_set_breakpoint', LoopBp(',"condition":"I = 2"'));
+  Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+
+  { a caller's registers first, before anything has loaded the stack }
+  T := Call(GSessA, 'debug_get_registers', '{"frame":1}');
+  CheckFalse(IsError(T), 'registers of frame 1 on a fresh pause: ' + T);
+  T := Call(GSessA, 'debug_get_registers', '{"frame":50}');
+  CheckTrue(Pos('Frame 50 does not exist', T) > 0, 'no such frame: ' + T);
+
+  { registers: the instruction pointer is the frame's address }
+  T := Call(GSessA, 'debug_get_registers', '{"thread":' + CurrentThread(GSessA) + '}');
+  CheckFalse(IsError(T), 'registers: ' + T);
+  Frame0 := JPath(Call(GSessA, 'debug_get_call_stack', '{"max_frames":1}'), '[0].address');
+  Pc := '';
+  if Pos('"rip"', T) > 0 then
+    Pc := Copy(T, Pos('"rip"', T), 80)
+  else if Pos('"eip"', T) > 0 then
+    Pc := Copy(T, Pos('"eip"', T), 80);
+  if Pc = '' then
+    Ignore('not an x86 target: ' + T);
+  CheckTrue(Pos(LowerCase(Copy(Frame0, 2, MaxInt)), LowerCase(Pc)) > 0,
+    'rip/eip = frame 0 address ' + Frame0 + ': ' + Pc);
+
+  { disassembly at the frame, at a symbol, and at the caller's return address }
+  T := Call(GSessA, 'debug_disassemble', '{}');
+  At := AtInstruction(T);
+  CheckTrue(Pos(JsonStr(Frame0), At) > 0, 'at the stop address ' + Frame0 + ': ' + T);
+  CheckTrue(Pos('sum', LowerCase(At)) > 0, 'in Sum: ' + At);
+  CheckTrue(Pos('mcpdebuggee.lpr', LowerCase(T)) > 0, 'with source lines: ' + T);
+
+  T := Call(GSessA, 'debug_disassemble', '{"address":"Sum","lines_before":0,"lines_after":3}');
+  At := AtInstruction(T);
+  CheckTrue(Pos('sum', LowerCase(At)) > 0, 'Sum resolved: ' + T);
+  CheckEquals(0, Pos('+', JPath(At, 'function')), 'at Sum''s entry: ' + At);
+
+  T := Call(GSessA, 'debug_disassemble', '{"frame":1,"lines_before":2,"lines_after":2}');
+  At := AtInstruction(T);
+  CheckTrue(Pos('main', LowerCase(JPath(At, 'function'))) > 0, 'frame 1 is in main: ' + T);
 end;
 
 initialization
