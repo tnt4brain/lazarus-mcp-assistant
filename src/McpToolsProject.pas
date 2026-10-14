@@ -1,9 +1,9 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsProject;
 
-{ Project lifecycle tools: ping, get_project_directory, get_project_settings,
-  set_project_settings, get_lazarus_reference, add_file_to_project,
-  remove_file_from_project, create_form, list_project_templates, create_project.
+{ Project lifecycle tools: ide_ping, project_get_directory, project_get_settings,
+  project_set_settings, get_lazarus_reference, project_add_file,
+  project_remove_file, form_create, project_list_templates, project_create.
   Also owns KnowledgeText and IsDescriptorInteractive. }
 
 {$mode objfpc}{$H+}
@@ -44,7 +44,7 @@ const
     '"target_os":{"type":"string","description":"Target OS (e.g. win64, linux); empty string = host OS"},' +
     '"target_cpu":{"type":"string","description":"Target CPU (e.g. x86_64, aarch64); empty string = host CPU"},' +
     '"output_dir":{"type":"string","description":"Unit output directory; macros like $(TargetOS) are expanded at build time"},' +
-    '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read get_project_settings first to preserve existing flags)"}}}';
+    '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read project_get_settings first to preserve existing flags)"}}}';
 
   SCHEMA_ADD_FILE_TO_PROJECT =
     '{"type":"object","properties":{' +
@@ -69,7 +69,7 @@ const
 
   SCHEMA_CREATE_PROJECT =
     '{"type":"object","properties":{' +
-    '"project_type":{"type":"string","description":"Template name from list_project_templates (case-insensitive). Default: ''Application'' (GUI app with Form1)."},' +
+    '"project_type":{"type":"string","description":"Template name from project_list_templates (case-insensitive). Default: ''Application'' (GUI app with Form1)."},' +
     '"project_dir":{"type":"string","description":"Absolute path for the project directory; created if absent"},' +
     '"project_name":{"type":"string","description":"Project name (becomes the .lpi filename without extension)"}},' +
     '"required":["project_dir","project_name"]}';
@@ -141,7 +141,7 @@ var
 begin
   Result := False;
 
-  if Name = 'ping' then
+  if Name = 'ide_ping' then
   begin
     Result := True;
     Obj := TJSONObject.Create;
@@ -156,7 +156,7 @@ begin
     end;
   end
 
-  else if Name = 'get_project_directory' then
+  else if Name = 'project_get_directory' then
   begin
     Result := True;
     Obj := TJSONObject.Create;
@@ -171,7 +171,7 @@ begin
     end;
   end
 
-  else if Name = 'get_project_settings' then
+  else if Name = 'project_get_settings' then
   begin
     Result := True;
     Obj := TJSONObject.Create;
@@ -196,7 +196,7 @@ begin
     end;
   end
 
-  else if Name = 'set_project_settings' then
+  else if Name = 'project_set_settings' then
   begin
     Result := True;
     Proj := LazarusIDE.ActiveProject;
@@ -229,7 +229,7 @@ begin
     end;
   end
 
-  else if Name = 'add_file_to_project' then
+  else if Name = 'project_add_file' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
@@ -259,7 +259,7 @@ begin
     end;
   end
 
-  else if Name = 'remove_file_from_project' then
+  else if Name = 'project_remove_file' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
@@ -295,7 +295,7 @@ begin
     end;
   end
 
-  else if Name = 'create_form' then
+  else if Name = 'form_create' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('unit_name', '') = '') then
@@ -332,7 +332,7 @@ begin
     end;
   end
 
-  else if Name = 'list_project_templates' then
+  else if Name = 'project_list_templates' then
   begin
     Result := True;
     VisibleOnly := True;
@@ -358,7 +358,7 @@ begin
     end;
   end
 
-  else if Name = 'create_project' then
+  else if Name = 'project_create' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('project_dir', '') = '') then
@@ -377,7 +377,7 @@ begin
     begin
       Ctx.Error  := True;
       Ctx.Result := 'Unknown project_type "' + ProjType +
-        '". Call list_project_templates to see valid names.';
+        '". Call project_list_templates to see valid names.';
       Exit;
     end;
     if IsDescriptorInteractive(Descriptor) then
@@ -385,7 +385,7 @@ begin
       Ctx.Error  := True;
       Ctx.Result := 'Template "' + Descriptor.Name + '" requires user input ' +
         'before the project is created (its DoInitDescriptor shows a dialog). ' +
-        'Use a template where interactive=false in list_project_templates.';
+        'Use a template where interactive=false in project_list_templates.';
       Exit;
     end;
     ForceDirectories(FilePath);
@@ -412,41 +412,41 @@ end;
 
 procedure RegisterProjectSchemas(Tools: TJSONArray);
 begin
-  Tools.Add(MakeTool('ping',
+  Tools.Add(MakeTool('ide_ping',
     'Returns {"status":"ok","version":"x.y"} immediately. Use this to poll for the ' +
-    'MCP server coming back after rebuild_ide — retry until it succeeds.',
+    'MCP server coming back after ide_rebuild — retry until it succeeds.',
     SCHEMA_PING, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_project_directory',
+  Tools.Add(MakeTool('project_get_directory',
     'Return the root directory of the active project (directory containing the .lpi file).',
     SCHEMA_GET_PROJECT_DIRECTORY, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_project_settings',
+  Tools.Add(MakeTool('project_get_settings',
     'Return active project compiler options: target OS/CPU, output directory, ' +
     'custom options, and project file path.',
     SCHEMA_GET_PROJECT_SETTINGS, MCP_ANN_RO));
-  Tools.Add(MakeTool('set_project_settings',
+  Tools.Add(MakeTool('project_set_settings',
     'Write compiler options to the active project. All parameters are optional; ' +
     'only supplied keys are changed. Returns the new settings in the same shape ' +
-    'as get_project_settings. custom_options REPLACES the existing string.',
+    'as project_get_settings. custom_options REPLACES the existing string.',
     SCHEMA_SET_PROJECT_SETTINGS, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('add_file_to_project',
+  Tools.Add(MakeTool('project_add_file',
     'Add an existing source file to the active project (.lpi). ' +
     'Saves the project afterwards.',
     SCHEMA_ADD_FILE_TO_PROJECT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('remove_file_from_project',
+  Tools.Add(MakeTool('project_remove_file',
     'Remove a source file from the active project without deleting it from disk. ' +
     'Saves the project afterwards.',
     SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('create_form',
+  Tools.Add(MakeTool('form_create',
     'Create a new LCL form: a .pas unit and paired .lfm file, both added to the ' +
     'active project and opened in the editor.',
     SCHEMA_CREATE_FORM, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('list_project_templates',
+  Tools.Add(MakeTool('project_list_templates',
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
-    'of {name, localized_name, description}. Pass the name to create_project as ' +
+    'of {name, localized_name, description}. Pass the name to project_create as ' +
     'project_type.',
     SCHEMA_LIST_PROJECT_TEMPLATES, MCP_ANN_RO));
-  Tools.Add(MakeTool('create_project',
-    'Create a new Lazarus project from a template. Call list_project_templates to ' +
+  Tools.Add(MakeTool('project_create',
+    'Create a new Lazarus project from a template. Call project_list_templates to ' +
     'discover available templates. Returns ' +
     '{"project_file":"<path>","project_type":"<name>"}.',
     SCHEMA_CREATE_PROJECT, MCP_ANN_WRITE));

@@ -1,9 +1,9 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsBuild;
 
-{ Build / run tools: build_project, run_project, rebuild_ide, get_compiler_errors,
-  get_messages, run_with_args.
-  Schema registration also covers compile_plugin and run_tests, which run
+{ Build / run tools: project_build, project_run, ide_rebuild, project_get_compiler_errors,
+  ide_get_messages, project_run.
+  Schema registration also covers package_compile and ide_run_tests, which run
   off the main thread and remain handled in HandleToolsCall. }
 
 {$mode objfpc}{$H+}
@@ -29,7 +29,9 @@ const
     '{"type":"object","properties":{}}';
 
   SCHEMA_RUN_PROJECT =
-    '{"type":"object","properties":{}}';
+    '{"type":"object","properties":{"args":{"type":"string",' +
+    '"description":"Command-line arguments for the program. Stored in the project''s ' +
+    'run parameters (also used by debug runs); omit to keep the current ones"}}}';
 
   SCHEMA_COMPILE_PLUGIN =
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +
@@ -40,7 +42,7 @@ const
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +
     '"description":"Absolute path to the .lpk package file to install and ' +
     'rebuild with. Omit to rebuild with currently installed packages ' +
-    '(e.g. after compile_plugin)."}}}';
+    '(e.g. after package_compile)."}}}';
 
   SCHEMA_RUN_TESTS =
     '{"type":"object","properties":{' +
@@ -56,11 +58,6 @@ const
 
   SCHEMA_GET_MESSAGES =
     '{"type":"object","properties":{}}';
-
-  SCHEMA_RUN_WITH_ARGS =
-    '{"type":"object","properties":{"args":{"type":"string",' +
-    '"description":"Command-line argument string passed verbatim to the launched process"}},' +
-    '"required":["args"]}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
@@ -78,7 +75,7 @@ var
 begin
   Result := False;
 
-  if Name = 'get_compiler_errors' then
+  if Name = 'project_get_compiler_errors' then
   begin
     Result := True;
     if Assigned(McpHookManager) then
@@ -91,7 +88,7 @@ begin
       Ctx.Result := '[]';
   end
 
-  else if Name = 'build_project' then
+  else if Name = 'project_build' then
   begin
     Result := True;
     if not Assigned(LazarusIDE) then
@@ -116,13 +113,24 @@ begin
     end;
   end
 
-  else if Name = 'run_project' then
+  else if Name = 'project_run' then
   begin
     Result := True;
     if not Assigned(LazarusIDE) then
     begin
       Ctx.Error := True; Ctx.Result := 'No IDE available'; Exit;
     end;
+    if Assigned(Ctx.Params) and (Ctx.Params.IndexOfName('args') >= 0) then
+    begin
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      { stored in the project's run parameters, so debug runs use them too }
+      Proj.RunParameters.GetOrCreate('default').CmdLineParams :=
+        Ctx.Params.Get('args', '');
+    end;
     BuildRes := LazarusIDE.DoRunProjectWithoutDebug;
     Obj := TJSONObject.Create;
     try
@@ -133,32 +141,7 @@ begin
     end;
   end
 
-  else if Name = 'run_with_args' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'args required'; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    Proj.RunParameters.GetOrCreate('default').CmdLineParams :=
-      Ctx.Params.Get('args', '');
-    BuildRes := LazarusIDE.DoRunProjectWithoutDebug;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('success', BuildRes = mrOK);
-      Obj.Add('status',  'running');
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'get_messages' then
+  else if Name = 'ide_get_messages' then
   begin
     Result := True;
     MsgArr := TJSONArray.Create;
@@ -193,8 +176,8 @@ begin
 
 end;
 
-{ ── Blocking rebuild_ide ─────────────────────────────────────────────────── }
-{ rebuild_ide runs on the HTTP worker thread.  If an exception dialog is open,
+{ ── Blocking ide_rebuild ─────────────────────────────────────────────────── }
+{ ide_rebuild runs on the HTTP worker thread.  If an exception dialog is open,
   it queues a non-blocking close request to the main thread (TThread.Queue),
   then polls for the dialog globals to clear before proceeding with the rebuild.
   All IDE API calls still happen via TThread.Synchronize. }
@@ -310,14 +293,14 @@ var
   Waited : Integer;
 begin
   Result := False;
-  if Name <> 'rebuild_ide' then Exit;
+  if Name <> 'ide_rebuild' then Exit;
   Result := True;
 
   { In-flight guard: refuse a concurrent rebuild. }
   if InterlockedCompareExchange(GRebuildActive, 1, 0) <> 0 then
   begin
     Ctx.Error  := True;
-    Ctx.Result := 'rebuild_ide is already in progress.';
+    Ctx.Result := 'ide_rebuild is already in progress.';
     Exit;
   end;
   try
@@ -343,7 +326,7 @@ begin
       begin
         Ctx.Error  := True;
         Ctx.Result := '{"error":"Exception dialog is still showing after 5 s. ' +
-                      'Click Break or Continue on the dialog, then call rebuild_ide again."}';
+                      'Click Break or Continue on the dialog, then call ide_rebuild again."}';
         Exit;
       end;
     end;
@@ -401,40 +384,37 @@ end;
 
 procedure RegisterBuildSchemas(Tools: TJSONArray);
 begin
-  Tools.Add(MakeTool('build_project',
+  Tools.Add(MakeTool('project_build',
     'Trigger an incremental build of the active project and return ' +
     'success/failure with any compiler errors.',
     SCHEMA_BUILD_PROJECT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('run_project',
-    'Build (if needed) and run the active project without the debugger.',
+  Tools.Add(MakeTool('project_run',
+    'Build (if needed) and run the active project without the debugger, ' +
+    'optionally with new command-line arguments.',
     SCHEMA_RUN_PROJECT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('compile_plugin',
+  Tools.Add(MakeTool('package_compile',
     'Compile a Lazarus package (.lpk) using lazbuild and return the full ' +
-    'compiler output. Use this as a smoke-test before calling rebuild_ide. ' +
+    'compiler output. Use this as a smoke-test before calling ide_rebuild. ' +
     'Does not restart the IDE.',
     SCHEMA_COMPILE_PLUGIN, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('rebuild_ide',
+  Tools.Add(MakeTool('ide_rebuild',
     'Rebuild and restart the Lazarus IDE. Pass lpk_path to install a package ' +
     'before rebuilding; omit it to rebuild with currently installed packages. ' +
     'The IDE exits immediately after this call; the MCP server will be ' +
-    'unavailable for ~60 s. Call compile_plugin first to catch errors early.',
+    'unavailable for ~60 s. Call package_compile first to catch errors early.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
-  Tools.Add(MakeTool('run_tests',
+  Tools.Add(MakeTool('ide_run_tests',
     'Compile and run the FPCUnit test project, then return structured results ' +
     '(pass/fail counts, individual test output). Standalone utility and ' +
     'infrastructure tests always run; protocol and auth tests run only when ' +
     'the MCP server is reachable. Optionally writes JUnit XML for CI consumption.',
     SCHEMA_RUN_TESTS, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('get_compiler_errors',
+  Tools.Add(MakeTool('project_get_compiler_errors',
     'Return the current build compiler errors and warnings.',
     SCHEMA_GET_COMPILER_ERRORS, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_messages',
+  Tools.Add(MakeTool('ide_get_messages',
     'Return all messages from the IDE Messages window (build output, hints, etc.).',
     SCHEMA_GET_MESSAGES, MCP_ANN_RO));
-  Tools.Add(MakeTool('run_with_args',
-    'Set command-line arguments for the active project and run it (build if needed). ' +
-    'Equivalent to run_project but passes args to the launched process.',
-    SCHEMA_RUN_WITH_ARGS, MCP_ANN_WRITE));
 end;
 
 initialization

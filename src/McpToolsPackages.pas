@@ -1,8 +1,8 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsPackages;
 
-{ Package management tools: get_package_info, add_package_to_project,
-  remove_package_from_project, install_package, uninstall_package. }
+{ Package management tools: package_get_info, project_add_package,
+  project_remove_package, package_install, package_uninstall. }
 
 {$mode objfpc}{$H+}
 
@@ -65,7 +65,7 @@ var
 begin
   Result := False;
 
-  if Name = 'get_package_info' then
+  if Name = 'package_get_info' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
@@ -90,7 +90,7 @@ begin
     end;
   end
 
-  else if Name = 'add_package_to_project' then
+  else if Name = 'project_add_package' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
@@ -123,7 +123,7 @@ begin
     end;
   end
 
-  else if Name = 'remove_package_from_project' then
+  else if Name = 'project_remove_package' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
@@ -161,7 +161,7 @@ begin
     end;
   end
 
-  else if Name = 'install_package' then
+  else if Name = 'package_install' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('lpk_path', '') = '') then
@@ -223,7 +223,7 @@ begin
     end;
   end
 
-  else if Name = 'uninstall_package' then
+  else if Name = 'package_uninstall' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
@@ -287,24 +287,24 @@ end;
 
 procedure RegisterPackagesSchemas(Tools: TJSONArray);
 begin
-  Tools.Add(MakeTool('get_package_info',
+  Tools.Add(MakeTool('package_get_info',
     'Query a package''s load and install status in the running IDE.',
     SCHEMA_GET_PACKAGE_INFO, MCP_ANN_RO));
-  Tools.Add(MakeTool('add_package_to_project',
+  Tools.Add(MakeTool('project_add_package',
     'Add a package as a dependency to the active project (.lpi). ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +
     'Returns the updated list of project package dependencies.',
     SCHEMA_ADD_PACKAGE_TO_PROJECT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('remove_package_from_project',
+  Tools.Add(MakeTool('project_remove_package',
     'Remove a package dependency from the active project (.lpi). ' +
     'No rebuild required. Returns the updated list of project package dependencies.',
     SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('install_package',
+  Tools.Add(MakeTool('package_install',
     'Install a package into the Lazarus IDE (design-time / palette). ' +
     'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}. ' +
-    'Use compile_plugin first to catch errors early.',
+    'Use package_compile first to catch errors early.',
     SCHEMA_INSTALL_PACKAGE, MCP_ANN_DEST));
-  Tools.Add(MakeTool('uninstall_package',
+  Tools.Add(MakeTool('package_uninstall',
     'Uninstall a package from the Lazarus IDE. ' +
     'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}.',
     SCHEMA_UNINSTALL_PACKAGE, MCP_ANN_DEST));

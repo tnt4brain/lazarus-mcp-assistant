@@ -6,11 +6,11 @@ unit TProjectTools;
 
   Only read-only or side-effect-free calls are made here:
     - tools/list presence check for all 8 FR-006 tools
-    - run_tests schema regression (not RTProps / replace_text schema)
-    - search_components with a known component name
-    - get_messages structure check
-  Mutating tools (add/remove_file, create_form, set_project_settings,
-  run_with_args) are not called from automated tests to avoid touching
+    - ide_run_tests schema regression (not RTProps / editor_replace_range schema)
+    - form_search_palette with a known component name
+    - ide_get_messages structure check
+  Mutating tools (add/remove_file, form_create, project_set_settings,
+  project_run) are not called from automated tests to avoid touching
   whatever project is open in the IDE. }
 
 {$mode objfpc}{$H+}
@@ -77,9 +77,9 @@ procedure TTestProjectTools.TestFR006ToolsInList;
 const
   N_Tools = 10;
   Expected: array[0..N_Tools - 1] of string = (
-    'add_file_to_project', 'remove_file_from_project', 'create_form',
-    'set_project_settings', 'open_file', 'search_components',
-    'run_with_args', 'get_messages', 'create_project', 'list_project_templates');
+    'project_add_file', 'project_remove_file', 'form_create',
+    'project_set_settings', 'editor_open', 'form_search_palette',
+    'project_run', 'ide_get_messages', 'project_create', 'project_list_templates');
 var
   Tools   : TJSONArray;
   Found   : array[0..N_Tools - 1] of Boolean;
@@ -111,8 +111,8 @@ end;
 
 procedure TTestProjectTools.TestRunTestsSchemaNotReplaceText;
 { Regression for the RTProps/RunTProps double-free bug (line 731 fix).
-  Verifies run_tests exposes test_project in its schema, not start_line
-  (which would indicate it was accidentally given replace_text''s schema). }
+  Verifies ide_run_tests exposes test_project in its schema, not start_line
+  (which would indicate it was accidentally given editor_replace_range''s schema). }
 var
   Tools    : TJSONArray;
   I        : Integer;
@@ -124,27 +124,27 @@ begin
   try
     ToolObj := nil;
     for I := 0 to Tools.Count - 1 do
-      if TJSONObject(Tools[I]).Get('name', '') = 'run_tests' then
+      if TJSONObject(Tools[I]).Get('name', '') = 'ide_run_tests' then
       begin
         ToolObj := TJSONObject(Tools[I]);
         Break;
       end;
-    CheckTrue(Assigned(ToolObj), 'run_tests must be in tools/list');
+    CheckTrue(Assigned(ToolObj), 'ide_run_tests must be in tools/list');
     Schema := TJSONObject(ToolObj.Find('inputSchema'));
-    CheckTrue(Assigned(Schema), 'run_tests must have inputSchema');
+    CheckTrue(Assigned(Schema), 'ide_run_tests must have inputSchema');
     Props := TJSONObject(Schema.Find('properties'));
-    CheckTrue(Assigned(Props), 'run_tests inputSchema must have properties');
+    CheckTrue(Assigned(Props), 'ide_run_tests inputSchema must have properties');
     CheckTrue(Assigned(Props.Find('test_project')),
-      'run_tests schema must contain test_project (not replace_text schema)');
+      'ide_run_tests schema must contain test_project (not editor_replace_range schema)');
     CheckTrue(Props.Find('start_line') = nil,
-      'run_tests schema must NOT contain start_line (replace_text field)');
+      'ide_run_tests schema must NOT contain start_line (editor_replace_range field)');
   finally
     Tools.Free;
   end;
 end;
 
 procedure TTestProjectTools.TestSearchComponentsReturnsArray;
-{ Calls search_components with 'TButton' — always registered in the LCL.
+{ Calls form_search_palette with 'TButton' — always registered in the LCL.
   Only runs when server is available; safe (read-only). }
 var
   R       : THttpResult;
@@ -154,20 +154,20 @@ var
   Item0   : TJSONObject;
   Results : TJSONArray;
 begin
-  R := CallTool('search_components', '{"query":"TButton"}');
-  CheckEquals(200, R.Code, 'search_components must return HTTP 200');
+  R := CallTool('form_search_palette', '{"query":"TButton"}');
+  CheckEquals(200, R.Code, 'form_search_palette must return HTTP 200');
   Obj := ParseJSON(R.Body);
   try
     Res := TJSONObject(Obj.Find('result'));
-    CheckTrue(Assigned(Res), 'search_components must return a result');
+    CheckTrue(Assigned(Res), 'form_search_palette must return a result');
     Content := TJSONArray(Res.Find('content'));
     CheckTrue(Assigned(Content) and (Content.Count > 0),
-      'search_components result must have content');
+      'form_search_palette result must have content');
     // The text payload is JSON itself — parse it
     Results := TJSONArray(GetJSON(TJSONObject(Content[0]).Get('text', '[]')));
     try
       CheckTrue(Results.Count > 0,
-        'search_components("TButton") must return at least one match');
+        'form_search_palette("TButton") must return at least one match');
       Item0 := TJSONObject(Results[0]);
       CheckTrue(Assigned(Item0.Find('class_name')),
         'Each result must have class_name');
@@ -191,21 +191,21 @@ var
   Content : TJSONArray;
   Payload : TJSONObject;
 begin
-  R := CallTool('get_messages', '{}');
-  CheckEquals(200, R.Code, 'get_messages must return HTTP 200');
+  R := CallTool('ide_get_messages', '{}');
+  CheckEquals(200, R.Code, 'ide_get_messages must return HTTP 200');
   Obj := ParseJSON(R.Body);
   try
     Res := TJSONObject(Obj.Find('result'));
-    CheckTrue(Assigned(Res), 'get_messages must return a result');
+    CheckTrue(Assigned(Res), 'ide_get_messages must return a result');
     Content := TJSONArray(Res.Find('content'));
     CheckTrue(Assigned(Content) and (Content.Count > 0),
-      'get_messages must have content');
+      'ide_get_messages must have content');
     Payload := TJSONObject(GetJSON(TJSONObject(Content[0]).Get('text', '{}')));
     try
       CheckTrue(Assigned(Payload.Find('messages')),
-        'get_messages payload must contain "messages" array');
+        'ide_get_messages payload must contain "messages" array');
       CheckTrue(Assigned(Payload.Find('line_count')),
-        'get_messages payload must contain "line_count"');
+        'ide_get_messages payload must contain "line_count"');
     finally
       Payload.Free;
     end;
@@ -226,19 +226,19 @@ var
   HasApp  : Boolean;
   I       : Integer;
 begin
-  R := CallTool('list_project_templates', '{}');
-  CheckEquals(200, R.Code, 'list_project_templates must return HTTP 200');
+  R := CallTool('project_list_templates', '{}');
+  CheckEquals(200, R.Code, 'project_list_templates must return HTTP 200');
   Obj := ParseJSON(R.Body);
   try
     Res := TJSONObject(Obj.Find('result'));
-    CheckTrue(Assigned(Res), 'list_project_templates must return a result');
+    CheckTrue(Assigned(Res), 'project_list_templates must return a result');
     Content := TJSONArray(Res.Find('content'));
     CheckTrue(Assigned(Content) and (Content.Count > 0),
-      'list_project_templates result must have content');
+      'project_list_templates result must have content');
     Items := TJSONArray(GetJSON(TJSONObject(Content[0]).Get('text', '[]')));
     try
       CheckTrue(Items.Count > 0,
-        'list_project_templates must return at least one template');
+        'project_list_templates must return at least one template');
       Item0 := TJSONObject(Items[0]);
       CheckTrue(Assigned(Item0.Find('name')),
         'Each template must have a name field');
@@ -251,7 +251,7 @@ begin
         begin
           HasApp := True; Break;
         end;
-      CheckTrue(HasApp, 'list_project_templates must include ''Application'' template');
+      CheckTrue(HasApp, 'project_list_templates must include ''Application'' template');
     finally
       Items.Free;
     end;
@@ -261,7 +261,7 @@ begin
 end;
 
 procedure TTestProjectTools.TestCreateProjectSchema;
-{ Schema presence test only — create_project is mutating so no live call. }
+{ Schema presence test only — project_create is mutating so no live call. }
 var
   Tools   : TJSONArray;
   I       : Integer;
@@ -273,22 +273,22 @@ begin
   try
     ToolObj := nil;
     for I := 0 to Tools.Count - 1 do
-      if TJSONObject(Tools[I]).Get('name', '') = 'create_project' then
+      if TJSONObject(Tools[I]).Get('name', '') = 'project_create' then
       begin
         ToolObj := TJSONObject(Tools[I]);
         Break;
       end;
-    CheckTrue(Assigned(ToolObj), 'create_project must be in tools/list');
+    CheckTrue(Assigned(ToolObj), 'project_create must be in tools/list');
     Schema := TJSONObject(ToolObj.Find('inputSchema'));
-    CheckTrue(Assigned(Schema), 'create_project must have inputSchema');
+    CheckTrue(Assigned(Schema), 'project_create must have inputSchema');
     Props := TJSONObject(Schema.Find('properties'));
-    CheckTrue(Assigned(Props), 'create_project inputSchema must have properties');
+    CheckTrue(Assigned(Props), 'project_create inputSchema must have properties');
     CheckTrue(Assigned(Props.Find('project_dir')),
-      'create_project schema must contain project_dir');
+      'project_create schema must contain project_dir');
     CheckTrue(Assigned(Props.Find('project_name')),
-      'create_project schema must contain project_name');
+      'project_create schema must contain project_name');
     CheckTrue(Assigned(Props.Find('project_type')),
-      'create_project schema must contain project_type');
+      'project_create schema must contain project_type');
   finally
     Tools.Free;
   end;

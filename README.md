@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 50 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 90 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed.
 
@@ -22,100 +22,148 @@ Transport details: [ADR-001](docs/adr/0001-mcp-server-transport-and-lifecycle.md
 
 ## Tool reference
 
-### Reading & navigation
+Tools are named `<category>_<action>`; `tools/list` returns them sorted, each
+with a human-readable `title` ("Debugger: get call stack") and
+`readOnlyHint` / `destructiveHint` annotations. In Claude Code they appear as
+`mcp__lazarus-ide__<tool_name>`.
+
+### Editor — `editor_*`
 
 | Tool | Description |
 |---|---|
-| `get_active_file` | Active editor file path and current buffer content |
-| `get_project_files` | List of source files in the active project |
-| `get_file_content` | Read any file by absolute path |
-| `get_open_editors` | List of all open editor tabs |
-| `get_project_directory` | Root directory of the active project (contains the `.lpi` file) |
-| `get_project_settings` | Compiler options: target OS/CPU, output dir, custom flags |
-| `get_cursor_position` | Current cursor position (file, line, column) |
-| `get_selected_text` | Currently selected text and its start/end positions |
+| `editor_get_active` | Active editor file path and current buffer content |
+| `editor_list_open` | All open editor tabs |
+| `editor_read_file` | Read any file by absolute path; prefers the live editor buffer (unsaved changes) over disk |
+| `editor_open` | Open a file in the editor without moving the cursor; returns `already_open` |
+| `editor_get_cursor` / `editor_set_cursor` | Read / move the cursor (opens the file if needed) |
+| `editor_get_selection` | Selected text and its range |
+| `editor_edit_text` | **Preferred edit.** Replace `old_string` with `new_string`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
+| `editor_replace_range` | Replace a line/column range (empty range inserts, empty text deletes) |
+| `editor_edit_at_position` | Replace `delete_len` characters at (line, col) — for coordinates from `code_*` tools |
+| `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
+| `editor_revert` | Discard unsaved changes and reload from disk |
+| `editor_close` | Close a tab, discarding unsaved changes |
 
-### Editing
-
-| Tool | Description |
-|---|---|
-| `edit_text` | **Preferred.** Replace by content: find `old_string`, replace with `new_string`. Fails if not found or ambiguous. Pass `replace_all=true` for global replace. No stale line-number offsets. |
-| `replace_text` | Replace a line/column range. Useful when the target location is already known precisely. |
-| `set_cursor_position` | Move cursor to a line/column. Opens the file first if not already open. |
-| `save_file` | Save the editor buffer to disk. |
-| `close_file` | Close an editor tab. Unsaved changes are discarded. |
-| `revert_file` | Discard unsaved changes and reload from disk. |
-
-### File & project operations
+### CodeTools — `code_*`
 
 | Tool | Description |
 |---|---|
-| `create_unit` | Create a new Pascal unit, add it to the active project, and open it in the editor. |
-| `add_unit_to_uses` | Add a unit name to an interface or implementation uses clause via CodeTools. |
-| `search_in_project` | Text search across all project source files. Returns file, line number, and line content. |
-| `get_compiler_errors` | Current build errors and warnings. |
+| `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
+| `code_get_unit_interface` | The interface section of a unit |
+| `code_get_procedure_ast` | Locals and block-level control flow (if/for/while/try/case…) of one routine, with line ranges |
+| `code_find_declaration` | Where an identifier is declared, with a context snippet |
+| `code_goto_declaration` | Jump the editor cursor to a declaration |
+| `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
+| `code_find_references` | Every reference to an identifier across the project |
+| `code_rename_identifier` | Rename across all project files. **Writes to disk, not undoable with Ctrl+Z — use git** |
+| `code_add_uses` | Add a unit to the interface or implementation uses clause |
+| `code_insert_in_procedure` | Insert text right after a routine's `begin` |
+| `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end` |
+| `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
 
-### Build & run
+### Form designer — `form_*`
 
-| Tool | Description |
-|---|---|
-| `build_project` | Incremental build of the active project. |
-| `run_project` | Build (if needed) and run the active project without the debugger. |
-| `compile_plugin` | Compile a `.lpk` package with `lazbuild`. Use as a smoke-test before `rebuild_ide`. |
-| `rebuild_ide` | Rebuild and restart the Lazarus IDE. The IDE exits immediately; the server is unavailable for ~60 s. Pass `lpk_path` to install a new package before rebuilding; omit it to rebuild with currently installed packages. |
-| `run_tests` | Compile and run the FPCUnit test suite, return structured results (`total`, `errors`, `failures`, `passed`, full output). Pass `test_project` to use a different `.lpi`; pass `junit_out` to also write JUnit-compatible XML for CI consumption. |
-
-### Code intelligence (CodeTools)
-
-| Tool | Description |
-|---|---|
-| `get_symbol_declaration` | Find where an identifier is declared: file, line, column, context snippet. |
-| `get_unit_interface` | Interface section of a Pascal unit (everything above `implementation`). |
-| `get_identifier_context` | Type, declaration location, and hint text for an identifier at a file/line/col. |
-| `get_code_outline` | Structural outline of a Pascal unit: type names, class members, top-level routines with line numbers. Does not include method bodies. |
-| `find_all_references` | All usages of an identifier across the project. |
-| `rename_identifier` | Cross-file identifier rename. **Writes directly to disk — not undoable with Ctrl+Z. Use git to revert.** |
-| `goto_declaration` | Jump the editor cursor to a declaration. Opens the file if needed. |
-
-### Form designer
+Property access goes through the Object Inspector's property editors: nested
+properties by dotted path (`BorderSpacing.Around`, `Font.Style`,
+`AnchorSideLeft.Control`, `ChildSizing.Layout`), enums/sets as text
+(`alClient`, `[akLeft,akTop]`), component references by name, events by
+handler name (created if missing), and `Name` renames the component in the
+source too.
 
 | Tool | Description |
 |---|---|
-| `get_form_components` | Component tree of a form: root class and all owned components with name and class. |
-| `get_component_properties` | All published RTTI properties and current values for a named component. |
-| `set_component_property` | Set a published RTTI property, including event handler assignments. Marks the designer modified; use `save_file` to persist. |
+| `form_create` | New form unit (`.pas` + `.lfm`), added to the project and opened |
+| `form_list_components` | Every component with class, parent, bounds, Align, Anchors, Visible, Caption/Text, TabOrder; form and client size |
+| `form_get_lfm` | LFM text of the live designer state (incl. unsaved changes) — whole form or one component |
+| `form_get_properties` | Properties of a component, nested ones as dotted paths; with `names`, also the allowed values |
+| `form_set_properties` | Set several properties at once; one result per property. `Parent` moves a control into another container |
+| `form_add_component` | Add a palette component, optionally inside a container, with `name` and initial `properties`; adds the unit to `uses` |
+| `form_delete_component` | Delete a component and its child controls (field removed from the source) |
+| `form_arrange` | Same size as the first control, distribute with a fixed gap or evenly, align edges/centres to the first control or the parent |
+| `form_create_event_handler` | Create (or show) the handler for a component event |
+| `form_search_palette` | Find palette classes by name: class, unit, palette page |
 
-### Package management
+Designer changes are in memory until `editor_save` on the unit.
 
-| Tool | Description |
-|---|---|
-| `get_package_info` | Load and install status of a package in the running IDE. |
-| `add_package_to_project` | Add a package dependency to the active project's `.lpi` (no rebuild required). |
-| `remove_package_from_project` | Remove a package dependency from the active project's `.lpi`. |
-| `install_package` | Open a `.lpk` and install it into the IDE, then rebuild and restart (~60 s). The response includes a `poll_command` identical to `rebuild_ide`. |
-| `uninstall_package` | Mark a package for uninstall, then rebuild and restart the IDE (~60 s). |
+### Debugger — `debug_*`
 
-### Project lifecycle
-
-| Tool | Description |
-|---|---|
-| `add_file_to_project` | Add an existing source file to the active project's file list. |
-| `remove_file_from_project` | Remove a source file from the active project without deleting it from disk. |
-| `create_form` | Create a new form: a `.pas` unit and paired `.lfm`, both added to the project and opened in the editor. |
-| `set_project_settings` | Write compiler options (target OS/CPU, output dir, custom flags) to the active project. All parameters optional; only supplied keys are changed. |
-| `open_file` | Open a file in the IDE editor without moving the cursor. Returns `already_open` flag. |
-| `search_components` | Search the component palette by class name. Returns class name, unit, and palette page for each match. |
-| `run_with_args` | Build (if needed) and run the active project with the given command-line argument string. |
-| `get_messages` | Full content of the IDE Messages window from the last build or run, including hints and notes. |
-| `list_project_templates` | List all registered project templates (descriptors) with their names and descriptions. Use the `name` field as `project_type` in `create_project`. |
-| `create_project` | Create a new Lazarus project from a template. Closes the current project first. Pass `project_type` from `list_project_templates`; defaults to `Application`. Returns the `.lpi` path. |
-
-### Protocol & knowledge
+Run and step tools block until the program pauses or `timeout_s` elapses.
+Sessions driven through these tools never show IDE modals: an exception pauses
+the program and is returned as `reason: "exception"` with class, message, file
+and line; "Execution stopped" is suppressed; debugger error messages are
+returned as `debugger_message`. Sessions you start yourself (F9) behave as usual.
 
 | Tool | Description |
 |---|---|
-| `ping` | Returns `{"status":"ok","version":"x.y"}`. Use this to poll for the server after `rebuild_ide`. |
-| `get_lazarus_reference` | Built-in Lazarus/FPC component library reference. Covers available packages, install instructions, and key gotchas. |
+| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source breakpoints (no session needed) |
+| `debug_run` | Start, or continue from a pause (F9) |
+| `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
+| `debug_step_over` / `debug_step_into` / `debug_step_out` | F8 / F7 / Shift+F8 |
+| `debug_pause` / `debug_stop` | Pause / stop the session |
+| `debug_get_state` | State and source location, in any state |
+| `debug_get_call_stack` | Frames with file, line, function and address (`max_frames`) |
+| `debug_get_locals` | Locals and parameters of a frame |
+| `debug_evaluate` | Evaluate a Pascal expression in the current context |
+| `debug_set_variable` | Modify a variable or expression |
+| `debug_get_exception` | The exception the program is paused at |
+| `debug_add_watch` / `debug_remove_watch` / `debug_list_watches` | Watches window; values for the current thread and frame |
+| `debug_list_threads` | Threads with state and top frame |
+| `debug_get_output` | What the program wrote to its console, and debugger output |
+
+### Project — `project_*`
+
+| Tool | Description |
+|---|---|
+| `project_get_directory` | Root directory of the active project (contains the `.lpi`) |
+| `project_list_files` | Source files of the active project |
+| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options |
+| `project_add_file` / `project_remove_file` | Project file list (files stay on disk) |
+| `project_create_unit` | New unit on disk, added to the project and opened |
+| `project_add_package` / `project_remove_package` | Package dependencies in the `.lpi` |
+| `project_search` | Case-insensitive text search across project files |
+| `project_list_todos` | `TODO` / `FIXME` / `DONE` comments, as the IDE's ToDo List shows them |
+| `project_build` | Incremental build; returns success and errors |
+| `project_get_compiler_errors` | Errors and warnings of the last build |
+| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters) |
+| `project_list_templates` / `project_create` | Project templates; create a project from one |
+
+### Packages — `package_*`
+
+| Tool | Description |
+|---|---|
+| `package_get_info` | Load and install status of a package |
+| `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
+| `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE |
+
+### IDE — `ide_*`
+
+| Tool | Description |
+|---|---|
+| `ide_ping` | `{"status":"ok","version":"x.y"}` — poll after `ide_rebuild` |
+| `ide_get_messages` | Everything in the Messages window, all urgency levels |
+| `ide_rebuild` | Rebuild and restart the IDE (optionally installing `lpk_path` first); the server is gone for ~60 s |
+| `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML |
+
+### Git — `git_*`
+
+`git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`,
+`git_checkout`, `git_stash`, `git_stash_pop`, `git_reset` (soft/mixed only —
+no hard reset). `work_dir` defaults to the project directory.
+
+### Resources
+
+| URI | Content |
+|---|---|
+| `lazarus-ide://reference` | Lazarus/FPC component and IDE API reference (`docs/lazarus-knowledge.md`) |
+| `lazarus-ide://system-prompt` | The instructions injected into Claude at launch (`docs/system-prompt.md`) |
+
+### While a tool runs
+
+Nobody is at the IDE's keyboard while a tool call executes, so the plugin
+answers the IDE's "Some files have changed on disk" dialog with *Reload*,
+which reloads only files without unsaved editor changes. Every HTTP response
+carries `Connection: close`, and the server's sockets are not inheritable, so a
+program started by the IDE cannot keep a connection open.
 
 ---
 
@@ -155,10 +203,10 @@ Package dependencies — all bundled with Lazarus: `SynEdit`, `IDEIntf`, `FCL`, 
 This plugin was built using itself. The development loop:
 
 1. **Launch MCP Assistant** — starts the server and opens Claude Code.
-2. Claude edits source files in the plugin repository using `edit_text`, `create_unit`, etc.
-3. Claude calls `compile_plugin` with the `.lpk` path to catch compiler errors before touching the IDE.
-4. Claude calls `rebuild_ide` (optionally passing `lpk_path`). The IDE exits and `startlazarus.exe` rebuilds it (~60 s).
-5. Claude polls with `ping` until the new IDE is up (the `rebuild_ide` response includes a ready-to-run `poll_command`).
+2. Claude edits source files in the plugin repository using `editor_edit_text`, `project_create_unit`, etc.
+3. Claude calls `package_compile` with the `.lpk` path to catch compiler errors before touching the IDE.
+4. Claude calls `ide_rebuild` (optionally passing `lpk_path`). The IDE exits and `startlazarus.exe` rebuilds it (~60 s).
+5. Claude polls with `ide_ping` until the new IDE is up (the `ide_rebuild` response includes a ready-to-run `poll_command`).
 6. The new IDE starts with the same bearer token and the same ephemeral port. Claude's session resumes without any reconnection step.
 
 **Why this works across a restart:** the bearer token is generated once and stored in `mcpassistantoptions.xml`; subsequent starts reuse it. The new IDE writes the same token back to the same config file at the same path. The port stays stable because `TProcess.InheritHandles := False` prevents Claude Code from holding a duplicate of the listening socket across the rebuild.
@@ -177,9 +225,9 @@ Architecture details: [ADR-004](docs/adr/0004-self-hosted-development.md).
 
 The plugin injects a Lazarus/FPC reference document into Claude's system prompt at launch (`--append-system-prompt`). This covers LCL component packages, installation patterns, and common gotchas, so Claude does not hallucinate package names or import paths.
 
-The reference is also available on demand via the `get_lazarus_reference` tool — useful when Claude needs to re-consult it mid-session.
+The reference is also available on demand as the `lazarus-ide://reference` MCP resource — useful when Claude needs to re-consult it mid-session.
 
-To update the reference: edit `docs/lazarus-knowledge.md`, then run `tools/update_knowledge.ps1` to regenerate `src/lazarus_knowledge.inc`.
+To update the reference: edit `docs/lazarus-knowledge.md`, then run `tools/gen_knowledge_inc.exe` from the project root to regenerate `src/lazarus_knowledge.inc` and `src/system_prompt.inc` (build it once with `fpc -MObjFPC -Scghi -FEtools tools/gen_knowledge_inc.pas`), then rebuild the IDE. The same applies to `docs/system-prompt.md`.
 
 ---
 

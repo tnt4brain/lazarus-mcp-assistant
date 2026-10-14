@@ -2,7 +2,7 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 {$mode objfpc}{$H+}
 { wait_for_restart.pas — poll the Lazarus MCP server until it responds.
-  Use after calling rebuild_ide, when the MCP transport is broken.
+  Use after calling ide_rebuild, when the MCP transport is broken.
 
   Usage:  instantfpc wait_for_restart.pas [timeout_seconds]
   Default timeout: 180 s }
@@ -84,7 +84,7 @@ begin
     URL  := Format('http://127.0.0.1:%d/mcp', [Port]);
     Body := TStringStream.Create(
       '{"jsonrpc":"2.0","id":1,"method":"tools/call",' +
-      '"params":{"name":"ping","arguments":{}}}');
+      '"params":{"name":"ide_ping","arguments":{}}}');
     Resp := TStringStream.Create('');
     Client := TFPHTTPClient.Create(nil);
     try

@@ -156,10 +156,10 @@ var
   Missing  : string;
   N        : Integer;
 begin
-  Names[0] := 'add_package_to_project';
-  Names[1] := 'remove_package_from_project';
-  Names[2] := 'install_package';
-  Names[3] := 'uninstall_package';
+  Names[0] := 'project_add_package';
+  Names[1] := 'project_remove_package';
+  Names[2] := 'package_install';
+  Names[3] := 'package_uninstall';
   Found[0] := False; Found[1] := False; Found[2] := False; Found[3] := False;
 
   R := McpPost('{"jsonrpc":"2.0","id":5,"method":"tools/list"}');

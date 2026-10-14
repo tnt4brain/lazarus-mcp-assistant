@@ -1,12 +1,12 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsDebugger;
 
-{ Debugger tools: set_breakpoint, remove_breakpoint, list_breakpoints,
-  get_debug_state,
-  run_debugger, pause_debugger, stop_debugger,
-  step_over, step_into, step_out, run_to_line,
-  get_call_stack, evaluate_expression,
-  get_local_variables, set_local_variable.
+{ Debugger tools: debug_set_breakpoint, debug_remove_breakpoint, debug_list_breakpoints,
+  debug_get_state,
+  debug_run, debug_pause, debug_stop,
+  debug_step_over, debug_step_into, debug_step_out, debug_run_to_line,
+  debug_get_call_stack, debug_evaluate,
+  debug_get_locals, debug_set_variable.
 
   Threading model:
     Non-blocking tools  — dispatched via DispatchDebuggerTool, which runs on
@@ -722,7 +722,7 @@ end;
 
 { Poll until debugger leaves the running state or timeout expires.
   The caller must have already issued the command.
-  Set AWaitLaunch=True for run_debugger to skip the pre-launch idle window. }
+  Set AWaitLaunch=True for debug_run to skip the pre-launch idle window. }
 function PollForPause(TimeoutMs: Integer;
   out FinalFile: string; out FinalLine: Integer;
   AWaitLaunch: Boolean = False;
@@ -780,7 +780,7 @@ var
 begin
   Result := False;
 
-  if Name = 'get_debug_state' then
+  if Name = 'debug_get_state' then
   begin
     Result := True;
     GSyncHelper.ReadState;   { already on main thread }
@@ -796,7 +796,7 @@ begin
     end;
   end
 
-  else if Name = 'set_breakpoint' then
+  else if Name = 'debug_set_breakpoint' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
@@ -818,7 +818,7 @@ begin
     finally Obj.Free; end;
   end
 
-  else if Name = 'remove_breakpoint' then
+  else if Name = 'debug_remove_breakpoint' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
@@ -836,7 +836,7 @@ begin
     finally Obj.Free; end;
   end
 
-  else if Name = 'list_breakpoints' then
+  else if Name = 'debug_list_breakpoints' then
   begin
     Result := True;
     Arr := TJSONArray.Create;
@@ -862,7 +862,7 @@ begin
     finally Arr.Free; end;
   end
 
-  else if Name = 'stop_debugger' then
+  else if Name = 'debug_stop' then
   begin
     Result := True;
     if Assigned(DebugBoss) then
@@ -873,7 +873,7 @@ begin
     Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
   end
 
-  else if Name = 'set_local_variable' then
+  else if Name = 'debug_set_variable' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('name', '') = '') then
@@ -1013,7 +1013,7 @@ begin
   FinalLine := 0;
   Obj       := nil;
 
-  if Name = 'run_debugger' then
+  if Name = 'debug_run' then
   begin
     Result    := True;
     TimeoutMs := 30000;
@@ -1024,7 +1024,7 @@ begin
     Finish('run');
   end
 
-  else if Name = 'pause_debugger' then
+  else if Name = 'debug_pause' then
   begin
     Result    := True;
     TimeoutMs := 5000;
@@ -1033,7 +1033,7 @@ begin
     Finish('paused');
   end
 
-  else if Name = 'step_over' then
+  else if Name = 'debug_step_over' then
   begin
     Result    := True;
     TimeoutMs := 10000;
@@ -1044,7 +1044,7 @@ begin
     Finish('step');
   end
 
-  else if Name = 'step_into' then
+  else if Name = 'debug_step_into' then
   begin
     Result    := True;
     TimeoutMs := 10000;
@@ -1055,7 +1055,7 @@ begin
     Finish('step');
   end
 
-  else if Name = 'step_out' then
+  else if Name = 'debug_step_out' then
   begin
     Result    := True;
     TimeoutMs := 30000;
@@ -1066,7 +1066,7 @@ begin
     Finish('step');
   end
 
-  else if Name = 'run_to_line' then
+  else if Name = 'debug_run_to_line' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
@@ -1089,7 +1089,7 @@ begin
     Finish('breakpoint');
   end
 
-  else if Name = 'evaluate_expression' then
+  else if Name = 'debug_evaluate' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('expression', '') = '') then
@@ -1132,7 +1132,7 @@ begin
     finally Obj.Free; end;
   end
 
-  else if Name = 'get_call_stack' then
+  else if Name = 'debug_get_call_stack' then
   begin
     Result := True;
     TThread.Synchronize(nil, @GSyncHelper.ReadState);
@@ -1156,7 +1156,7 @@ begin
     Ctx.Result := GSyncHelper.OutCSJSON;
   end
 
-  else if Name = 'get_local_variables' then
+  else if Name = 'debug_get_locals' then
   begin
     Result := True;
     TThread.Synchronize(nil, @GSyncHelper.ReadState);
@@ -1231,7 +1231,7 @@ begin
     Ctx.Result := GSyncHelper.OutThrJSON;
   end
 
-  else if Name = 'exception_info' then
+  else if Name = 'debug_get_exception' then
   begin
     Result := True;
     { McpDebugGuard records every exception the debugger reports (class,
@@ -1266,8 +1266,8 @@ const
 
   SCHEMA_REMOVE_BREAKPOINT =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string"},' +
-    '"line":{"type":"integer"}},' +
+    '"file_path":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"line":{"type":"integer","description":"1-based line number of the breakpoint"}},' +
     '"required":["file_path","line"]}';
 
   SCHEMA_NO_PARAMS =
@@ -1283,8 +1283,8 @@ const
 
   SCHEMA_RUN_TO_LINE =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string"},' +
-    '"line":{"type":"integer"},' +
+    '"file_path":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"line":{"type":"integer","description":"1-based line number to run to"},' +
     '"timeout_s":{"type":"integer","description":"Default 30"}},' +
     '"required":["file_path","line"]}';
 
@@ -1330,67 +1330,67 @@ const
 procedure RegisterDebuggerSchemas(Tools: TJSONArray);
 begin
   { Group 1 — Breakpoints }
-  Tools.Add(MakeTool('set_breakpoint',
+  Tools.Add(MakeTool('debug_set_breakpoint',
     'Add a source line breakpoint. Does not require an active debug session.',
     SCHEMA_SET_BREAKPOINT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('remove_breakpoint',
+  Tools.Add(MakeTool('debug_remove_breakpoint',
     'Remove a breakpoint by file and line.',
     SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('list_breakpoints',
+  Tools.Add(MakeTool('debug_list_breakpoints',
     'List all current breakpoints with file, line, enabled state, and hit count.',
     SCHEMA_NO_PARAMS, MCP_ANN_RO));
   { Group 2 — State query (escape hatch) }
-  Tools.Add(MakeTool('get_debug_state',
+  Tools.Add(MakeTool('debug_get_state',
     'Return the current debugger state and source location. ' +
     'Works in any state (idle, running, paused, stopped). ' +
     'Call this after a timed-out blocking tool to assess what is happening.',
     SCHEMA_NO_PARAMS, MCP_ANN_RO));
   { Group 3 — Session control (blocking) }
-  Tools.Add(MakeTool('run_debugger',
+  Tools.Add(MakeTool('debug_run',
     'Start a debug session or continue from pause (F9). Blocks until the ' +
     'program hits a breakpoint or stops. Returns state=timeout if timeout_s ' +
     'elapses while the program is still running.',
     SCHEMA_RUN_DEBUGGER, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('pause_debugger',
+  Tools.Add(MakeTool('debug_pause',
     'Pause a running debug session. Blocks until the program pauses.',
     SCHEMA_NO_PARAMS, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('stop_debugger',
+  Tools.Add(MakeTool('debug_stop',
     'Stop the debug session unconditionally. Non-blocking; safe in any ' +
     'state including after a timed-out step.',
     SCHEMA_NO_PARAMS, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('step_over',
+  Tools.Add(MakeTool('debug_step_over',
     'Step over the current line (F8). Blocks until the debugger pauses at ' +
     'the next line.',
     SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('step_into',
+  Tools.Add(MakeTool('debug_step_into',
     'Step into the call at the current line (F7). Blocks until the debugger ' +
     'pauses.',
     SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('step_out',
+  Tools.Add(MakeTool('debug_step_out',
     'Step out of the current procedure (Shift+F8). Blocks until the debugger ' +
     'pauses after returning.',
     SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('run_to_line',
+  Tools.Add(MakeTool('debug_run_to_line',
     'Set a temporary breakpoint at (file_path, line), run the debugger, and ' +
     'block until that breakpoint is hit. Removes the temporary breakpoint on ' +
     'pause.',
     SCHEMA_RUN_TO_LINE, MCP_ANN_WRITE));
   { Group 4 — State inspection }
-  Tools.Add(MakeTool('get_call_stack',
+  Tools.Add(MakeTool('debug_get_call_stack',
     'Return call stack frames when the debugger is paused. Returns up to ' +
     'max_frames frames with file, line, function name and address.',
     SCHEMA_GET_CALL_STACK, MCP_ANN_RO));
-  Tools.Add(MakeTool('evaluate_expression',
+  Tools.Add(MakeTool('debug_evaluate',
     'Evaluate a Pascal expression in the current debug context. Debugger must ' +
     'be paused.',
     SCHEMA_EVALUATE_EXPRESSION, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_local_variables',
+  Tools.Add(MakeTool('debug_get_locals',
     'Return local variables and parameters in the current stack frame. ' +
     'Debugger must be paused.',
     SCHEMA_GET_LOCAL_VARIABLES, MCP_ANN_RO));
-  Tools.Add(MakeTool('set_local_variable',
+  Tools.Add(MakeTool('debug_set_variable',
     'Modify a local variable or parameter in the current stack frame. ' +
-    'Debugger must be paused. Call get_local_variables afterwards to verify.',
+    'Debugger must be paused. Call debug_get_locals afterwards to verify.',
     SCHEMA_SET_LOCAL_VARIABLE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_add_watch',
     'Add an expression to the IDE Watches window (kept across sessions). ' +
@@ -1411,7 +1411,7 @@ begin
     'Return what the program wrote to its console (stdout/stderr) and the ' +
     'debugger''s own output/messages in the current or last debug session.',
     SCHEMA_GET_OUTPUT, MCP_ANN_RO));
-  Tools.Add(MakeTool('exception_info',
+  Tools.Add(MakeTool('debug_get_exception',
     'Return information about the current exception when the debugger is paused ' +
     'at an exception. Returns has_exception=false if not paused at an exception. ' +
     'Uses FPC RTL ExceptObject to read class name and message.',

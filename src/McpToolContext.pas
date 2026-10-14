@@ -10,7 +10,7 @@ unit McpToolContext;
 interface
 
 uses
-  fpjson, jsonparser;
+  SysUtils, fpjson, jsonparser;
 
 type
   { Context record passed into every tool dispatch function.
@@ -21,7 +21,7 @@ type
     Params          : TJSONObject;
     Result          : string;
     Error           : Boolean;
-    ConnectionClose : Boolean;      { IDE-restart tools: rebuild_ide, install/uninstall_package }
+    ConnectionClose : Boolean;      { IDE-restart tools: ide_rebuild, install/package_uninstall }
     StopServer      : TMcpStopServerProc;  { set by SyncCallTool before dispatch }
   end;
 
@@ -50,16 +50,21 @@ procedure McpRegisterSchemas(Tools: TJSONArray);
 procedure RegisterMcpBlockingGroup(Fn: TMcpGroupDispatch);
 procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 
-{ MCP tool annotation presets — pass as AAnnotations to MakeTool. }
+{ MCP tool annotation presets — pass as AAnnotations to MakeTool.
+  Everything works on the local IDE/project only, hence openWorldHint=false.
+  RO is also used for tools that only move the editor cursor or open a tab. }
 const
-  MCP_ANN_RO    = '{"readOnlyHint":true}';
-  MCP_ANN_WRITE = '{"destructiveHint":false}';
-  MCP_ANN_DEST  = '{"destructiveHint":true}';
+  MCP_ANN_RO    = '{"readOnlyHint":true,"openWorldHint":false}';
+  MCP_ANN_WRITE = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}';
+  MCP_ANN_DEST  = '{"readOnlyHint":false,"destructiveHint":true,"openWorldHint":false}';
 
 (* Build a tool descriptor object from a JSON string schema.
    AName and ADesc are plain Pascal strings (auto-escaped).
    InputSchemaJSON is the full inputSchema value, e.g.:
-     '{"type":"object","properties":{...},"required":[...]}' *)
+     '{"type":"object","properties":{...},"required":[...]}'
+   Tool names are <category>_<action> (debug_, editor_, code_, form_,
+   project_, package_, ide_, git_); MakeTool derives the human-readable title
+   from that, e.g. debug_get_call_stack -> "Debugger: get call stack". *)
 function MakeTool(const AName, ADesc, InputSchemaJSON: string;
   const AAnnotations: string = ''): TJSONObject;
 
@@ -69,6 +74,8 @@ procedure McpListResources(Resources: TJSONArray);
 function  McpReadResource(const AUri: string; out Content: string): Boolean;
 
 implementation
+
+procedure SortToolsByName(Tools: TJSONArray); forward;
 
 var
   GDispatchGroups  : array of TMcpGroupDispatch;
@@ -107,6 +114,7 @@ var
 begin
   for I := 0 to High(GSchemaGroups) do
     GSchemaGroups[I](Tools);
+  SortToolsByName(Tools);
 end;
 
 procedure RegisterMcpBlockingGroup(Fn: TMcpGroupDispatch);
@@ -128,18 +136,68 @@ begin
     end;
 end;
 
+function ToolTitle(const AName: string): string;
+const
+  Prefixes : array[0..7] of string =
+    ('debug_', 'editor_', 'code_', 'form_', 'project_', 'package_', 'ide_', 'git_');
+  Categories : array[0..7] of string =
+    ('Debugger', 'Editor', 'CodeTools', 'Form designer', 'Project', 'Packages', 'IDE', 'Git');
+var
+  I    : Integer;
+  Rest : string;
+begin
+  Result := StringReplace(AName, '_', ' ', [rfReplaceAll]);
+  for I := Low(Prefixes) to High(Prefixes) do
+    if Copy(AName, 1, Length(Prefixes[I])) = Prefixes[I] then
+    begin
+      Rest := Copy(AName, Length(Prefixes[I]) + 1, MaxInt);
+      if Prefixes[I] = 'git_' then Rest := 'git ' + Rest;  { "Git: git stash pop" }
+      Result := Categories[I] + ': ' + StringReplace(Rest, '_', ' ', [rfReplaceAll]);
+      Exit;
+    end;
+end;
+
 function MakeTool(const AName, ADesc, InputSchemaJSON: string;
   const AAnnotations: string = ''): TJSONObject;
 var
   Schema : TJSONData;
+  Ann    : TJSONObject;
+  Title  : string;
 begin
+  Title  := ToolTitle(AName);
   Schema := GetJSON(InputSchemaJSON);
   Result := TJSONObject.Create;
   Result.Add('name',        AName);
+  Result.Add('title',       Title);   { MCP 2025-06-18 }
   Result.Add('description', ADesc);
   Result.Add('inputSchema', Schema);
   if AAnnotations <> '' then
-    Result.Add('annotations', GetJSON(AAnnotations));
+    Ann := TJSONObject(GetJSON(AAnnotations))
+  else
+    Ann := TJSONObject.Create;
+  Ann.Add('title', Title);            { older clients read it here }
+  Result.Add('annotations', Ann);
+end;
+
+{ Sort the tool list by name so each category's tools are adjacent. }
+procedure SortToolsByName(Tools: TJSONArray);
+var
+  I, J : Integer;
+  A, B : TJSONObject;
+begin
+  for I := 1 to Tools.Count - 1 do
+  begin
+    J := I;
+    while (J > 0) and
+          (TJSONObject(Tools[J - 1]).Get('name', '') > TJSONObject(Tools[J]).Get('name', '')) do
+    begin
+      A := TJSONObject(Tools.Extract(J - 1));  { shifts J to J-1 }
+      B := TJSONObject(Tools.Extract(J - 1));
+      Tools.Insert(J - 1, A);
+      Tools.Insert(J - 1, B);
+      Dec(J);
+    end;
+  end;
 end;
 
 procedure RegisterMcpResource(const AUri, AName, ADesc, AMimeType: string;

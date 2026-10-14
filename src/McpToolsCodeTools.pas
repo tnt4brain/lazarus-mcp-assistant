@@ -1,10 +1,10 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsCodeTools;
 
-{ Codetools / search tools: get_symbol_declaration, get_unit_interface,
-  get_identifier_context, get_code_outline, find_all_references, rename_identifier,
-  goto_declaration, search_in_project, create_unit, add_unit_to_uses,
-  insert_in_procedure, replace_procedure_body, add_to_class_section, get_ast_partial.
+{ Codetools / search tools: code_find_declaration, code_get_unit_interface,
+  code_get_identifier_info, code_get_outline, code_find_references, code_rename_identifier,
+  code_goto_declaration, project_search, project_create_unit, code_add_uses,
+  code_insert_in_procedure, code_replace_procedure_body, code_add_to_class, code_get_procedure_ast.
   All edit tools work through the editor buffer with an optional auto_save flag. }
 
 {$mode objfpc}{$H+}
@@ -306,7 +306,7 @@ var
 begin
   Result := False;
 
-  if Name = 'get_unit_interface' then
+  if Name = 'code_get_unit_interface' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
@@ -316,12 +316,12 @@ begin
     Ctx.Result := McpGetUnitInterface(Ctx.Params.Strings['file'], Ctx.Error);
   end
 
-  else if Name = 'search_in_project' then
+  else if Name = 'project_search' then
   begin
     Result := True;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
     TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
-    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin
       Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
@@ -335,7 +335,7 @@ begin
     Result := True;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
     TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
-    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin
       Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
@@ -344,7 +344,7 @@ begin
       Assigned(Ctx.Params) and Ctx.Params.Get('include_done', False));
   end
 
-  else if Name = 'get_symbol_declaration' then
+  else if Name = 'code_find_declaration' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -388,7 +388,7 @@ begin
     end;
   end
 
-  else if Name = 'get_identifier_context' then
+  else if Name = 'code_get_identifier_info' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -411,7 +411,7 @@ begin
     Ctx.Result := '{"hint":' + TJSONString.Create(Snippet).AsJSON + '}';
   end
 
-  else if Name = 'get_code_outline' then
+  else if Name = 'code_get_outline' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
@@ -466,7 +466,7 @@ begin
     end;
   end
 
-  else if Name = 'find_all_references' then
+  else if Name = 'code_find_references' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -487,7 +487,7 @@ begin
     end;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
     TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
-    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin
       Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
@@ -534,7 +534,7 @@ begin
     end;
   end
 
-  else if Name = 'rename_identifier' then
+  else if Name = 'code_rename_identifier' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -578,7 +578,7 @@ begin
     end;
     TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
     TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
-    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
     begin
       Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
@@ -640,7 +640,7 @@ begin
     end;
   end
 
-  else if Name = 'goto_declaration' then
+  else if Name = 'code_goto_declaration' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -685,7 +685,7 @@ begin
     end;
   end
 
-  else if Name = 'create_unit' then
+  else if Name = 'project_create_unit' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('filename', '') = '') then
@@ -746,7 +746,7 @@ begin
     end;
   end
 
-  else if Name = 'add_unit_to_uses' then
+  else if Name = 'code_add_uses' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -835,7 +835,7 @@ begin
     end;
   end
 
-  else if Name = 'insert_in_procedure' then
+  else if Name = 'code_insert_in_procedure' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -892,7 +892,7 @@ begin
     end;
   end
 
-  else if Name = 'replace_procedure_body' then
+  else if Name = 'code_replace_procedure_body' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -950,7 +950,7 @@ begin
     end;
   end
 
-  else if Name = 'add_to_class_section' then
+  else if Name = 'code_add_to_class' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -1009,7 +1009,7 @@ begin
     end;
   end
 
-  else if Name = 'get_ast_partial' then
+  else if Name = 'code_get_procedure_ast' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -1180,39 +1180,39 @@ end;
 
 procedure RegisterCodeToolsSchemas(Tools: TJSONArray);
 begin
-  Tools.Add(MakeTool('get_symbol_declaration',
+  Tools.Add(MakeTool('code_find_declaration',
     'Find where an identifier is declared using Codetools. ' +
     'Returns declaration file, line, column and a short context snippet.',
     SCHEMA_GET_SYMBOL_DECLARATION, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_unit_interface',
+  Tools.Add(MakeTool('code_get_unit_interface',
     'Return only the interface section of a Pascal unit ' +
     '(everything above the implementation keyword).',
     SCHEMA_GET_UNIT_INTERFACE, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_identifier_context',
+  Tools.Add(MakeTool('code_get_identifier_info',
     'Return type, declaration location, and hint text for the identifier ' +
     'at a given file/line/col using Codetools FindSmartHint.',
     SCHEMA_GET_IDENTIFIER_CONTEXT, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_code_outline',
+  Tools.Add(MakeTool('code_get_outline',
     'Return the structural outline of a Pascal unit: uses clauses, type ' +
     'names, class members, and top-level routines with their line numbers. ' +
     'Does not include method bodies.',
     SCHEMA_GET_CODE_OUTLINE, MCP_ANN_RO));
-  Tools.Add(MakeTool('find_all_references',
+  Tools.Add(MakeTool('code_find_references',
     'Find every reference to the identifier at the given declaration position ' +
     'across all project files.',
     SCHEMA_FIND_ALL_REFERENCES, MCP_ANN_RO));
-  Tools.Add(MakeTool('rename_identifier',
+  Tools.Add(MakeTool('code_rename_identifier',
     'Rename an identifier at the given declaration position across all ' +
     'project files. WARNING: this operation writes directly to disk and ' +
     'bypasses the IDE undo stack — it CANNOT be undone with Ctrl+Z. ' +
     'Use git to revert if needed. Only call this after confirming the ' +
     'new name with the user.',
     SCHEMA_RENAME_IDENTIFIER, MCP_ANN_DEST));
-  Tools.Add(MakeTool('goto_declaration',
+  Tools.Add(MakeTool('code_goto_declaration',
     'Find where an identifier is declared and jump the editor cursor there. ' +
     'Opens the declaration file if needed.',
     SCHEMA_GOTO_DECLARATION, MCP_ANN_RO));
-  Tools.Add(MakeTool('search_in_project',
+  Tools.Add(MakeTool('project_search',
     'Search for a text substring across all project source files. ' +
     'Returns matching file, line number, and line content.',
     SCHEMA_SEARCH_IN_PROJECT, MCP_ANN_RO));
@@ -1221,37 +1221,37 @@ begin
     'List shows them ({ TODO ...}, {#todo ...}, // TODO, FIXME). Returns file, ' +
     'line, kind and the comment text.',
     SCHEMA_LIST_TODOS, MCP_ANN_RO));
-  Tools.Add(MakeTool('create_unit',
+  Tools.Add(MakeTool('project_create_unit',
     'Create a new Pascal unit file on disk, add it to the active project, ' +
     'and open it in the editor. Provide content or receive a blank unit skeleton.',
     SCHEMA_CREATE_UNIT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('add_unit_to_uses',
+  Tools.Add(MakeTool('code_add_uses',
     'Add a unit to the uses clause of a Pascal file using Codetools. ' +
     'Edit lands in the editor buffer (Ctrl+Z works); use auto_save=true or ' +
-    'save_file to persist to disk. ' +
+    'editor_save to persist to disk. ' +
     'Set in_interface=false to target the implementation uses clause.',
     SCHEMA_ADD_UNIT_TO_USES, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('insert_in_procedure',
+  Tools.Add(MakeTool('code_insert_in_procedure',
     'Insert text at the start of a named procedure or function body (immediately ' +
     'after begin), located via CodeTools AST. No string matching — robust to ' +
     'whitespace and formatting changes. Uses the editor undo stack (Ctrl+Z works).',
     SCHEMA_INSERT_IN_PROCEDURE, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('replace_procedure_body',
+  Tools.Add(MakeTool('code_replace_procedure_body',
     'Replace the entire body of a named procedure or function (everything between ' +
     'begin and end) with new_body, located via CodeTools AST. No string matching. ' +
     'Uses the editor undo stack (Ctrl+Z works).',
     SCHEMA_REPLACE_PROCEDURE_BODY, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('add_to_class_section',
+  Tools.Add(MakeTool('code_add_to_class',
     'Append a declaration to a named section of a class (public, private, ' +
     'protected, or published), located via CodeTools AST. No string matching. ' +
     'Uses the editor undo stack (Ctrl+Z works).',
     SCHEMA_ADD_TO_CLASS_SECTION, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('get_ast_partial',
+  Tools.Add(MakeTool('code_get_procedure_ast',
     'Return the structural content of a named procedure body: local variable ' +
     'declarations and a flat list of block-level control-flow nodes (if, for, ' +
     'while, try, case, repeat, with) with their line ranges. Locate by ' +
     'proc_name (+ optional class_name) or by a line number inside the body. ' +
-    'Read-only — use the returned line numbers as inputs to edit_at_position ' +
+    'Read-only — use the returned line numbers as inputs to editor_edit_at_position ' +
     'or the Tier-2 structural edit tools.',
     SCHEMA_GET_AST_PARTIAL, MCP_ANN_RO));
 end;

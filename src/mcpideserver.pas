@@ -563,7 +563,7 @@ begin
      ((ArgName = 'file') or (ArgName = 'lpk_path') or
       (ArgName = 'lpi_path') or (ArgName = 'path')) then
   begin
-    FSyncToolName := 'get_project_files';
+    FSyncToolName := 'project_list_files';
     FSyncParams   := nil;
     FSyncResult   := '';
     FSyncError    := False;
@@ -646,7 +646,7 @@ begin
 
   if Name = 'explain_compiler_errors' then
   begin
-    FSyncToolName := 'get_compiler_errors';
+    FSyncToolName := 'project_get_compiler_errors';
     FSyncParams   := nil;
     FSyncResult   := '';
     FSyncError    := False;
@@ -662,7 +662,7 @@ begin
   end
   else if Name = 'review_active_file' then
   begin
-    FSyncToolName := 'get_active_file';
+    FSyncToolName := 'editor_get_active';
     FSyncParams   := nil;
     FSyncResult   := '';
     FSyncError    := False;
@@ -727,7 +727,7 @@ begin
   Err  := False;
   Text := '';
 
-  if ToolName = 'compile_plugin' then
+  if ToolName = 'package_compile' then
   begin
     if not Assigned(Args) or (Args.Get('lpk_path', '') = '') then
     begin
@@ -736,13 +736,13 @@ begin
     end else
       Text := McpRunLazbuild(Args.Strings['lpk_path'], Err);
   end
-  else if ToolName = 'run_tests' then
+  else if ToolName = 'ide_run_tests' then
   begin
     ResolvedLpi := IfThen(Assigned(Args), Args.Get('test_project', ''), '');
     if ResolvedLpi = '' then
     begin
       // Resolve default .lpi path on the main thread
-      FSyncToolName := 'get_project_directory';
+      FSyncToolName := 'project_get_directory';
       FSyncParams   := nil;
       FSyncResult   := '';
       FSyncError    := False;

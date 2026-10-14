@@ -14,9 +14,9 @@ The `lazarus-ide://reference` MCP resource contains the Lazarus/FPC component li
 
 At the start of every session, orient yourself:
 
-1. `get_project_directory` — project root (all relative paths resolve from here)
-2. `get_active_file` — what the user has open right now
-3. `get_open_editors` — broader context of what's in use
+1. `project_get_directory` — project root (all relative paths resolve from here)
+2. `editor_get_active` — what the user has open right now
+3. `editor_list_open` — broader context of what's in use
 
 Do this before asking any clarifying questions. Most context you need is already available through the tools.
 
@@ -26,47 +26,70 @@ Do this before asking any clarifying questions. Most context you need is already
 
 ### Edit → save → compile loop
 ```
-get_file_content → replace_text → save_file → build_project → get_compiler_errors
+editor_read_file → editor_edit_text → editor_save → project_build → project_get_compiler_errors
 ```
-Always `save_file` before `build_project`. Always check `get_compiler_errors` after a build that returns errors — the structured output is easier to parse than raw text.
+Always `editor_save` before `project_build`. Always check `project_get_compiler_errors` after a build that returns errors — the structured output is easier to parse than raw text.
 
 ### Understand before changing
-For any non-trivial change: `get_code_outline` the unit first, then `get_unit_interface` for the public surface, then `find_all_references` on anything you plan to rename or remove. Surprises come from callers you didn't see.
+For any non-trivial change: `code_get_outline` the unit first, then `code_get_unit_interface` for the public surface, then `code_find_references` on anything you plan to rename or remove. Surprises come from callers you didn't see.
 
 ### Refactoring an identifier
 ```
-find_all_references → review all call sites → rename_identifier
+code_find_references → review all call sites → code_rename_identifier
 ```
-`rename_identifier` uses CodeTools and updates all files atomically. Prefer it over manual `replace_text` for symbol renames.
+`code_rename_identifier` uses CodeTools and updates all files atomically. Prefer it over manual `editor_replace_range` for symbol renames.
 
 ### Adding a dependency
 ```
-add_unit_to_uses  (handles duplicates and section placement automatically)
+code_add_uses  (handles duplicates and section placement automatically)
 ```
-Don't manually edit the `uses` clause with `replace_text` — `add_unit_to_uses` is safer.
+Don't manually edit the `uses` clause with `editor_replace_range` — `code_add_uses` is safer.
+
+### Designing a form
+```
+form_get_lfm (whole layout at a glance) → form_search_palette → form_add_component
+→ form_set_properties → form_arrange → form_get_lfm (check) → editor_save (the .pas)
+```
+- `form_add_component` takes `name`, `parent_name` and initial `properties` — one call per control.
+- Properties are Object Inspector text: dotted paths for nested ones (`BorderSpacing.Around`, `Font.Style`, `AnchorSideLeft.Control`), sets as `[akLeft,akTop]`, enums as `alClient`, references by component name, events by handler name.
+- Prefer LCL layout over pixel positions: `Align`, `Anchors` + `AnchorSide*`, `BorderSpacing.*`, and a container's `ChildSizing.*` (e.g. `ChildSizing.Layout = cclLeftToRightThenTopToBottom`, `ChildSizing.HorizontalSpacing`) keep forms correct when fonts or DPI change. Use `form_arrange` for one-off alignment, equal sizes and fixed gaps.
+- `Name` renames the component in the source too; `Parent` moves a control into another container.
+
+### Debugging
+```
+debug_set_breakpoint → debug_run → debug_get_locals / debug_evaluate / debug_get_call_stack
+→ debug_step_over | debug_step_into | debug_run → debug_stop
+```
+- Run and step tools block until the program pauses (or `timeout_s`). An exception pauses the program and comes back in the same response as `reason: "exception"` with class, message, file and line — no dialog appears. `debug_get_exception` returns it again later.
+- `debug_add_watch` + `debug_list_watches` track expressions across steps; `debug_list_threads` for multi-threaded programs; `debug_get_output` returns what the program printed.
+- Sessions you drive never show IDE modals ("Execution stopped", exception, debugger errors); suppressed debugger messages are returned as `debugger_message`.
 
 ---
 
 ## Prefer X over Y
 
-- **`rename_identifier` over `search_in_project` + `replace_text`** for symbol renames — CodeTools updates all files atomically and handles string literals, comments, and scoping correctly.
-- **`add_unit_to_uses` over `replace_text`** when adding a unit dependency — handles duplicates, interface vs implementation section, and existing formatting.
-- **`get_unit_interface` over `get_file_content`** when you only need the public API — faster, less noise, fits in context better for large units.
-- **`get_code_outline` before editing** any unfamiliar unit — costs one call, saves you from editing the wrong method or missing an override.
-- **`build_project` over `get_compiler_errors`** when you've made changes — `get_compiler_errors` returns stale results until the next build.
-- **`get_form_components` + `set_component_property` over `replace_text` on `.lfm`** — the Form Designer owns `.lfm` files; direct text edits corrupt designer state.
-- **`revert_file` over closing and reopening** when you want to discard unsaved edits — single call, no navigation needed.
-- **`get_active_file` over asking the user** what they're working on — the answer is already in the IDE.
+- **`code_rename_identifier` over `project_search` + `editor_replace_range`** for symbol renames — CodeTools updates all files atomically and handles string literals, comments, and scoping correctly.
+- **`code_add_uses` over `editor_replace_range`** when adding a unit dependency — handles duplicates, interface vs implementation section, and existing formatting.
+- **`code_get_unit_interface` over `editor_read_file`** when you only need the public API — faster, less noise, fits in context better for large units.
+- **`code_get_outline` before editing** any unfamiliar unit — costs one call, saves you from editing the wrong method or missing an override.
+- **`project_build` over `project_get_compiler_errors`** when you've made changes — `project_get_compiler_errors` returns stale results until the next build.
+- **`editor_edit_text` over `editor_replace_range`** — matching by content has no stale line numbers.
+- **`form_*` tools over editing `.lfm` text** — the Form Designer owns `.lfm` files; direct text edits corrupt designer state.
+- **`editor_revert` over closing and reopening** when you want to discard unsaved edits — single call, no navigation needed.
+- **`editor_get_active` over asking the user** what they're working on — the answer is already in the IDE.
 
 ---
 
 ## Gotchas
 
 - **Save before build.** Unsaved buffer changes are invisible to the compiler.
-- **`rebuild_ide` kills the session.** After calling it, the MCP server is offline for ~60 s. Poll with `ping` until it responds, then `/mcp reconnect` in the Claude Code terminal.
-- **LFM files are not plain text.** They sync with the Form Designer's object model. `replace_text` on an `.lfm` will corrupt designer state. Use the GUI tools.
-- **CodeTools needs a clean build state.** If `find_all_references` or `rename_identifier` returns unexpected results, `build_project` first to clear stale symbol tables.
-- **`compile_plugin` ≠ `build_project`.** `compile_plugin` builds a `.lpk` package with `lazbuild` and does not touch the main project.
+- **`ide_rebuild` kills the session.** After calling it, the MCP server is offline for ~60 s. Poll with `ide_ping` until it responds, then `/mcp reconnect` in the Claude Code terminal.
+- **Designer changes live in memory until saved.** `form_*` tools change the designer; `editor_save` on the unit writes both `.pas` and `.lfm`.
+- **Files you edit on disk while they are open in the IDE** are reloaded automatically during your tool calls (only those without unsaved editor changes). Prefer editing through `editor_*` tools anyway.
+- **Debugger values are snapshots.** `debug_get_locals`/`debug_evaluate` describe the current pause; step or run, then read again.
+- **LFM files are not plain text.** They sync with the Form Designer's object model. `editor_replace_range` on an `.lfm` will corrupt designer state. Use the GUI tools.
+- **CodeTools needs a clean build state.** If `code_find_references` or `code_rename_identifier` returns unexpected results, `project_build` first to clear stale symbol tables.
+- **`package_compile` ≠ `project_build`.** `package_compile` builds a `.lpk` package with `lazbuild` and does not touch the main project.
 - **FPC is not Delphi.** Mode is `{$mode objfpc}{$H+}` by default. Generics need `specialize`. See the Lazarus/FPC reference section below for more.
 
 ---

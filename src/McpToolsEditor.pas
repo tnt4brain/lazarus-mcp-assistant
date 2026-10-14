@@ -1,10 +1,10 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsEditor;
 
-{ Editor / navigation tools: get_active_file, get_file_content, get_project_files,
-  get_open_editors, get_cursor_position, get_selected_text, edit_text,
-  replace_text, set_cursor_position, save_file, close_file, revert_file,
-  open_file. }
+{ Editor / navigation tools: editor_get_active, editor_read_file, project_list_files,
+  editor_list_open, editor_get_cursor, editor_get_selection, editor_edit_text,
+  editor_replace_range, editor_set_cursor, editor_save, editor_close, editor_revert,
+  editor_open. }
 
 {$mode objfpc}{$H+}
 
@@ -130,7 +130,7 @@ var
 begin
   Result := False;
 
-  if Name = 'get_active_file' then
+  if Name = 'editor_get_active' then
   begin
     Result := True;
     Ed := SourceEditorManagerIntf.ActiveEditor;
@@ -174,7 +174,7 @@ begin
     end;
   end
 
-  else if Name = 'get_file_content' then
+  else if Name = 'editor_read_file' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('path', '') = '') then
@@ -223,7 +223,7 @@ begin
     end;
   end
 
-  else if Name = 'get_project_files' then
+  else if Name = 'project_list_files' then
   begin
     Result := True;
     Files := TJSONArray.Create;
@@ -242,7 +242,7 @@ begin
     end;
   end
 
-  else if Name = 'get_open_editors' then
+  else if Name = 'editor_list_open' then
   begin
     Result := True;
     Files := TJSONArray.Create;
@@ -255,7 +255,7 @@ begin
     end;
   end
 
-  else if Name = 'get_cursor_position' then
+  else if Name = 'editor_get_cursor' then
   begin
     Result := True;
     Ed := SourceEditorManagerIntf.ActiveEditor;
@@ -274,7 +274,7 @@ begin
     end;
   end
 
-  else if Name = 'get_selected_text' then
+  else if Name = 'editor_get_selection' then
   begin
     Result := True;
     Ed := SourceEditorManagerIntf.ActiveEditor;
@@ -304,7 +304,7 @@ begin
     end;
   end
 
-  else if Name = 'set_cursor_position' then
+  else if Name = 'editor_set_cursor' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -348,7 +348,7 @@ begin
     end;
   end
 
-  else if Name = 'replace_text' then
+  else if Name = 'editor_replace_range' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -395,7 +395,7 @@ begin
     end;
   end
 
-  else if Name = 'edit_text' then
+  else if Name = 'editor_edit_text' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -479,7 +479,7 @@ begin
     end;
   end
 
-  else if Name = 'save_file' then
+  else if Name = 'editor_save' then
   begin
     Result := True;
     SyncFilePath := '';
@@ -515,7 +515,7 @@ begin
     end;
   end
 
-  else if Name = 'close_file' then
+  else if Name = 'editor_close' then
   begin
     Result := True;
     SyncFilePath := '';
@@ -551,7 +551,7 @@ begin
     end;
   end
 
-  else if Name = 'revert_file' then
+  else if Name = 'editor_revert' then
   begin
     Result := True;
     SyncFilePath := '';
@@ -580,7 +580,7 @@ begin
     end;
   end
 
-  else if Name = 'open_file' then
+  else if Name = 'editor_open' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
@@ -601,7 +601,7 @@ begin
     end;
   end
 
-  else if Name = 'edit_at_position' then
+  else if Name = 'editor_edit_at_position' then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -675,64 +675,64 @@ end;
 
 procedure RegisterEditorSchemas(Tools: TJSONArray);
 begin
-  Tools.Add(MakeTool('get_active_file',
+  Tools.Add(MakeTool('editor_get_active',
     'Return the active editor file name and its current buffer content.',
     SCHEMA_GET_ACTIVE_FILE, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_file_content',
+  Tools.Add(MakeTool('editor_read_file',
     'Read the content of any file by its absolute path. ' +
     'Prefers the live editor buffer (shows unsaved changes) over disk.',
     SCHEMA_GET_FILE_CONTENT, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_project_files',
+  Tools.Add(MakeTool('project_list_files',
     'Return the list of source files in the active project.',
     SCHEMA_GET_PROJECT_FILES, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_open_editors',
+  Tools.Add(MakeTool('editor_list_open',
     'Return the list of all currently open editor tabs (file names).',
     SCHEMA_GET_OPEN_EDITORS, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_cursor_position',
+  Tools.Add(MakeTool('editor_get_cursor',
     'Return the current cursor position (file, line, col) in the active editor.',
     SCHEMA_GET_CURSOR_POSITION, MCP_ANN_RO));
-  Tools.Add(MakeTool('get_selected_text',
+  Tools.Add(MakeTool('editor_get_selection',
     'Return the currently selected text and its range in the active editor.',
     SCHEMA_GET_SELECTED_TEXT, MCP_ANN_RO));
-  Tools.Add(MakeTool('set_cursor_position',
+  Tools.Add(MakeTool('editor_set_cursor',
     'Move the cursor to a specific line and column in the editor. ' +
     'Opens the file first if it is not already open. ' +
     'Omit file to move the cursor in the currently active editor.',
     SCHEMA_SET_CURSOR_POSITION, MCP_ANN_RO));
-  Tools.Add(MakeTool('replace_text',
+  Tools.Add(MakeTool('editor_replace_range',
     'Replace a range of text in the editor buffer. ' +
     'The edit is recorded in the editor''s undo history (Ctrl+Z works). ' +
     'Use an empty range (start = end) to insert text. ' +
     'Use empty new_text to delete the range. ' +
     'Opens the file first if it is not already open.',
     SCHEMA_REPLACE_TEXT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('edit_text',
+  Tools.Add(MakeTool('editor_edit_text',
     'Replace text by content: find old_string in the editor buffer and replace ' +
     'with new_string. Fails if old_string is not found or matches more than once ' +
     '(pass replace_all=true to replace every occurrence). ' +
-    'Prefer this over replace_text — no stale line-number offsets. ' +
+    'Prefer this over editor_replace_range — no stale line-number offsets. ' +
     'The edit is recorded in the editor''s undo history (Ctrl+Z works). ' +
     'Opens the file first if it is not already open.',
     SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('save_file',
+  Tools.Add(MakeTool('editor_save',
     'Save the editor buffer to disk. Omit file to save the active editor.',
     SCHEMA_SAVE_FILE, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('close_file',
+  Tools.Add(MakeTool('editor_close',
     'Close an editor tab. Omit file to close the active editor. ' +
     'Unsaved changes are discarded quietly.',
     SCHEMA_CLOSE_FILE, MCP_ANN_DEST));
-  Tools.Add(MakeTool('revert_file',
+  Tools.Add(MakeTool('editor_revert',
     'Discard unsaved editor changes and reload the file from disk. ' +
     'Omit file to revert the active editor.',
     SCHEMA_REVERT_FILE, MCP_ANN_DEST));
-  Tools.Add(MakeTool('open_file',
+  Tools.Add(MakeTool('editor_open',
     'Open a file in the IDE editor and make it the active tab, ' +
     'without moving the cursor. Returns {"file":..., "already_open":bool}.',
     SCHEMA_OPEN_FILE, MCP_ANN_RO));
-  Tools.Add(MakeTool('edit_at_position',
+  Tools.Add(MakeTool('editor_edit_at_position',
     'Replace exactly delete_len characters starting at (line, col) with insert_text. ' +
-    'No string matching — use coordinates from a prior get_code_outline, ' +
-    'get_symbol_declaration, or get_ast_partial call. ' +
+    'No string matching — use coordinates from a prior code_get_outline, ' +
+    'code_find_declaration, or code_get_procedure_ast call. ' +
     'Pass delete_len=0 for a pure insert; insert_text="" for a pure delete. ' +
     'The edit is recorded in the undo history (Ctrl+Z works).',
     SCHEMA_EDIT_AT_POSITION, MCP_ANN_WRITE));
