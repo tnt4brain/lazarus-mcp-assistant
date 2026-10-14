@@ -93,6 +93,30 @@ Merged or renamed beyond the prefix:
 - `run_with_args` was merged into `project_run`, which now has an optional `args`.
 - `ping` became `ide_ping`. The JSON-RPC `ping` method is unchanged.
 
+### 6. Path arguments are normalised once, for every tool (added 2026-10-14)
+
+Clients spell paths differently: Claude Code on Windows often sends `D:/x/f.pas`,
+while the IDE names the same file `D:\x\f.pas`. Tools that compared names
+failed for the first spelling: every `form_*` tool, breakpoint removal and
+project-file removal (bfd3f26).
+
+So `HandleToolsCall` runs `McpNormalizePathArgs` (in `McpUtils`) before
+dispatch. It covers the arguments named `file`, `file_path`, `path`,
+`form_file`, `filename`, `directory`, `project_dir`, `work_dir`, `lpk_path`,
+`test_project` and `junit_out`:
+
+- **Absolute paths** go through `CleanAndExpandFilename`: native separators, no
+  `.` or `..` segments.
+- **Relative paths** stay as they are. Each tool resolves them against its own
+  base, the project or the repository directory, never against the IDE's
+  working directory.
+- **`output_dir`** isn't touched. It is stored in the `.lpi` as written,
+  macros included.
+
+New tools get this for free if they use one of these names for path arguments.
+Code that calls tools internally, bypassing `HandleToolsCall`, normalises for
+itself.
+
 ## Alternatives considered
 
 - **Dotted namespaces (`debug.run`).** These read well, but some clients and LLM APIs

@@ -21,6 +21,7 @@ type
     procedure TestCodeGetOutline;
     procedure TestCodeGetUnitInterface;
     procedure TestFormListComponentsForwardSlashes;
+    procedure TestPathSpellingsNameOneFile;
     procedure TestGitStatus;
     procedure TestProjectGetSettings;
     procedure TestProjectOpenAlreadyOpen;
@@ -105,6 +106,28 @@ begin
   finally
     Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
   end;
+end;
+
+procedure TTestToolSmoke.TestPathSpellingsNameOneFile;
+{ The server normalises path arguments: opened with forward slashes, found
+  again through a '..' detour, closed with the native spelling. }
+var
+  Slashes, Detour, T : string;
+begin
+  Slashes := StringReplace(FixtureUnit, '\', '/', [rfReplaceAll]);
+  Detour  := StringReplace(TestsDir + 'fixtures/../fixtures/fixtureform.pas',
+                           '\', '/', [rfReplaceAll]);
+  try
+    T := Call('editor_open', '{"file_path":' + JsonStr(Slashes) + '}');
+    CheckNoError(Self, 'editor_open', T);
+    T := Call('editor_open', '{"file_path":' + JsonStr(Detour) + '}');
+    CheckTrue(Pos('"already_open" : true', T) > 0, 'same file through ..: ' + T);
+    T := Call('editor_list_open', '{}');
+    CheckTrue(Pos(JsonStr(FixtureUnit), T) > 0, 'listed with the native path: ' + T);
+  finally
+    T := Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
+  end;
+  CheckTrue(Pos('"closed" : true', T) > 0, 'closed by its native path: ' + T);
 end;
 
 procedure TTestToolSmoke.TestGitStatus;

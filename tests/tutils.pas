@@ -21,12 +21,15 @@ type
     procedure TestFindFreePortIsUsable;
     procedure TestIsPortFreeForBoundPort;
     procedure TestSwap16RoundTrip;
+    procedure TestNormalizePathAbsolute;
+    procedure TestNormalizePathRelativeUnchanged;
+    procedure TestNormalizePathArgs;
   end;
 
 implementation
 
 uses
-  SysUtils, Sockets;
+  SysUtils, Sockets, fpjson, jsonparser;
 
 procedure TTestUtils.TestGenerateTokenIs64Chars;
 begin
@@ -101,6 +104,48 @@ procedure TTestUtils.TestSwap16RoundTrip;
 begin
   CheckEquals(Word($1234), Swap16(Swap16($1234)), 'Swap16 round-trip failed');
   CheckEquals(Word($AB00), Swap16(Word($00AB)), 'Swap16 byte swap failed');
+end;
+
+procedure TTestUtils.TestNormalizePathAbsolute;
+begin
+  {$IFDEF WINDOWS}
+  CheckEquals('D:\a\c\f.pas', McpNormalizePath('D:/a/b/../c/./f.pas'));
+  CheckEquals('D:\a\f.pas', McpNormalizePath('D:\a\f.pas'), 'already normal');
+  {$ELSE}
+  CheckEquals('/a/c/f.pas', McpNormalizePath('/a/b/../c/./f.pas'));
+  CheckEquals('/a/f.pas', McpNormalizePath('/a/f.pas'), 'already normal');
+  {$ENDIF}
+end;
+
+procedure TTestUtils.TestNormalizePathRelativeUnchanged;
+begin
+  { tools resolve these against their own base directory }
+  CheckEquals('tests/x.lpi', McpNormalizePath('tests/x.lpi'));
+  CheckEquals('../src', McpNormalizePath('../src'));
+  CheckEquals('', McpNormalizePath(''));
+end;
+
+procedure TTestUtils.TestNormalizePathArgs;
+var
+  Args : TJSONObject;
+  Abs  : string;
+begin
+  {$IFDEF WINDOWS}Abs := 'C:/p/./u.pas';{$ELSE}Abs := '/p/./u.pas';{$ENDIF}
+  Args := TJSONObject(GetJSON('{"file":"' + Abs + '","form_file":"' + Abs + '",' +
+    '"output_dir":"' + Abs + '","query":"' + Abs + '","line":3,"test_project":"t/x.lpi"}'));
+  try
+    McpNormalizePathArgs(Args);
+    CheckEquals(McpNormalizePath(Abs), Args.Get('file', ''));
+    CheckEquals(McpNormalizePath(Abs), Args.Get('form_file', ''));
+    CheckNotEquals(Abs, Args.Get('file', ''), 'the path argument was changed');
+    CheckEquals(Abs, Args.Get('output_dir', ''), 'output_dir is stored as written');
+    CheckEquals(Abs, Args.Get('query', ''), 'not a path argument');
+    CheckEquals(3, Args.Get('line', 0));
+    CheckEquals('t/x.lpi', Args.Get('test_project', ''), 'relative stays relative');
+  finally
+    Args.Free;
+  end;
+  McpNormalizePathArgs(nil);   { no arguments at all }
 end;
 
 initialization

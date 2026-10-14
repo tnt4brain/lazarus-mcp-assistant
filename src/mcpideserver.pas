@@ -834,6 +834,8 @@ begin
 
   ToolName := Params.Get('name', '');
   Args     := TJSONObject(Params.Find('arguments'));
+  { D:/x/f.pas and D:\x\f.pas must name the same file for every tool }
+  McpNormalizePathArgs(Args);
 
   Err  := False;
   Text := '';

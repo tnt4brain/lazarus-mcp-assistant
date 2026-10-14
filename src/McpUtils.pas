@@ -8,6 +8,9 @@ unit McpUtils;
 
 interface
 
+uses
+  fpjson;
+
 { Byte-swap a 16-bit value (network ↔ host byte order on little-endian hosts). }
 function Swap16(v: Word): Word; inline;
 
@@ -21,10 +24,49 @@ function FindFreePort: Word;
 { Try to bind 127.0.0.1:APort. Returns True if the port is currently free. }
 function IsPortFree(APort: Word): Boolean;
 
+{ An absolute path with native separators and no '.'/'..' segments, so
+  D:/x/../y.pas and D:\y.pas compare equal.  Relative paths come back
+  unchanged: tools resolve them against their own base (project or
+  repository directory), not against the IDE's working directory. }
+function McpNormalizePath(const S: string): string;
+
+{ McpNormalizePath for every path argument of a tools/call (file, file_path,
+  form_file, lpk_path, work_dir, ...), in place.  AArgs may be nil. }
+procedure McpNormalizePathArgs(AArgs: TJSONObject);
+
 implementation
 
 uses
-  SysUtils, Sockets;
+  SysUtils, Sockets, LazFileUtils;
+
+const
+  { argument names that hold file or directory paths; output_dir is not one
+    of them: it is stored in the .lpi as written, macros included }
+  PATH_ARGS : array[0..10] of string = (
+    'file', 'file_path', 'path', 'form_file', 'filename', 'directory',
+    'project_dir', 'work_dir', 'lpk_path', 'test_project', 'junit_out');
+
+function McpNormalizePath(const S: string): string;
+begin
+  if (S <> '') and FilenameIsAbsolute(S) then
+    Result := CleanAndExpandFilename(S)
+  else
+    Result := S;
+end;
+
+procedure McpNormalizePathArgs(AArgs: TJSONObject);
+var
+  I : Integer;
+  D : TJSONData;
+begin
+  if not Assigned(AArgs) then Exit;
+  for I := Low(PATH_ARGS) to High(PATH_ARGS) do
+  begin
+    D := AArgs.Find(PATH_ARGS[I]);
+    if Assigned(D) and (D.JSONType = jtString) then
+      D.AsString := McpNormalizePath(D.AsString);
+  end;
+end;
 
 function Swap16(v: Word): Word;
 begin
