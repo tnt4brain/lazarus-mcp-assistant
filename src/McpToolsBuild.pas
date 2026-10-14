@@ -401,7 +401,8 @@ begin
     'Installing a package that is not installed yet needs the user''s consent: the ' +
     'user must have enabled it in the IDE and confirms each install there. ' +
     'The IDE exits immediately after this call; the MCP server will be ' +
-    'unavailable for ~60 s. Call package_compile first to catch errors early.',
+    'unavailable for ~60 s. Run the returned poll_command to wait for it. ' +
+    'Call package_compile first to catch errors early.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
   Tools.Add(MakeTool('ide_run_tests',
     'Compile and run the FPCUnit test project, then return structured results ' +

@@ -441,8 +441,8 @@ begin
   Tools.Add(MakeTool('ide_ping',
     'Returns {"status":"ok","version":"x.y","client":"<id>"} immediately: client ' +
     'is the identity the server sees for this caller (its session id, or ' +
-    '"anonymous"). Use this to poll for the MCP server coming back after ' +
-    'ide_rebuild — retry until it succeeds.',
+    '"anonymous"). After ide_rebuild, wait with the returned poll_command; ' +
+    'this then confirms the server is back.',
     SCHEMA_PING, MCP_ANN_RO));
   Tools.Add(MakeTool('project_get_directory',
     'Return the root directory of the active project (directory containing the .lpi file).',

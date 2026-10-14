@@ -168,7 +168,7 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 
 | Tool | Description |
 |---|---|
-| `ide_ping` | `{"status":"ok","version":"x.y"}` — poll after `ide_rebuild` |
+| `ide_ping` | `{"status":"ok","version":"x.y","client":"<id>"}` — confirms the server is back after `ide_rebuild` and shows the caller's identity |
 | `ide_get_messages` | Everything in the Messages window, all urgency levels |
 | `ide_rebuild` | Rebuild and restart the IDE (optionally installing `lpk_path` first); the server is gone for ~60 s |
 | `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML |
@@ -258,8 +258,8 @@ This plugin was built using itself. The development loop:
 2. Claude edits source files in the plugin repository using `editor_edit_text`, `project_create_unit`, etc.
 3. Claude calls `package_compile` with the `.lpk` path to catch compiler errors before touching the IDE.
 4. Claude calls `ide_rebuild` (optionally passing `lpk_path`). The IDE exits and `startlazarus.exe` rebuilds it (~60 s).
-5. Claude polls with `ide_ping` until the new IDE is up (the `ide_rebuild` response includes a ready-to-run `poll_command`).
-6. The new IDE starts with the same bearer token and the same ephemeral port. Claude's session resumes without any reconnection step.
+5. Claude runs the `poll_command` from the `ide_rebuild` response, which waits until the new IDE is up.
+6. The new IDE starts with the same bearer token and the same ephemeral port, so Claude Code's next call just works and keeps its session id (verified). Changed tool descriptions reach Claude Code only in a new session; `/mcp reconnect` didn't refresh the ones it had already loaded (seen with tool search on).
 
 **Why this works across a restart:** the bearer token is generated once and stored in `mcpassistantoptions.xml`; subsequent starts reuse it. The new IDE writes the same token back to the same config file at the same path. The port stays stable because `TProcess.InheritHandles := False` prevents Claude Code from holding a duplicate of the listening socket across the rebuild.
 
@@ -275,9 +275,9 @@ Architecture details: [ADR-004](docs/adr/0004-self-hosted-development.md).
 
 ## Knowledge injection
 
-The plugin injects a Lazarus/FPC reference document into Claude's system prompt at launch (`--append-system-prompt`). This covers LCL component packages, installation patterns, and common gotchas, so Claude does not hallucinate package names or import paths.
+When the plugin launches Claude, it appends `docs/system-prompt.md` to Claude's system prompt (`--append-system-prompt`). This short text covers workflows, tool preferences and the rules Claude must follow (package-install consent, debugger exceptions, rebuild/reconnect). It leaves per-tool details to the tool descriptions.
 
-The reference is also available on demand as the `lazarus-ide://reference` MCP resource — useful when Claude needs to re-consult it mid-session.
+The Lazarus/FPC reference covers LCL component packages, installation patterns and common gotchas, so Claude doesn't hallucinate package names or import paths. It is served on demand as the `lazarus-ide://reference` MCP resource, and the system prompt tells Claude to read it before answering such questions.
 
 To update the reference: edit `docs/lazarus-knowledge.md`, then run `tools/gen_knowledge_inc.exe` from the project root to regenerate `src/lazarus_knowledge.inc` and `src/system_prompt.inc` (build it once with `fpc -MObjFPC -Scghi -FEtools tools/gen_knowledge_inc.pas`), then rebuild the IDE. The same applies to `docs/system-prompt.md`.
 
