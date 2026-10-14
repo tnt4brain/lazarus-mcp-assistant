@@ -81,7 +81,10 @@ end;
 procedure LaunchMcpAssistant(Sender: TObject);
 var
   ConfigPath : string;
+  WorkDir    : string;
+  ExtraArgs  : TStringList;
   Proc       : TProcess;
+  I          : Integer;
 begin
   if not IsServerRunning then
   begin
@@ -100,6 +103,14 @@ begin
     Exit;
   end;
 
+  // Working directory: explicit override > open project dir > empty
+  if Assigned(McpSettings) and (McpSettings.WorkingDirectory <> '') then
+    WorkDir := McpSettings.WorkingDirectory
+  else if Assigned(McpProject) then
+    WorkDir := McpProject.GetProjectDirectory
+  else
+    WorkDir := '';
+
   Proc := TProcess.Create(nil);
   try
     Proc.Executable := 'claude';
@@ -108,10 +119,24 @@ begin
     Proc.Parameters.Add('--strict-mcp-config');
     Proc.Parameters.Add('--append-system-prompt');
     Proc.Parameters.Add(GetSystemPromptText);
+    // Extra user-specified CLI args (space-separated)
+    if Assigned(McpSettings) and (Trim(McpSettings.ExtraClaudeArgs) <> '') then
+    begin
+      ExtraArgs := TStringList.Create;
+      try
+        ExtraArgs.Delimiter     := ' ';
+        ExtraArgs.DelimitedText := McpSettings.ExtraClaudeArgs;
+        for I := 0 to ExtraArgs.Count - 1 do
+          if Trim(ExtraArgs[I]) <> '' then
+            Proc.Parameters.Add(ExtraArgs[I]);
+      finally
+        ExtraArgs.Free;
+      end;
+    end;
     Proc.Options        := [poNewConsole];
     Proc.InheritHandles := False; // prevent MCP listening socket inheritance
-    if Assigned(McpProject) and (McpProject.GetProjectDirectory <> '') then
-      Proc.CurrentDirectory := McpProject.GetProjectDirectory;
+    if WorkDir <> '' then
+      Proc.CurrentDirectory := WorkDir;
     try
       Proc.Execute;
       DebugLn('[MCP Assistant] Launched claude with config: ' + ConfigPath);
@@ -122,6 +147,41 @@ begin
     end;
   finally
     Proc.Free;
+  end;
+end;
+
+{ Called from the menu: lets user pick a working directory override for claude. }
+procedure SetWorkingDirectory(Sender: TObject);
+var
+  Dir: string;
+begin
+  if Assigned(McpSettings) then
+    Dir := McpSettings.WorkingDirectory
+  else
+    Dir := '';
+  if SelectDirectory('Select default working directory for Claude', '', Dir) then
+  begin
+    McpSettings.WorkingDirectory := Dir;
+    McpSettings.SaveSettings;
+  end;
+end;
+
+{ Called from the menu: lets user set extra CLI args appended to the claude launch. }
+procedure SetExtraCliOptions(Sender: TObject);
+var
+  Args: string;
+begin
+  if Assigned(McpSettings) then
+    Args := McpSettings.ExtraClaudeArgs
+  else
+    Args := '';
+  if InputQuery('Extra Claude CLI Options',
+    'Additional arguments passed to claude (space-separated):' + LineEnding +
+    'Example: --verbose --model claude-opus-5-5',
+    Args) then
+  begin
+    McpSettings.ExtraClaudeArgs := Trim(Args);
+    McpSettings.SaveSettings;
   end;
 end;
 
@@ -186,6 +246,8 @@ begin
 end;
 
 procedure Register;
+var
+  McpMenu: TIDEMenuSection;
 begin
   DebugLn('[MCP Assistant] Registering...');
   try
@@ -196,18 +258,21 @@ begin
     // Defer auto-start until after the IDE message loop is running
     if McpSettings.ServerToken <> '' then
       Application.QueueAsyncCall(@TMcpAutoStarter.Create.Run, 0);
+    McpMenu := RegisterIDESubMenu(itmSecondaryTools, 'McpAssistantMenu', 'MCP Assistant');
     RegisterIDEMenuCommand(
-      itmSecondaryTools,
-      'LaunchMcpAssistant',
-      'Launch MCP Assistant',
-      nil,
-      @LaunchMcpAssistant);
+      McpMenu, 'LaunchMcpAssistant', 'Launch MCP Assistant',
+      nil, @LaunchMcpAssistant);
+    RegisterIDEMenuSection(McpMenu, 'McpSep1');
     RegisterIDEMenuCommand(
-      itmSecondaryTools,
-      'CopyMcpConfig',
-      'Copy MCP Server Config to Clipboard',
-      nil,
-      @CopyMcpConfigToClipboard);
+      McpMenu, 'SetWorkDir', 'Set Working Directory...',
+      nil, @SetWorkingDirectory);
+    RegisterIDEMenuCommand(
+      McpMenu, 'SetExtraArgs', 'Extra CLI Options...',
+      nil, @SetExtraCliOptions);
+    RegisterIDEMenuSection(McpMenu, 'McpSep2');
+    RegisterIDEMenuCommand(
+      McpMenu, 'CopyMcpConfig', 'Copy Server Config to Clipboard',
+      nil, @CopyMcpConfigToClipboard);
     DebugLn('[MCP Assistant] Registered successfully.');
   except
     on E: Exception do
