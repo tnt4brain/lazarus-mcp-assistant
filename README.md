@@ -72,7 +72,7 @@ source too.
 
 | Tool | Description |
 |---|---|
-| `form_create` | New form unit (`.pas` + `.lfm`), added to the project and opened |
+| `form_create` | New form, data module or frame (`kind`): `.pas` + `.lfm`, added to the project and opened |
 | `form_list_components` | Every component with class, parent, bounds, Align, Anchors, Visible, Caption/Text, TabOrder; form and client size |
 | `form_get_lfm` | LFM text of the live designer state (incl. unsaved changes) — whole form or one component |
 | `form_get_properties` | Properties of a component, nested ones as dotted paths; with `names`, also the allowed values |

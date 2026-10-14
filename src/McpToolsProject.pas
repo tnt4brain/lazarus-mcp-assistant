@@ -59,7 +59,7 @@ const
   SCHEMA_CREATE_FORM =
     '{"type":"object","properties":{' +
     '"unit_name":{"type":"string","description":"Pascal unit name for the new form (e.g. UnitSettings)"},' +
-    '"form_class":{"type":"string","description":"Form class name (e.g. TFormSettings); the IDE generates a name if omitted"},' +
+    '"kind":{"type":"string","enum":["form","datamodule","frame"],"description":"What to create (default form)"},' +
     '"directory":{"type":"string","description":"Directory for the new files; defaults to the active project directory"}},' +
     '"required":["unit_name"]}';
 
@@ -135,6 +135,8 @@ var
   Descriptor : TProjectDescriptor;
   FilePath   : string;
   NewName    : string;
+  Kind       : string;
+  Desc       : TProjectFileDescriptor;
   ProjType   : string;
   VisibleOnly: Boolean;
   I, J       : Integer;
@@ -317,13 +319,33 @@ begin
       end;
     end;
     FilePath := IncludeTrailingPathDelimiter(FilePath) + NewName + '.pas';
-    LazarusIDE.DoNewEditorFile(
-      FileDescriptorForm,
-      FilePath,
-      '',
-      [nfIsPartOfProject, nfOpenInEditor, nfSave]);
+    Kind := LowerCase(Ctx.Params.Get('kind', 'form'));
+    if Kind = 'form' then
+      Desc := FileDescriptorForm
+    else if Kind = 'datamodule' then
+      Desc := FileDescriptorDatamodule
+    else if Kind = 'frame' then
+      Desc := ProjectFileDescriptors.FindByName(FileDescNameFrame)
+    else
+      Desc := nil;
+    if Desc = nil then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'kind must be form, datamodule or frame';
+      Exit;
+    end;
+    { nfCreateDefaultSrc: without it NewFile leaves the unit empty and the
+      designer root nameless (class "T") }
+    if LazarusIDE.DoNewEditorFile(Desc, FilePath, '',
+         [nfCreateDefaultSrc, nfIsPartOfProject, nfOpenInEditor, nfSave]) <> mrOK then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'Could not create ' + FilePath;
+      Exit;
+    end;
     Obj := TJSONObject.Create;
     try
+      Obj.Add('kind',      Kind);
       Obj.Add('unit_file', FilePath);
       Obj.Add('form_file', ChangeFileExt(FilePath, '.lfm'));
       Ctx.Result := Obj.AsJSON;
@@ -437,8 +459,9 @@ begin
     'Saves the project afterwards.',
     SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_create',
-    'Create a new LCL form: a .pas unit and paired .lfm file, both added to the ' +
-    'active project and opened in the editor.',
+    'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +
+    'both added to the active project and opened in the editor. The IDE names ' +
+    'it (Form2, DataModule1, Frame1); rename it with form_set_properties Name.',
     SCHEMA_CREATE_FORM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_list_templates',
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
