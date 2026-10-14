@@ -161,9 +161,11 @@ All of this is enforced in one place, `McpGateEnter`/`McpGateLeave` around every
     within the next watchdog tick
   - Windows PowerShell 5.1's `Invoke-WebRequest -Headers @{Cookie=…}` doesn't
     send the cookie, so don't test cookies with it
+- **Verified with Claude Code** (2026-10-14): after `/mcp reconnect`, Claude Code
+  sends `Mcp-Session-Id` back. Two `ide_ping` calls reported the same session id,
+  not `anonymous`. (`ide_ping` returns the caller's identity as `client` for this
+  kind of check.)
 - **Not verified:**
-  - that Claude Code echoes `Mcp-Session-Id` after `/mcp reconnect`. Lenient id
-    handling means that if it doesn't, it simply acts as `anonymous`.
   - the line in the Messages window on expiry
   - a session the user starts with F9 and an assistant then claims
 - All clients without a session id or cookie count as one. Two such scripts can
