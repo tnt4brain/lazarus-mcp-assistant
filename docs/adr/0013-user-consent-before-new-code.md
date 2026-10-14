@@ -107,8 +107,23 @@ this gate unchanged. The download installs nothing, so it needs no consent.
   extracted to `packages/Lists`, `package_search_online` then listed its
   `downloaded_lpk`. A second download was refused, `replace` worked. Replacing
   `richmemo` (installed from OPM's folder) was refused. The test download was
-  removed afterwards. The dialog with a source line has not been seen yet: that
-  needs the user to try an install.
+  removed afterwards.
+- **Dialog verified with the user** (2026-10-14). The user allowed installs,
+  `package_install` asked for the downloaded `Lists`, and the dialog read:
+
+  ```
+  File:         ...\onlinepackagemanager\packages\Lists\lists.lpk
+  Source:       downloaded by an assistant (package_download) on 2026-10-14 21:58 from
+                http://packages.lazarus-ide.org/Lists.zip
+                the Online Package Manager repository, over HTTP (unencrypted)
+                the archive's MD5 matched the repository catalog
+  Package:      Lists 0.0.0.1
+  Requires:     FCL
+  Files:        1
+  ```
+
+  The user answered "Don't install". Nothing was installed, and the download was
+  removed again.
 
 ## Alternatives considered
 
