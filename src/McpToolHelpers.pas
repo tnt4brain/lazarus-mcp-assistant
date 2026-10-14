@@ -113,6 +113,16 @@ end;
 
 { ── lazbuild runner ──────────────────────────────────────────────────────── }
 
+{ lazbuild next to the running IDE, else on PATH.  A Linux IDE rebuilt by the
+  user runs from ~/.lazarus/bin, which has no lazbuild. }
+function LazbuildPath: string;
+begin
+  Result := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
+            'lazbuild' + GetExeExt;
+  if not FileExists(Result) and (FindDefaultExecutablePath('lazbuild') <> '') then
+    Result := FindDefaultExecutablePath('lazbuild');
+end;
+
 function McpRunLazbuild(const LpkPath: string; out IsError: Boolean): string;
 var
   LazbuildExe : string;
@@ -123,8 +133,7 @@ const
   BufSize = 4096;
 begin
   IsError := False;
-  LazbuildExe := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
-                 'lazbuild' + GetExeExt;
+  LazbuildExe := LazbuildPath;
   if not FileExists(LazbuildExe) then
   begin
     IsError := True;
@@ -227,8 +236,7 @@ const
   BufSize = 4096;
 begin
   IsError := False;
-  LazbuildExe := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) +
-                 'lazbuild' + GetExeExt;
+  LazbuildExe := LazbuildPath;
   if not FileExists(LazbuildExe) then
   begin
     IsError := True;

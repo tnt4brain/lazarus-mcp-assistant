@@ -228,7 +228,7 @@ begin
   for I := DebugBoss.BreakPoints.Count - 1 downto 0 do
   begin
     BP := DebugBoss.BreakPoints.Items[I];
-    if SameText(BP.Source, InBpFile) and (BP.Line = InBpLine) then
+    if (CompareFilenames(BP.Source, InBpFile) = 0) and (BP.Line = InBpLine) then
     begin
       BP.Free;
       OutBpFound := True;

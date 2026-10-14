@@ -2,7 +2,10 @@
 
 An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 98 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
-> **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed.
+> **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
+> the plugin uses only LCL/IDE interfaces (no Win32 API), but *Launch MCP
+> Assistant* opens Claude Code in a console, which only works on Windows, and the
+> Unix code paths have never been compiled.
 
 ---
 
@@ -200,7 +203,6 @@ program started by the IDE cannot keep a connection open.
 
 - **Lazarus IDE** (tested on the stable series; v0.x targets Windows only)
 - **Free Pascal Compiler** (bundled with Lazarus)
-- **OpenSSL DLLs** on Windows — required by `opensslsockets` (used for the Anthropic API client). Download from the [OpenSSL for Windows](https://wiki.openssl.org/index.php/Binaries) page or use the DLLs bundled with many Lazarus distributions.
 - **Claude Code** (or any MCP client that supports Streamable HTTP transport)
 
 Package dependencies — all bundled with Lazarus: `SynEdit`, `IDEIntf`, `FCL`, `CodeTools`.
@@ -315,6 +317,18 @@ For v0.9:
   dialog as any other new package. The dialog will say whether the code comes
   from the official repository or from a third-party URL. See
   [ADR-013](ADR-013.md#downloads-v09-not-built-yet).
+- **Debugger: breakpoints and context.**
+  - Data breakpoints (stop when a variable changes).
+  - Breakpoints at an address or symbol (`Beep+12`), for code without source.
+  - Conditional breakpoints and pass counts.
+  - `thread`/`frame` parameters for `debug_evaluate` and watches, plus
+    `debug_select_frame`.
+- **Debugger: low-level.** `debug_disassemble` around the current position or
+  an address, `debug_get_registers` (general-purpose registers and flags), and
+  `debug_read_memory` (hex and ASCII).
+  - Built on the IDE's debugger interfaces, not on one backend.
+  - Register sets differ per CPU, and macOS uses LLDB rather than FpDebug.
+  - A backend that can't provide something is reported as unsupported.
 
 ---
 
