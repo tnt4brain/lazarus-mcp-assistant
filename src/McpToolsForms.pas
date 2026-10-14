@@ -1108,6 +1108,17 @@ begin
   end;
 end;
 
+{ Name of the handler assigned to event AProp of AComp, '' when none. }
+function EventHandlerName(AComp: TComponent; AProp: PPropInfo): string;
+var
+  M : TMethod;
+begin
+  M := GetMethodProp(AComp, AProp);
+  if (M.Code = nil) and (M.Data = nil) then
+    Exit('');
+  Result := GlobalDesignHook.GetMethodName(M, AComp);
+end;
+
 { ── Undo by snapshot ─────────────────────────────────────────────────────── }
 
 { Changes the designer's undo cannot replay property by property are
@@ -1720,11 +1731,8 @@ var
   Lfm          : string;
   Sel          : TPersistentSelectionList;
   PropInfo     : PPropInfo;
-  Method       : TMethod;
-  MethodAddr   : Pointer;
-  NewMethod    : TMethod;
   EventName, HandlerName, ExistingName, EventSuffix : string;
-  MethCompatible, MethPublished, IdentIsMethod : Boolean;
+  Ed           : TPropertyEditor;
   CEDesigner   : TComponentEditorDesigner;
   Ok           : Boolean;
   Group        : TUndoGroup;
@@ -2154,11 +2162,12 @@ begin
       Ctx.Error := True; Ctx.Result := EventName + ' is not an event property'; Exit;
     end;
 
-    { If already assigned, navigate to existing handler }
-    Method := GetMethodProp(Comp, PropInfo);
-    if Method.Code <> nil then
+    { If already assigned, navigate to existing handler.  The designer's
+      methods are JIT methods: Code can be nil with only Data set, so ask the
+      design hook for the name. }
+    ExistingName := EventHandlerName(Comp, PropInfo);
+    if ExistingName <> '' then
     begin
-      ExistingName := Root.MethodName(Method.Code);
       GlobalDesignHook.ShowMethod(ExistingName);
       Obj := TJSONObject.Create;
       try
@@ -2185,30 +2194,32 @@ begin
         HandlerName := Comp.Name + EventSuffix;
     end;
 
-    { Reuse existing method or create a new stub }
-    if GlobalDesignHook.MethodExists(HandlerName, GetTypeData(PropInfo^.PropType),
-                                     MethCompatible, MethPublished, IdentIsMethod) then
-    begin
-      MethodAddr := Root.MethodAddress(HandlerName);
-      NewMethod.Code := MethodAddr;
-      NewMethod.Data := Root;
-    end
-    else
-      NewMethod := GlobalDesignHook.CreateMethod(HandlerName, PropInfo^.PropType,
-                                                 Root, PropInfo^.PropType^.Name);
-
-    if NewMethod.Code = nil then
+    { Through the event's property editor, as the Object Inspector does: it
+      reuses a method of that name or creates the stub in the source. }
+    Err := '';
+    Ok := SnapBegin(Snap, Designer, [Comp]);   { undo unassigns the event; the method stays }
+    Pool := TEditorPool.Create;
+    try
+      try
+        Ed := ResolvePath(Pool, Comp, EventName, Err);
+        if Assigned(Ed) then
+          Ed.SetValue(HandlerName);
+      except
+        on E: Exception do Err := E.Message;
+      end;
+    finally
+      Pool.Free;
+      if Ok then
+        SnapEnd(Snap);
+    end;
+    if not SameText(EventHandlerName(Comp, PropInfo), HandlerName) then
     begin
       Ctx.Error := True;
       Ctx.Result := 'Failed to create handler: ' + HandlerName;
+      if Err <> '' then
+        Ctx.Result := Ctx.Result + ': ' + Err;
       Exit;
     end;
-
-    { undo unassigns the event; the method stays in the source }
-    Ok := SnapBegin(Snap, Designer, [Comp]);
-    SetMethodProp(Comp, PropInfo, NewMethod);
-    if Ok then
-      SnapEnd(Snap);
     Designer.Modified;
     GlobalDesignHook.ShowMethod(HandlerName);
 

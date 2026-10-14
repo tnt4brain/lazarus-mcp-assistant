@@ -32,6 +32,7 @@ type
     procedure TestSnapshotNestedControl;
     procedure TestSnapshotWithRename;
     procedure TestAnchorSideKept;
+    procedure TestCreateEventHandler;
     procedure TestMenu;
     procedure TestFormItselfNotUndoable;
   end;
@@ -229,6 +230,25 @@ begin
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('AnchorSideTop.Control = btnOK', Lfm('lblAnch')) > 0, 'anchor back');
+end;
+
+procedure TTestFormUndo.TestCreateEventHandler;
+{ Regression: it always failed with "Failed to create handler". }
+var
+  T : string;
+begin
+  T := Call('form_create_event_handler', ',"component_name":"btnOK","event_name":"OnEnter"');
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"status" : "created"', T) > 0, T);
+  CheckTrue(Pos('"handler_name" : "btnOKEnter"', T) > 0, T);
+  CheckTrue(Pos('OnEnter = btnOKEnter', Lfm('btnOK')) > 0, 'assigned');
+  T := CallToolText('editor_read_file', '{"path":' + JsonStr(FUnit) + '}', []);
+  CheckTrue(Pos('procedure TFixtureForm.btnOKEnter(Sender: TObject);', T) > 0, 'stub in the source: ' + T);
+  T := Call('form_create_event_handler', ',"component_name":"btnOK","event_name":"OnEnter"');
+  CheckTrue(Pos('"status" : "existing"', T) > 0, 'second call shows it: ' + T);
+  T := Call('form_undo', '');
+  CheckFalse(IsError(T), T);
+  CheckEquals(0, Pos('OnEnter', Lfm('btnOK')), 'undo unassigns the event');
 end;
 
 procedure TTestFormUndo.TestMenu;
