@@ -33,7 +33,7 @@ implementation
 
 uses
   LazLogger, Clipbrd,
-  McpToolsProject, McpDebugGuard, McpLauncher, McpOptions, McpRefKeeper;
+  McpToolsProject, McpDebugGuard, McpLauncher, McpOptions, McpRefKeeper, McpExceptionLog;
 
 { Called from the menu: copies the current MCP server config JSON to the clipboard. }
 procedure CopyMcpConfigToClipboard(Sender: TObject);
@@ -219,6 +219,7 @@ begin
     InitializeMcpState;
     InitializeIdeHooks;
     InitializeRefKeeper;
+    InitializeExceptionLog;
     RegisterChatPanel;
     RegisterIDECloseHook;
     // Defer auto-start (and the debugger guard) until after the IDE message

@@ -12,7 +12,8 @@ uses
   McpToolHelpers, McpToolsPackages, McpToolsEditor, McpToolsBuild, 
   McpToolsCodeTools, McpToolsForms, McpToolsProject, McpToolsGit, 
   McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent, McpLauncher, 
-  McpOptions, McpSettingsFile, McpRefKeeper, LazarusPackageIntf;
+  McpOptions, McpSettingsFile, McpRefKeeper, McpExceptionLog, 
+  LazarusPackageIntf;
 
 implementation
 

@@ -94,8 +94,8 @@ reverse. A menu item is replaced together with its whole menu. This covers:
   `form_move_collection_item`;
 - `form_add_menu_item`, `form_move_menu_item` (both menus when the item
   changes menu), and `form_delete_component` on a menu item;
-- `form_create_event_handler`. This is not verified: the tool fails in v0.9
-  before it changes anything, and is to be fixed separately.
+- `form_create_event_handler`, which now creates handlers through the event's
+  property editor, as the Object Inspector does.
 
 `Name` is kept out of the replacement. The other properties are changed
 between the delete and add entries; the rename follows as a `uopChange` entry
@@ -158,6 +158,17 @@ own undo of a delete. The notes are capped at 500 each; the oldest are dropped.
   see, so `form_undo` waits until the user closes it. The same happens to the
   user's own Ctrl+Z.
 
+- **Idle between calls.** Each insert (an add, an undo or redo, a replacement)
+  goes through `PropHookPersistentAdded`. That leaves the IDE a designer to
+  complete on its next idle (`TMainIDE.HandleApplicationIdle`). A client's
+  calls can follow each other with no idle in between. When the next call
+  closed the form, the IDE kept a dangling designer and raised an access
+  violation on every idle after: a dialog loop that only Abort ended. Since
+  then the server runs one `Application.Idle` after every main-thread tool
+  call, as the IDE would after a user's action. `ide_get_exceptions` (and
+  `mcp-exceptions.log`) record any exception that still reaches the IDE's
+  error dialog, with its stack. That is how this one was found.
+
 ## Probes (2026-10-14, on a copy of `tests/fixtures/fixtureform`)
 
 | Probe | Result |
@@ -168,14 +179,14 @@ own undo of a delete. The notes are capped at 500 each; the oldest are dropped.
 | D. the same with `McpRefKeeper` | `FocusControl` and two `PopupMenu` references come back, also across redo + undo |
 | E. replacement steps | `Font.Color` + Caption, Memo Lines, a StatusBar panel, menu add, delete and move (with `Form1.Menu` kept), an event set through `form_set_properties`: all undone; the form's own `Font.Color` reports `undoable: false` |
 
-`tests/tformundo.pas` (`TTestFormUndo`, 9 tests) covers these on a temp copy
-of the fixture form. It adds three cases:
+`tests/tformundo.pas` (`TTestFormUndo`, 11 tests) covers these on a temp copy
+of the fixture form. It also covers `AnchorSide*` set through
+`form_set_properties` and `form_create_event_handler`, plus three cases:
 - a control two panels deep, which comes back into its panel;
 - `Font.Color` together with `Name`, undone and redone, with a reference to
   the component kept;
-- an `AnchorSideTop.Control` reference, written into the copy's `.lfm`
-  because the tools cannot set `AnchorSide*` (the IDE hides it from property
-  editors), which is restored after a delete and undo.
+- an `AnchorSideTop.Control` reference written into the copy's `.lfm`, as a
+  user's anchor would be, which is restored after a delete and undo.
 
 ## Not done
 

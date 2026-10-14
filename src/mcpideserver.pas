@@ -77,9 +77,10 @@ uses
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
   LazFileUtils, Sockets, ssockets, fphttpclient,
 
-  StrUtils,
+  StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
-  McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease;
+  McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
+  McpExceptionLog;
 
 
 
@@ -448,6 +449,7 @@ procedure TMcpMainCall.Run;
 var
   Handled : Boolean;
 begin
+  McpNoteToolCall(ToolName);
   try
     McpDispatch(ToolName, Ctx, Handled);
     if not Handled then
@@ -461,6 +463,19 @@ begin
       Ctx.Error  := True;
       Ctx.Result := E.Message;
     end;
+  end;
+  { Calls from a client can follow each other without the IDE going idle in
+    between, but the IDE finishes some work on idle: for a component added
+    to a form (PropHookPersistentAdded) it keeps the designer and completes
+    the unit in TMainIDE.HandleApplicationIdle.  Closing that form first left
+    a dangling designer there, and an access violation on every idle after.
+    So the IDE gets its idle now, as after a user's action. }
+  try
+    Application.Idle(False);
+  except
+    { logged for ide_get_exceptions, without the dialog that would block
+      this call; the call's own result stands }
+    on E: Exception do McpLogException(E);
   end;
 end;
 
