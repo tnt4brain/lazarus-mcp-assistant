@@ -16,7 +16,7 @@ implementation
 
 uses
   Classes, SysUtils,
-  LazIDEIntf, ProjectIntf, PackageIntf, LazFileUtils, FileUtil,
+  LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil,
   Controls, Forms,
   fpjson,
   McpToolContext;
@@ -73,6 +73,11 @@ const
     '"project_dir":{"type":"string","description":"Absolute path for the project directory; created if absent"},' +
     '"project_name":{"type":"string","description":"Project name (becomes the .lpi filename without extension)"}},' +
     '"required":["project_dir","project_name"]}';
+
+  SCHEMA_OPEN_PROJECT =
+    '{"type":"object","properties":{' +
+    '"file_path":{"type":"string","description":"Absolute path of the project''s .lpi"}},' +
+    '"required":["file_path"]}';
 
 { ── IsDescriptorInteractive helper ──────────────────────────────────────── }
 
@@ -143,7 +148,81 @@ var
 begin
   Result := False;
 
-  if Name = 'ide_ping' then
+  if Name = 'project_open' then
+  begin
+    { Opening closes the current project.  The IDE would ask about a running
+      debugger or build and about unsaved changes, so those cases are refused
+      here instead; ofRevert skips the last question, which then concerns
+      session data only (cursor positions, open tabs), and discards it. }
+    Result := True;
+    FilePath := '';
+    if Assigned(Ctx.Params) then
+      FilePath := Ctx.Params.Get('file_path', '');
+    if FilePath = '' then
+    begin
+      Ctx.Error := True; Ctx.Result := 'file_path required'; Exit;
+    end;
+    FilePath := CleanAndExpandFilename(FilePath);
+    if not SameText(ExtractFileExt(FilePath), '.lpi') then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Pass the project''s .lpi file: ' + FilePath; Exit;
+    end;
+    if not FileExists(FilePath) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
+    end;
+    Proj := LazarusIDE.ActiveProject;
+    NewName := '';
+    if Assigned(Proj) then
+    begin
+      NewName := Proj.ProjectInfoFile;
+      if CompareFilenames(NewName, FilePath) = 0 then
+      begin
+        Ctx.Result := '{"project_file":"' + StringToJSONString(FilePath) +
+                      '","already_open":true}';
+        Exit;
+      end;
+    end;
+    if LazarusIDE.ToolStatus <> itNone then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'The IDE is busy (debugging or building). Stop that first ' +
+                    '(debug_stop), then open the project.';
+      Exit;
+    end;
+    if Assigned(Proj) and Proj.Modified then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'The current project ' + NewName + ' has unsaved changes. ' +
+                    'Ask the user to save or discard them first.';
+      Exit;
+    end;
+    for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+      if SourceEditorManagerIntf.SourceEditors[I].Modified then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Unsaved changes in ' + SourceEditorManagerIntf.SourceEditors[I].FileName +
+                      '. Save them (editor_save) or ask the user before opening another project.';
+        Exit;
+      end;
+    if LazarusIDE.DoOpenProjectFile(FilePath, [ofAddToRecent, ofRevert]) <> mrOK then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not open ' + FilePath; Exit;
+    end;
+    Obj := TJSONObject.Create;
+    try
+      if Assigned(LazarusIDE.ActiveProject) then
+        Obj.Add('project_file', LazarusIDE.ActiveProject.ProjectInfoFile)
+      else
+        Obj.Add('project_file', FilePath);
+      Obj.Add('previous_project', NewName);
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
+  else if Name = 'ide_ping' then
   begin
     Result := True;
     Obj := TJSONObject.Create;
@@ -469,6 +548,10 @@ begin
     'both added to the active project and opened in the editor. The IDE names ' +
     'it (Form2, DataModule1, Frame1); rename it with form_set_properties Name.',
     SCHEMA_CREATE_FORM, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('project_open',
+    'Open an existing project (.lpi), closing the current one. Refused while ' +
+    'debugging or building, or with unsaved changes. Clears the Messages window.',
+    SCHEMA_OPEN_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_list_templates',
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
     'of {name, localized_name, description}. Pass the name to project_create as ' +
