@@ -24,7 +24,7 @@ uses
   Controls,               { mrOk }
   Laz2_XMLCfg, fphttpclient, opensslsockets, md5, zipper,
   fpjson,
-  McpToolContext, McpIdeState, McpConsent;
+  McpToolContext, McpIdeState, McpConsent, McpToolsCodeTools;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -1073,11 +1073,7 @@ begin
   FType := FileNameToPkgFileType(FN);
   if FType = pftUnit then
   begin
-    { a file created since the IDE last looked at the directory is missing
-      from its file caches until they are invalidated }
-    InvalidateFileStateCache(FN);
-    CodeToolBoss.DirectoryCachePool.IncreaseFileTimeStamp;
-    Code := CodeToolBoss.LoadFile(FN, True, False);
+    Code := McpLoadCode(FN, True);
     UName := '';
     if Assigned(Code) then
       UName := CodeToolBoss.GetSourceName(Code, False);

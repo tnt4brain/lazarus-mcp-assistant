@@ -20,6 +20,7 @@ type
     procedure TestEditorListOpen;
     procedure TestCodeGetOutline;
     procedure TestCodeGetUnitInterface;
+    procedure TestCodeNewFileInKnownFolder;
     procedure TestFormListComponentsForwardSlashes;
     procedure TestPathSpellingsNameOneFile;
     procedure TestGitStatus;
@@ -92,6 +93,50 @@ begin
   CheckTrue(Pos('function Twice(AValue: Integer): Integer;', T) > 0,
     'interface section returned: ' + T);
   CheckEquals(0, Pos('Result := AValue * 2', T), 'implementation is left out');
+end;
+
+procedure TTestToolSmoke.TestCodeNewFileInKnownFolder;
+{ Regression: a unit written into a folder the IDE had already looked at was
+  "Could not load" for CodeTools, its file caches still saying it was not
+  there. }
+var
+  Dir, First, Second, T : string;
+
+  procedure WriteUnit(const AFile, AName: string);
+  var
+    SL : TStringList;
+  begin
+    SL := TStringList.Create;
+    try
+      SL.Text := 'unit ' + AName + ';' + LineEnding + 'interface' + LineEnding +
+                 'procedure P' + AName + ';' + LineEnding + 'implementation' + LineEnding +
+                 'procedure P' + AName + ';' + LineEnding + 'begin' + LineEnding +
+                 'end;' + LineEnding + 'end.' + LineEnding;
+      SL.SaveToFile(AFile);
+    finally
+      SL.Free;
+    end;
+  end;
+
+begin
+  Dir    := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpnewfile' +
+            IntToStr(GetTickCount64) + PathDelim;
+  First  := Dir + 'mcpfirst.pas';
+  Second := Dir + 'mcpsecond.pas';
+  ForceDirectories(Dir);
+  try
+    WriteUnit(First, 'McpFirst');
+    T := Call('code_get_outline', '{"file":' + JsonStr(First) + '}');
+    CheckNoError(Self, 'code_get_outline', T);
+    WriteUnit(Second, 'McpSecond');
+    T := Call('code_get_outline', '{"file":' + JsonStr(Second) + '}');
+    CheckNoError(Self, 'code_get_outline on the new file', T);
+    CheckTrue(Pos('"name" : "PMcpSecond"', T) > 0, 'procedures by name: ' + T);
+  finally
+    DeleteFile(First);
+    DeleteFile(Second);
+    RemoveDir(Dir);
+  end;
 end;
 
 procedure TTestToolSmoke.TestFormListComponentsForwardSlashes;

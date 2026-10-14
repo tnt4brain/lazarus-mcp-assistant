@@ -11,15 +11,33 @@ unit McpToolsCodeTools;
 
 interface
 
+uses
+  CodeCache;
+
+{ CodeToolBoss.LoadFile that also finds a file created since the IDE last
+  looked at its directory: the IDE's file caches still say it does not exist,
+  so on failure they are invalidated and the load is tried once more.
+  Main thread. }
+function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
+
 implementation
 
 uses
   Classes, SysUtils, StrUtils,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils,
-  CodeToolManager, CodeCache, CodeTree, AVL_Tree,
+  CodeToolManager, CodeTree, AVL_Tree,
   Controls,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers;
+
+function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
+begin
+  Result := CodeToolBoss.LoadFile(AFileName, AUpdateFromDisk, False);
+  if Result <> nil then Exit;
+  InvalidateFileStateCache(AFileName);
+  CodeToolBoss.DirectoryCachePool.IncreaseFileTimeStamp;
+  Result := CodeToolBoss.LoadFile(AFileName, AUpdateFromDisk, False);
+end;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -357,7 +375,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'symbol and file arguments required'; Exit;
     end;
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
@@ -402,7 +420,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
     end;
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
@@ -419,7 +437,7 @@ begin
       Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
     end;
     FilePath := Ctx.Params.Get('file', '');
-    CodeBuf  := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf  := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
@@ -484,7 +502,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
     end;
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
@@ -559,7 +577,7 @@ begin
       if Ed.Modified then
         LazarusIDE.DoSaveEditorFile(Ed, []);
     end;
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
@@ -657,7 +675,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'symbol and file required'; Exit;
     end;
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
@@ -767,7 +785,7 @@ begin
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
     if Assigned(Ed) and Ed.Modified then
       LazarusIDE.DoSaveEditorFile(FilePath, []);
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
@@ -857,7 +875,7 @@ begin
     end;
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
     if Assigned(Ed) and Ed.Modified then LazarusIDE.DoSaveEditorFile(FilePath, []);
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
@@ -914,7 +932,7 @@ begin
     end;
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
     if Assigned(Ed) and Ed.Modified then LazarusIDE.DoSaveEditorFile(FilePath, []);
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
@@ -972,7 +990,7 @@ begin
     end;
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
     if Assigned(Ed) and Ed.Modified then LazarusIDE.DoSaveEditorFile(FilePath, []);
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
@@ -1033,7 +1051,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'proc_name or line required'; Exit;
     end;
-    CodeBuf := CodeToolBoss.LoadFile(FilePath, False, False);
+    CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;

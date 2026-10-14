@@ -16,7 +16,7 @@ uses
   Classes, SysUtils, DateUtils, Math, Process, FileUtil, LazFileUtils,
   LazIDEIntf, SrcEditorIntf, CodeToolManager, CodeCache, LConvEncoding,
   fpjson,
-  McpToolContext, McpIdeState;
+  McpToolContext, McpIdeState, McpToolsCodeTools;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -162,7 +162,7 @@ begin
   Result := '';
   Code := CodeToolBoss.FindFile(AFileName);
   if Code = nil then
-    Code := CodeToolBoss.LoadFile(AFileName, True, False);
+    Code := McpLoadCode(AFileName, True);
   if Assigned(Code) then
     Result := LowerCase(Code.DiskEncoding);
   if (Result = EncodingUTF8) or (Result = EncodingUTF8BOM) then
