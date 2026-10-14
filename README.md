@@ -352,7 +352,7 @@ ADR-007 was never assigned; no document is missing.
 
 ## Planned
 
-For v0.9:
+For v1.0:
 
 - **Undo for designer changes.** `form_*` changes can't be undone from the
   assistant yet; today the way back is `editor_revert` or git.
