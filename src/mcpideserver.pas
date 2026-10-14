@@ -23,21 +23,21 @@ type
     FServer : TMcpHttpServer;
     FToken  : string;
     FPort   : Word;
-    { Synchronize workspace — only valid during an active Synchronize call }
-    FSyncToolName : string;
-    FSyncParams   : TJSONObject; // borrowed reference, server thread owns it
-    FSyncResult          : string;      // output set by main thread
-    FSyncError           : Boolean;     // True when SyncCallTool encountered an error
-    FSyncConnectionClose : Boolean;     // unused: every response now sends Connection: close
-    FSyncLogMsg   : string;
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
                             var AResponse : TFPHTTPConnectionResponse);
-    function  HandleRPC(const Body: string): string;
-    function  HandleInitialize(ID: TJSONData; Params: TJSONObject): string;
+    { AClientId: the caller's identity (McpDebugLease).  ANewSession is set
+      by initialize to the session id to return in Mcp-Session-Id. }
+    function  HandleRPC(const Body, AClientId: string; out ANewSession: string): string;
+    function  HandleInitialize(ID: TJSONData; Params: TJSONObject;
+                               const AClientId: string; out ANewSession: string): string;
     function  HandlePing(ID: TJSONData): string;
     function  HandleToolsList(ID: TJSONData): string;
-    function  HandleToolsCall(ID: TJSONData; Params: TJSONObject): string;
+    function  HandleToolsCall(ID: TJSONData; Params: TJSONObject;
+                              const AClientId: string): string;
+    { Run a tool on the IDE main thread; safe to call from any request thread. }
+    function  CallOnMain(const AToolName: string; AParams: TJSONObject;
+                         const AClientId: string; out AErr: Boolean): string;
     function  HandleResourcesList(ID: TJSONData): string;
     function  HandleResourcesRead(ID: TJSONData; Params: TJSONObject): string;
     function  HandleResourcesTemplatesList(ID: TJSONData): string;
@@ -47,8 +47,6 @@ type
     function  RPCResult(ID: TJSONData; ResultObj: TJSONObject): string;
     function  RPCError(ID: TJSONData; ErrCode: Integer;
                        const Msg: string): string;
-    procedure SyncCallTool;    // runs on main thread via Synchronize
-    procedure SyncLogToIDE;    // runs on main thread via Synchronize
     procedure HandleAllowConnect(Sender: TObject; ASocket: LongInt;
                                  var Allow: Boolean);
 
@@ -81,7 +79,7 @@ uses
 
   StrUtils,
   IDEExternToolIntf, IDEMsgIntf,
-  McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard;
+  McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease;
 
 
 
@@ -206,6 +204,24 @@ end;
 
 { ── HTTP request handler ─────────────────────────────────────────────────── }
 
+{ Value of cookie AName in a "a=1; b=2" Cookie header (fphttpserver does not
+  fill CookieFields). }
+function CookieValue(const AHeader, AName: string): string;
+var
+  Parts : TStringArray;
+  I     : Integer;
+  S     : string;
+begin
+  Result := '';
+  Parts  := AHeader.Split([';']);
+  for I := 0 to High(Parts) do
+  begin
+    S := Trim(Parts[I]);
+    if SameText(Copy(S, 1, Length(AName) + 1), AName + '=') then
+      Exit(Copy(S, Length(AName) + 2, MaxInt));
+  end;
+end;
+
 { Runs on the server thread right after accept().  The listening socket is
   not reachable before the first connection, so it is fixed up here too. }
 procedure TMcpServerThread.HandleAllowConnect(Sender: TObject;
@@ -222,17 +238,19 @@ procedure TMcpServerThread.HandleRequest(Sender: TObject;
   var AResponse : TFPHTTPConnectionResponse);
 var
   ResponseBody : string;
+  ClientId     : string;
+  NewSession   : string;
 begin
   { fphttpserver (FPC 3.2.2) serves exactly one request per connection and then
     closes the socket.  Say so, otherwise HTTP/1.1 clients keep the connection
     alive and send their next request into a socket nobody reads any more. }
   AResponse.SetCustomHeader('Connection', 'close');
 
-  // Only POST /mcp is accepted
-  if ARequest.Method <> 'POST' then
+  // POST /mcp, plus DELETE /mcp to end a session
+  if (ARequest.Method <> 'POST') and (ARequest.Method <> 'DELETE') then
   begin
     AResponse.Code := 405;
-    AResponse.SetCustomHeader('Allow', 'POST');
+    AResponse.SetCustomHeader('Allow', 'POST, DELETE');
     Exit;
   end;
   if ARequest.PathInfo <> '/mcp' then
@@ -254,8 +272,35 @@ begin
     Exit;
   end;
 
+  { Who is calling (ADR-012): the Mcp-Session-Id we handed out, else our
+    cookie.  Without either the caller is 'anonymous'; offer it a cookie so
+    cookie-aware clients (curl -b/-c) get an identity of their own. }
+  ClientId := ARequest.GetCustomHeader('Mcp-Session-Id');
+  if ClientId = '' then
+    ClientId := CookieValue(ARequest.Cookie, 'mcp_session');
+
+  if ARequest.Method = 'DELETE' then
+  begin
+    McpForgetSession(ClientId);
+    AResponse.Code := 200;
+    Exit;
+  end;
+
+  if ClientId = '' then
+  begin
+    ClientId := ANONYMOUS_CLIENT;
+    AResponse.SetCustomHeader('Set-Cookie', 'mcp_session=' + McpNewSessionId +
+      '; Path=/mcp; HttpOnly; SameSite=Strict');
+  end;
+
   try
-    ResponseBody := HandleRPC(ARequest.Content);
+    ResponseBody := HandleRPC(ARequest.Content, ClientId, NewSession);
+    if NewSession <> '' then
+    begin
+      AResponse.SetCustomHeader('Mcp-Session-Id', NewSession);
+      AResponse.SetCustomHeader('Set-Cookie', 'mcp_session=' + NewSession +
+        '; Path=/mcp; HttpOnly; SameSite=Strict');
+    end;
   except
     on E: Exception do
     begin
@@ -281,7 +326,8 @@ end;
 
 { ── JSON-RPC dispatch ─────────────────────────────────────────────────────── }
 
-function TMcpServerThread.HandleRPC(const Body: string): string;
+function TMcpServerThread.HandleRPC(const Body, AClientId: string;
+  out ANewSession: string): string;
 var
   Data   : TJSONData;
   Req    : TJSONObject;
@@ -290,6 +336,7 @@ var
   Params : TJSONObject;
 begin
   Result := '';
+  ANewSession := '';
   try
     Data := GetJSON(Body);
   except
@@ -318,14 +365,14 @@ begin
     end;
 
     Method := Req.Get('method', '');
-    if      Method = 'initialize'       then Result := HandleInitialize(ID, Params)
+    if      Method = 'initialize'       then Result := HandleInitialize(ID, Params, AClientId, ANewSession)
     else if Method = 'ping'             then Result := HandlePing(ID)
     else if Method = 'tools/list'       then Result := HandleToolsList(ID)
     else if Method = 'tools/call'       then
     begin
       InterLockedIncrement(GMcpToolCallsActive);  { lets IDE modals be auto-answered }
       try
-        Result := HandleToolsCall(ID, Params);
+        Result := HandleToolsCall(ID, Params, AClientId);
       finally
         InterLockedDecrement(GMcpToolCallsActive);
       end;
@@ -386,8 +433,66 @@ end;
 
 { ── MCP method handlers ──────────────────────────────────────────────────── }
 
+type
+  { One main-thread call.  Every request thread uses its own instance, so
+    concurrent requests never share input or output fields. }
+  TMcpMainCall = class
+    ToolName : string;
+    Ctx      : TMcpToolCall;
+    LogMsg   : string;
+    procedure Run;   { main thread }
+    procedure Log;   { main thread }
+  end;
+
+procedure TMcpMainCall.Run;
+var
+  Handled : Boolean;
+begin
+  try
+    McpDispatch(ToolName, Ctx, Handled);
+    if not Handled then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'Unknown tool: ' + ToolName;
+    end;
+  except
+    on E: Exception do
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := E.Message;
+    end;
+  end;
+end;
+
+procedure TMcpMainCall.Log;
+begin
+  if Assigned(IDEMessagesWindow) then
+    IDEMessagesWindow.AddCustomMessage(mluProgress, LogMsg, '', 0, 0, 'MCP Server');
+end;
+
+function TMcpServerThread.CallOnMain(const AToolName: string;
+  AParams: TJSONObject; const AClientId: string; out AErr: Boolean): string;
+var
+  Call : TMcpMainCall;
+begin
+  Call := TMcpMainCall.Create;
+  try
+    Call.ToolName            := AToolName;
+    Call.Ctx.Params          := AParams;
+    Call.Ctx.Result          := '';
+    Call.Ctx.Error           := False;
+    Call.Ctx.ConnectionClose := False;
+    Call.Ctx.StopServer      := @Self.StopServer;
+    TThread.Synchronize(nil, @Call.Run);
+    Result := Call.Ctx.Result;
+    AErr   := Call.Ctx.Error;
+  finally
+    Call.Free;
+  end;
+end;
+
 function TMcpServerThread.HandleInitialize(ID: TJSONData;
-  Params: TJSONObject): string;
+  Params: TJSONObject; const AClientId: string; out ANewSession: string): string;
 var
   Res      : TJSONObject;
   Caps     : TJSONObject;
@@ -395,22 +500,34 @@ var
   SrvInfo  : TJSONObject;
   ClientInfo : TJSONObject;
   ProtoVer   : string;
+  ClientName : string;
+  Call       : TMcpMainCall;
 begin
   // Echo back client's protocolVersion; fall back to our minimum
   ProtoVer := '2024-11-05';
   if Assigned(Params) and Assigned(Params.Find('protocolVersion')) then
     ProtoVer := Params.Strings['protocolVersion'];
 
+  { A new MCP session: its id identifies this client from now on (ADR-012) }
+  ANewSession := McpNewSessionId;
+  ClientName  := '';
   if Assigned(Params) then
   begin
     ClientInfo := TJSONObject(Params.Find('clientInfo'));
     if Assigned(ClientInfo) then
     begin
-      FSyncLogMsg := Format('Client "%s %s" connected (protocol %s).',
-        [ClientInfo.Get('name', '?'), ClientInfo.Get('version', '?'), ProtoVer]);
-      TThread.Synchronize(nil, @SyncLogToIDE);
+      ClientName := ClientInfo.Get('name', '?') + ' ' + ClientInfo.Get('version', '');
+      Call := TMcpMainCall.Create;
+      try
+        Call.LogMsg := Format('Client "%s" connected (protocol %s, session %s).',
+          [Trim(ClientName), ProtoVer, Copy(ANewSession, 1, 8)]);
+        TThread.Synchronize(nil, @Call.Log);
+      finally
+        Call.Free;
+      end;
     end;
   end;
+  McpRegisterSession(ANewSession, Trim(ClientName));
 
   ToolsCap := TJSONObject.Create;  // empty tools capability object
   Caps := TJSONObject.Create;
@@ -546,6 +663,8 @@ var
   I        : Integer;
   FilePath : string;
   LowerVal : string;
+  Text     : string;
+  Err      : Boolean;
 begin
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
@@ -563,14 +682,10 @@ begin
      ((ArgName = 'file') or (ArgName = 'lpk_path') or
       (ArgName = 'lpi_path') or (ArgName = 'path')) then
   begin
-    FSyncToolName := 'project_list_files';
-    FSyncParams   := nil;
-    FSyncResult   := '';
-    FSyncError    := False;
-    TThread.Synchronize(nil, @SyncCallTool);
-    if not FSyncError and (FSyncResult <> '') then
+    Text := CallOnMain('project_list_files', nil, '', Err);
+    if not Err and (Text <> '') then
     begin
-      FilesData := GetJSON(FSyncResult);
+      FilesData := GetJSON(Text);
       try
         FileArr := nil;
         if FilesData is TJSONObject then
@@ -639,6 +754,8 @@ var
   FileData : TJSONData;
   FilePath : string;
   Res      : TJSONObject;
+  Out      : string;
+  Err      : Boolean;
 begin
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
@@ -646,31 +763,23 @@ begin
 
   if Name = 'explain_compiler_errors' then
   begin
-    FSyncToolName := 'project_get_compiler_errors';
-    FSyncParams   := nil;
-    FSyncResult   := '';
-    FSyncError    := False;
-    TThread.Synchronize(nil, @SyncCallTool);
-    if FSyncError or (FSyncResult = '') then
+    Out := CallOnMain('project_get_compiler_errors', nil, '', Err);
+    if Err or (Out = '') then
       Text := 'No compiler output is available. Please build the project first ' +
               '(Build → Build Project), then invoke this prompt again.'
     else
       Text := 'The Lazarus IDE compiler produced the following output:' + LineEnding + LineEnding +
-              FSyncResult + LineEnding + LineEnding +
+              Out + LineEnding + LineEnding +
               'Please explain each error or warning, identify the root cause, ' +
               'and suggest a specific code fix for each one.';
   end
   else if Name = 'review_active_file' then
   begin
-    FSyncToolName := 'editor_get_active';
-    FSyncParams   := nil;
-    FSyncResult   := '';
-    FSyncError    := False;
-    TThread.Synchronize(nil, @SyncCallTool);
+    Out := CallOnMain('editor_get_active', nil, '', Err);
     FilePath := '';
-    if not FSyncError and (FSyncResult <> '') then
+    if not Err and (Out <> '') then
     begin
-      FileData := GetJSON(FSyncResult);
+      FileData := GetJSON(Out);
       try
         if FileData is TJSONObject then
           FilePath := TJSONObject(FileData).Get('file', '');
@@ -703,8 +812,9 @@ begin
 end;
 
 function TMcpServerThread.HandleToolsCall(ID: TJSONData;
-  Params: TJSONObject): string;
+  Params: TJSONObject; const AClientId: string): string;
 var
+  GateMsg     : string;
   ToolName    : string;
   Args        : TJSONObject;
   Content     : TJSONArray;
@@ -727,6 +837,14 @@ begin
   Err  := False;
   Text := '';
 
+  { debug session lease and debugger lock (ADR-012) }
+  if not McpGateEnter(ToolName, AClientId, Args, GateMsg) then
+  begin
+    Text := GateMsg;
+    Err  := True;
+  end
+  else
+  try
   if ToolName = 'package_compile' then
   begin
     if not Assigned(Args) or (Args.Get('lpk_path', '') = '') then
@@ -742,18 +860,14 @@ begin
     if ResolvedLpi = '' then
     begin
       // Resolve default .lpi path on the main thread
-      FSyncToolName := 'project_get_directory';
-      FSyncParams   := nil;
-      FSyncResult   := '';
-      FSyncError    := False;
-      TThread.Synchronize(nil, @SyncCallTool);
-      if FSyncError or (FSyncResult = '') then
+      Text := CallOnMain('project_get_directory', nil, AClientId, Err);
+      if Err or (Text = '') then
       begin
         Text := 'Could not determine project directory for default test_project path';
         Err  := True;
       end else
       begin
-        DirData := GetJSON(FSyncResult);
+        DirData := GetJSON(Text);
         try
           if DirData is TJSONObject then
             ProjDir := TJSONObject(DirData).Get('directory', '')
@@ -780,20 +894,13 @@ begin
     begin
       Text := BCtx.Result;
       Err  := BCtx.Error;
-      FSyncConnectionClose := BCtx.ConnectionClose;
     end
     else
-    begin
       // Default: IDE API — must run on main thread.
-      FSyncToolName        := ToolName;
-      FSyncParams          := Args;
-      FSyncResult          := '';
-      FSyncError           := False;
-      FSyncConnectionClose := False;
-      TThread.Synchronize(nil, @SyncCallTool);
-      Text := FSyncResult;
-      Err  := FSyncError;
-    end;
+      Text := CallOnMain(ToolName, Args, AClientId, Err);
+  end;
+  finally
+    McpGateLeave(ToolName, AClientId);
   end;
 
   TextNode := TJSONObject.Create;
@@ -808,41 +915,6 @@ begin
   Result := RPCResult(ID, Res);
 end;
 
-
-procedure TMcpServerThread.SyncCallTool;
-var
-  Ctx     : TMcpToolCall;
-  Handled : Boolean;
-begin
-  Ctx.Params          := FSyncParams;
-  Ctx.Result          := '';
-  Ctx.Error           := False;
-  Ctx.ConnectionClose := False;
-  Ctx.StopServer      := @Self.StopServer;
-  try
-    McpDispatch(FSyncToolName, Ctx, Handled);
-    if not Handled then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'Unknown tool: ' + FSyncToolName;
-    end;
-  except
-    on E: Exception do
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := E.Message;
-    end;
-  end;
-  FSyncResult          := Ctx.Result;
-  FSyncError           := Ctx.Error;
-  FSyncConnectionClose := Ctx.ConnectionClose;
-end;
-
-procedure TMcpServerThread.SyncLogToIDE;
-begin
-  if Assigned(IDEMessagesWindow) then
-    IDEMessagesWindow.AddCustomMessage(mluProgress, FSyncLogMsg, '', 0, 0, 'MCP Server');
-end;
 
 { ── Module lifecycle ─────────────────────────────────────────────────────── }
 

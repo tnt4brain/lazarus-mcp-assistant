@@ -65,6 +65,9 @@ procedure McpClearDebugOutput;
 
 implementation
 
+uses
+  McpDebugLease;  { GMcpSessionLive, lease release at session end }
+
 const
   MAX_BUFFERED_LINES = 2000;
 
@@ -181,6 +184,10 @@ procedure TMcpDebugGuard.StateChanged(ADebugger: TDebuggerIntf;
 begin
   if (ADebugger = nil) or FShutdown then Exit;
   Install(ADebugger);
+
+  GMcpSessionLive := ADebugger.State in [dsInit, dsRun, dsPause, dsInternalPause];
+  if not GMcpSessionLive and (AOldState in [dsInit, dsRun, dsPause, dsInternalPause]) then
+    McpLeaseSessionEnded;
 
   case ADebugger.State of
     dsInit:

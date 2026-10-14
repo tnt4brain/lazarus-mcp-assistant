@@ -16,3 +16,4 @@ ADR-007 was never assigned; no document is missing.
 | [0009](0009-debugger-integration.md) | # ADR-009 — Debugger Integration |
 | [0010](0010-tool-naming-scheme.md) | # ADR-010 — Tool Naming Scheme |
 | [0011](0011-no-ide-modals-in-mcp-sessions.md) | # ADR-011 — No IDE Modals in MCP-Driven Sessions |
+| [0012](0012-multiple-clients.md) | # ADR-012 — Multiple Clients: Session Identity, Debug Session Lease, Debugger Lock |

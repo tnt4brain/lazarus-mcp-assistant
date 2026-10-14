@@ -37,6 +37,7 @@ uses
   TypInfo,
   fpjson,
   McpDebugGuard,             { GMcpLastExc, McpMarkDebugDriven }
+  McpDebugLease,             { McpLeaseJSON }
   McpToolContext;
 
 
@@ -771,6 +772,7 @@ end;
 
 function DispatchDebuggerTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  Lease : TJSONObject;
   Obj   : TJSONObject;
   Arr   : TJSONArray;
   BpObj : TJSONObject;
@@ -790,6 +792,9 @@ begin
       Obj.Add('file',   GSyncHelper.OutFileName);
       Obj.Add('line',   GSyncHelper.OutLine);
       Obj.Add('reason', '');
+      Lease := McpLeaseJSON;
+      if Assigned(Lease) then
+        Obj.Add('lease', Lease);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -1279,7 +1284,9 @@ const
 
   SCHEMA_RUN_DEBUGGER =
     '{"type":"object","properties":{' +
-    '"timeout_s":{"type":"integer","description":"Seconds to wait for pause; default 30"}}}';
+    '"timeout_s":{"type":"integer","description":"Seconds to wait for pause; default 30"},' +
+    '"lease_idle_timeout":{"type":"integer","description":"Seconds without calls from you after which ' +
+      'your debug session is stopped and released to other clients; default 300, 10..3600"}}}';
 
   SCHEMA_RUN_TO_LINE =
     '{"type":"object","properties":{' +
@@ -1343,13 +1350,16 @@ begin
   Tools.Add(MakeTool('debug_get_state',
     'Return the current debugger state and source location. ' +
     'Works in any state (idle, running, paused, stopped). ' +
-    'Call this after a timed-out blocking tool to assess what is happening.',
+    'Call this after a timed-out blocking tool to assess what is happening. ' +
+    'lease shows which client owns the session and when its lease expires.',
     SCHEMA_NO_PARAMS, MCP_ANN_RO));
   { Group 3 — Session control (blocking) }
   Tools.Add(MakeTool('debug_run',
     'Start a debug session or continue from pause (F9). Blocks until the ' +
     'program hits a breakpoint or stops. Returns state=timeout if timeout_s ' +
-    'elapses while the program is still running.',
+    'elapses while the program is still running. The first client that drives ' +
+    'the debugger owns the session until it ends (or lease_idle_timeout passes ' +
+    'without calls from it); other clients meanwhile get read-only debugger tools.',
     SCHEMA_RUN_DEBUGGER, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_pause',
     'Pause a running debug session. Blocks until the program pauses.',

@@ -533,6 +533,11 @@ re-installed per session (check in the state handler). `OnException` with
 `AContinue := False` breaks at the exception without the IDE dialog; the
 debugger has already applied the IDE's ignore list. See `McpDebugGuard.pas`.
 
+Continuing past an exception runs the program's own handler: in an LCL app,
+`Application.HandleException` shows a message box *in the debuggee*. No IDE
+hook can answer it; an unattended client should `debug_stop` instead of
+continuing.
+
 ### HTTP server: one request per connection, no inheritable sockets
 
 `fphttpserver` (FPC 3.2.2) serves one request per connection and closes it
@@ -541,6 +546,12 @@ inheritable on Windows: a process spawned meanwhile (the debuggee!) keeps a
 copy, the client never sees FIN, reuses the connection and hangs. Mark sockets
 non-inheritable (`SetHandleInformation(…, HANDLE_FLAG_INHERIT, 0)` /
 `FD_CLOEXEC`) in `OnAllowConnect`.
+
+With `Threaded := True` every connection has its own thread: per-request
+state must not live on the server object. Pass a per-request object's method
+to `TThread.Synchronize`. A background thread that needs the main thread
+while the IDE may be shutting down should use `TThread.Queue` (a
+`Synchronize` from it deadlocks against `WaitFor` in finalization).
 
 ---
 
@@ -573,6 +584,24 @@ name, events (`TMethodPropertyEditor.SetValue` creates the handler) and `Name`
 - LFM text of the live designer state: `CreateLRSWriter` +
   `Writer.WriteDescendent(Root, nil)` + `LRSObjectBinaryToText`; resolve
   designer methods in `OnWriteMethodProperty` via `GlobalDesignHook.GetMethodName`.
+- Collections (`TCollectionPropertyEditor`) and string lists
+  (`TStringsPropertyEditor`) are `paDialog, paReadOnly` with no
+  sub-properties. Reach items by RTTI — `TCollection(GetObjectProp(Comp,
+  'Columns')).Items[I]` — and run `GetPersistentProperties` on the item. Add
+  with `Collection.Add`, reorder with `Item.Index := N`, delete with
+  `Item.Free` after moving the Object Inspector selection off the item; then
+  `GlobalDesignHook.Modified`. Strings: `TStrings(Ed.GetObjectValue).Text := …`.
+- Menu items are components owned by the form root, linked by
+  `TMenuItem.Parent`, not palette components. The Menu Editor creates them as
+  `TMenuItem.Create(Root)`, `Name := TComponentEditorDesigner(Designer).
+  CreateUniqueComponentName('TMenuItem')`, `Parent.Insert(Idx, MI)`,
+  `GlobalDesignHook.PersistentAdded(MI, False)`; it deletes children first,
+  then `Parent.Remove(MI)` + `GlobalDesignHook.DeletePersistent(MI)`. Its own
+  window does not notice items added or removed elsewhere — hide it first
+  (`TMenuDesignerForm`; hiding frees its view).
+- Data module designers make the palette hide visual controls (Standard shows
+  only menus/actions). Whatever sets `GlobalDesignHook.LookupRoot` to a data
+  module filters the palette until a form designer is activated again.
 
 ---
 

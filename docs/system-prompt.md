@@ -54,6 +54,9 @@ form_get_lfm (whole layout at a glance) → form_search_palette → form_add_com
 - Properties are Object Inspector text: dotted paths for nested ones (`BorderSpacing.Around`, `Font.Style`, `AnchorSideLeft.Control`), sets as `[akLeft,akTop]`, enums as `alClient`, references by component name, events by handler name.
 - Prefer LCL layout over pixel positions: `Align`, `Anchors` + `AnchorSide*`, `BorderSpacing.*`, and a container's `ChildSizing.*` (e.g. `ChildSizing.Layout = cclLeftToRightThenTopToBottom`, `ChildSizing.HorizontalSpacing`) keep forms correct when fonts or DPI change. Use `form_arrange` for one-off alignment, equal sizes and fixed gaps.
 - `Name` renames the component in the source too; `Parent` moves a control into another container.
+- Collections (ListView/grid `Columns`, StatusBar `Panels`, …): `form_add_collection_item` with `properties`, then `form_set_properties` with indexed paths like `{"Columns[0].Width":120}`; `form_list_collection_items` to read them back.
+- String lists: `{"Lines":["first","second"]}` for `Memo.Lines`, `ListBox.Items`, `ComboBox.Items`.
+- Menus: add a `TMainMenu`/`TPopupMenu` with `form_add_component`, then `form_add_menu_item` (parent = the menu for top-level items, a menu item for a submenu; caption `-` = separator; `properties` such as `ShortCut`, `OnClick`). `form_get_menu` shows the tree; `form_delete_component` deletes an item with its submenu.
 
 ### Debugging
 ```
@@ -61,8 +64,10 @@ debug_set_breakpoint → debug_run → debug_get_locals / debug_evaluate / debug
 → debug_step_over | debug_step_into | debug_run → debug_stop
 ```
 - Run and step tools block until the program pauses (or `timeout_s`). An exception pauses the program and comes back in the same response as `reason: "exception"` with class, message, file and line — no dialog appears. `debug_get_exception` returns it again later.
+- After `reason: "exception"`, inspect (locals, call stack, `debug_get_exception`) and then `debug_stop`. Don't `debug_run` past an exception in a GUI program: its own exception handler shows a message box in the debugged program, which waits for a click nobody gives (the IDE cannot suppress it); `debug_run` then just times out.
 - `debug_add_watch` + `debug_list_watches` track expressions across steps; `debug_list_threads` for multi-threaded programs; `debug_get_output` returns what the program printed.
 - Sessions you drive never show IDE modals ("Execution stopped", exception, debugger errors); suppressed debugger messages are returned as `debugger_message`.
+- Other assistants may share this IDE. Once you drive the debugger the session is yours until you `debug_stop` it or make no calls for `lease_idle_timeout` seconds (default 300; then it is stopped). Stop sessions you are done with. If a tool is refused because another client owns the session, use read-only tools or wait — the message says when the lease expires; don't retry in a loop.
 
 ---
 

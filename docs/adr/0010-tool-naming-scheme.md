@@ -51,8 +51,11 @@ lists the IDE's ToDo view of the project.
 | `list_` | read a set of things (breakpoints, files, watches) |
 | `find_` | resolve a reference (declaration, usages) |
 | `set_` | change a value in place |
-| `add_` / `remove_` | attach or detach something that keeps existing elsewhere (file to project, unit to uses, watch, package dependency) |
-| `create_` / `delete_` | make or destroy something (unit, form, component, event handler) |
+| `add_` | put a new or existing thing into a container: component onto a form, item into a collection or menu, file into the project, unit into uses, watch into the session |
+| `remove_` | take a thing out of its container without destroying it (file from project, unit dependency, watch, breakpoint) |
+| `delete_` | destroy a thing that lives in the form or source (component, collection item) |
+| `create_` | make a standalone artifact (unit, form, project, event handler) |
+| `move_` | change a thing's position or parent |
 | bare verb | an action named the way the IDE names it (`debug_run`, `debug_step_over`, `editor_save`, `project_build`, `ide_rebuild`) |
 
 ### 3. Titles and annotations come from the same place

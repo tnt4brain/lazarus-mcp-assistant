@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 90 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 97 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed.
 
@@ -68,7 +68,9 @@ properties by dotted path (`BorderSpacing.Around`, `Font.Style`,
 `AnchorSideLeft.Control`, `ChildSizing.Layout`), enums/sets as text
 (`alClient`, `[akLeft,akTop]`), component references by name, events by
 handler name (created if missing), and `Name` renames the component in the
-source too.
+source too. Collection items are addressed by index (`Columns[0].Caption`,
+`Panels[1].Width`), and string lists (`Memo.Lines`, `ListBox.Items`) are read
+as `lines` and set from an array of strings.
 
 | Tool | Description |
 |---|---|
@@ -78,7 +80,11 @@ source too.
 | `form_get_properties` | Properties of a component, nested ones as dotted paths; with `names`, also the allowed values |
 | `form_set_properties` | Set several properties at once; one result per property. `Parent` moves a control into another container |
 | `form_add_component` | Add a palette component, optionally inside a container, with `name` and initial `properties`; adds the unit to `uses` |
-| `form_delete_component` | Delete a component and its child controls (field removed from the source) |
+| `form_delete_component` | Delete a component and its child controls, or a menu item and its submenu (fields removed from the source) |
+| `form_list_collection_items` | Items of a collection property (ListView `Columns`, StatusBar `Panels`, grid `Columns`, `Sections`, `Bands`) with their properties |
+| `form_add_collection_item` / `form_delete_collection_item` / `form_move_collection_item` | Add (at an index, with properties), delete or reorder collection items |
+| `form_get_menu` | Item tree of a `TMainMenu`/`TPopupMenu`: captions, shortcuts, checked/enabled, OnClick |
+| `form_add_menu_item` / `form_move_menu_item` | Add an item or separator (`-`) to a menu or submenu; move an item to another position or parent |
 | `form_arrange` | Same size as the first control, distribute with a fixed gap or evenly, align edges/centres to the first control or the parent |
 | `form_create_event_handler` | Create (or show) the handler for a component event |
 | `form_search_palette` | Find palette classes by name: class, unit, palette page |
@@ -92,6 +98,14 @@ Sessions driven through these tools never show IDE modals: an exception pauses
 the program and is returned as `reason: "exception"` with class, message, file
 and line; "Execution stopped" is suppressed; debugger error messages are
 returned as `debugger_message`. Sessions you start yourself (F9) behave as usual.
+
+With several clients connected, the first one that drives the debugger owns the
+session. Until it ends, other clients are refused the debugger-driving tools and
+`project_build`/`project_run`/`project_create`/`ide_rebuild`/`package_install`/
+`package_uninstall`; everything else stays available. The owner's lease expires
+after 300 s without calls from it (`debug_run` `lease_idle_timeout`), and the
+abandoned session is then stopped. `debug_get_state` shows the owner. Only one
+debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 
 | Tool | Description |
 |---|---|
@@ -164,6 +178,13 @@ answers the IDE's "Some files have changed on disk" dialog with *Reload*,
 which reloads only files without unsaved editor changes. Every HTTP response
 carries `Connection: close`, and the server's sockets are not inheritable, so a
 program started by the IDE cannot keep a connection open.
+
+### Clients
+
+`initialize` returns an `Mcp-Session-Id` header (and the same id as an
+`mcp_session` cookie); clients send it back to identify themselves, and
+`DELETE /mcp` ends the session. Requests without either share one identity,
+`anonymous`; a client with a cookie jar (`curl -b jar -c jar`) gets its own.
 
 ---
 
@@ -265,6 +286,11 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-004](docs/adr/0004-self-hosted-development.md) | Self-hosted development: token persistence, rebuild cycle, port stability |
 | [ADR-005](docs/adr/0005-fpcunit-test-suite.md) | FPCUnit test suite: testability boundary, standalone test project layout |
 | [ADR-006](docs/adr/0006-project-lifecycle-tools.md) | Project lifecycle tools: file management, project settings, component search, editor state, run configuration |
+| [ADR-008](docs/adr/0008-structural-source-editing.md) | Token-aware / structural source editing |
+| [ADR-009](docs/adr/0009-debugger-integration.md) | Debugger integration: blocking checkpoint model |
+| [ADR-010](docs/adr/0010-tool-naming-scheme.md) | Tool naming scheme `<category>_<action>`, titles, annotations; v0.7 → v0.8 rename table |
+| [ADR-011](docs/adr/0011-no-ide-modals-in-mcp-sessions.md) | No IDE modals in MCP-driven debug sessions |
+| [ADR-012](docs/adr/0012-multiple-clients.md) | Multiple clients: session identity, debug session lease, debugger lock |
 
 ---
 

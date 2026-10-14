@@ -534,6 +534,11 @@
   '`AContinue := False` breaks at the exception without the IDE dialog; the' + LineEnding +
   'debugger has already applied the IDE''s ignore list. See `McpDebugGuard.pas`.' + LineEnding +
   '' + LineEnding +
+  'Continuing past an exception runs the program''s own handler: in an LCL app,' + LineEnding +
+  '`Application.HandleException` shows a message box *in the debuggee*. No IDE' + LineEnding +
+  'hook can answer it; an unattended client should `debug_stop` instead of' + LineEnding +
+  'continuing.' + LineEnding +
+  '' + LineEnding +
   '### HTTP server: one request per connection, no inheritable sockets' + LineEnding +
   '' + LineEnding +
   '`fphttpserver` (FPC 3.2.2) serves one request per connection and closes it' + LineEnding +
@@ -542,6 +547,12 @@
   'copy, the client never sees FIN, reuses the connection and hangs. Mark sockets' + LineEnding +
   'non-inheritable (`SetHandleInformation(…, HANDLE_FLAG_INHERIT, 0)` /' + LineEnding +
   '`FD_CLOEXEC`) in `OnAllowConnect`.' + LineEnding +
+  '' + LineEnding +
+  'With `Threaded := True` every connection has its own thread: per-request' + LineEnding +
+  'state must not live on the server object. Pass a per-request object''s method' + LineEnding +
+  'to `TThread.Synchronize`. A background thread that needs the main thread' + LineEnding +
+  'while the IDE may be shutting down should use `TThread.Queue` (a' + LineEnding +
+  '`Synchronize` from it deadlocks against `WaitFor` in finalization).' + LineEnding +
   '' + LineEnding +
   '---' + LineEnding +
   '' + LineEnding +
@@ -574,6 +585,24 @@
   '- LFM text of the live designer state: `CreateLRSWriter` +' + LineEnding +
   '  `Writer.WriteDescendent(Root, nil)` + `LRSObjectBinaryToText`; resolve' + LineEnding +
   '  designer methods in `OnWriteMethodProperty` via `GlobalDesignHook.GetMethodName`.' + LineEnding +
+  '- Collections (`TCollectionPropertyEditor`) and string lists' + LineEnding +
+  '  (`TStringsPropertyEditor`) are `paDialog, paReadOnly` with no' + LineEnding +
+  '  sub-properties. Reach items by RTTI — `TCollection(GetObjectProp(Comp,' + LineEnding +
+  '  ''Columns'')).Items[I]` — and run `GetPersistentProperties` on the item. Add' + LineEnding +
+  '  with `Collection.Add`, reorder with `Item.Index := N`, delete with' + LineEnding +
+  '  `Item.Free` after moving the Object Inspector selection off the item; then' + LineEnding +
+  '  `GlobalDesignHook.Modified`. Strings: `TStrings(Ed.GetObjectValue).Text := …`.' + LineEnding +
+  '- Menu items are components owned by the form root, linked by' + LineEnding +
+  '  `TMenuItem.Parent`, not palette components. The Menu Editor creates them as' + LineEnding +
+  '  `TMenuItem.Create(Root)`, `Name := TComponentEditorDesigner(Designer).' + LineEnding +
+  '  CreateUniqueComponentName(''TMenuItem'')`, `Parent.Insert(Idx, MI)`,' + LineEnding +
+  '  `GlobalDesignHook.PersistentAdded(MI, False)`; it deletes children first,' + LineEnding +
+  '  then `Parent.Remove(MI)` + `GlobalDesignHook.DeletePersistent(MI)`. Its own' + LineEnding +
+  '  window does not notice items added or removed elsewhere — hide it first' + LineEnding +
+  '  (`TMenuDesignerForm`; hiding frees its view).' + LineEnding +
+  '- Data module designers make the palette hide visual controls (Standard shows' + LineEnding +
+  '  only menus/actions). Whatever sets `GlobalDesignHook.LookupRoot` to a data' + LineEnding +
+  '  module filters the palette until a form designer is activated again.' + LineEnding +
   '' + LineEnding +
   '---' + LineEnding +
   '' + LineEnding +
