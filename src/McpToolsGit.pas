@@ -1,7 +1,7 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsGit;
 
-{ Git integration tools: git_status, git_diff, git_log, git_add,
+{ Git integration tools: git_status, git_diff, git_blame, git_log, git_add,
   git_commit, git_checkout, git_branches.
   All operations shell out to git (McpGitExecutable); work_dir defaults to the active
   project directory when not supplied by the caller. }
@@ -13,8 +13,8 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, Process, FileUtil, LazFileUtils,
-  LazIDEIntf,
+  Classes, SysUtils, DateUtils, Math, Process, FileUtil, LazFileUtils,
+  LazIDEIntf, SrcEditorIntf,
   fpjson,
   McpToolContext, McpIdeState;
 
@@ -30,8 +30,15 @@ const
     '{"type":"object","properties":{' +
     '"staged":{"type":"boolean","description":"Diff staged (index) changes instead of working-tree (default false)"},' +
     '"path":{"type":"string","description":"Limit diff to this file or directory"},' +
+    '"active_file":{"type":"boolean","description":"Diff the active editor''s file, in its own repository (saved content only)"},' +
     '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":[]}';
+
+  SCHEMA_GIT_BLAME =
+    '{"type":"object","properties":{' +
+    '"file":{"type":"string","description":"Default: the active editor''s file"},' +
+    '"start_line":{"type":"integer","description":"Default: the cursor line of the active editor"},' +
+    '"end_line":{"type":"integer","description":"Default: start_line; at most 200 lines"}}}';
 
   SCHEMA_GIT_LOG =
     '{"type":"object","properties":{' +
@@ -141,6 +148,201 @@ begin
     Result := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile);
 end;
 
+const
+  BLAME_MAX_LINES = 200;
+
+{ git blame --porcelain: per line "<sha> <orig> <final> [<count>]", the commit's
+  headers the first time the sha appears, then TAB + the line text. }
+function ParseBlame(const AOut: string): TJSONArray;
+var
+  SL      : TStringList;
+  Commits : TStringList;   { sha=index into Infos }
+  Infos   : array of record Author, Date, Summary: string; end;
+  Parts   : TStringArray;
+  S, Sha  : string;
+  I, Idx, FinalLine : Integer;
+  LObj    : TJSONObject;
+begin
+  Result  := TJSONArray.Create;
+  SL      := TStringList.Create;
+  Commits := TStringList.Create;
+  try
+    SL.Text := AOut;
+    Infos := nil;
+    Idx := -1;
+    FinalLine := 0;
+    for I := 0 to SL.Count - 1 do
+    begin
+      S := SL[I];
+      if S = '' then Continue;
+      if S[1] = #9 then
+      begin
+        if Idx < 0 then Continue;
+        LObj := TJSONObject.Create;
+        Result.Add(LObj);
+        LObj.Add('line', FinalLine);
+        if StringOfChar('0', 40) = Commits.Names[Idx] then
+          LObj.Add('commit', 'uncommitted')
+        else
+        begin
+          LObj.Add('commit', Copy(Commits.Names[Idx], 1, 10));
+          LObj.Add('author', Infos[Idx].Author);
+          LObj.Add('date', Infos[Idx].Date);
+          LObj.Add('summary', Infos[Idx].Summary);
+        end;
+        LObj.Add('text', Copy(S, 2, MaxInt));
+        Continue;
+      end;
+      Parts := S.Split([' ']);
+      if (Length(Parts) >= 3) and (Length(Parts[0]) = 40) then
+      begin
+        Sha := Parts[0];
+        FinalLine := StrToIntDef(Parts[2], 0);
+        Idx := Commits.IndexOfName(Sha);
+        if Idx < 0 then
+        begin
+          Idx := Commits.Add(Sha + '=');
+          SetLength(Infos, Commits.Count);
+        end;
+      end
+      else if Idx >= 0 then
+      begin
+        if Parts[0] = 'author' then
+          Infos[Idx].Author := Copy(S, 8, MaxInt)
+        else if Parts[0] = 'author-time' then
+          Infos[Idx].Date := FormatDateTime('yyyy-mm-dd hh:nn',
+            UnixToDateTime(StrToInt64Def(Copy(S, 13, MaxInt), 0), False))
+        else if Parts[0] = 'summary' then
+          Infos[Idx].Summary := Copy(S, 9, MaxInt);
+      end;
+    end;
+  finally
+    Commits.Free;
+    SL.Free;
+  end;
+end;
+
+{ The line ending the file on disk uses (its first line break). }
+function FileLineBreak(const AFileName: string): string;
+var
+  FS  : TFileStream;
+  Buf : string;
+  P   : Integer;
+begin
+  Result := LineEnding;
+  try
+    FS := TFileStream.Create(AFileName, fmOpenRead or fmShareDenyNone);
+    try
+      SetLength(Buf, Min(FS.Size, 65536));
+      if Buf <> '' then
+        SetLength(Buf, FS.Read(Buf[1], Length(Buf)));
+    finally
+      FS.Free;
+    end;
+  except
+    Exit;
+  end;
+  P := Pos(#10, Buf);
+  if P > 1 then
+    if Buf[P - 1] = #13 then Result := #13#10 else Result := #10
+  else if P = 1 then
+    Result := #10;
+end;
+
+{ git_blame on the main thread: file and line default to the active editor; an
+  editor with unsaved changes is blamed as shown (--contents), so line numbers
+  match what the user sees. }
+procedure GitBlame(var Ctx: TMcpToolCall);
+var
+  FileName, TmpFile, Output : string;
+  Ed        : TSourceEditorInterface;
+  StartLine, EndLine : Integer;
+  Modified, Ok : Boolean;
+  GitArgs   : TStringList;
+  SL        : TStringList;
+  Obj       : TJSONObject;
+begin
+  FileName  := '';
+  StartLine := 0;
+  EndLine   := 0;
+  if Assigned(Ctx.Params) then
+  begin
+    FileName  := Ctx.Params.Get('file', '');
+    StartLine := Ctx.Params.Get('start_line', 0);
+    EndLine   := Ctx.Params.Get('end_line', 0);
+  end;
+  Ed := nil;
+  if FileName = '' then
+  begin
+    Ed := SourceEditorManagerIntf.ActiveEditor;
+    if not Assigned(Ed) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'No file given and no editor is active'; Exit;
+    end;
+    FileName := Ed.FileName;
+    if StartLine <= 0 then
+      StartLine := Ed.CursorTextXY.Y;
+  end
+  else
+    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FileName);
+  if StartLine <= 0 then
+  begin
+    Ctx.Error := True; Ctx.Result := 'start_line required for a file that is not the active editor'; Exit;
+  end;
+  if EndLine < StartLine then EndLine := StartLine;
+  if EndLine - StartLine >= BLAME_MAX_LINES then
+    EndLine := StartLine + BLAME_MAX_LINES - 1;
+  if not FilenameIsAbsolute(FileName) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Not a file on disk: ' + FileName; Exit;
+  end;
+  if Assigned(Ed) and (EndLine > Ed.Lines.Count) then
+    EndLine := Ed.Lines.Count;
+  Modified := Assigned(Ed) and Ed.Modified;
+  TmpFile  := '';
+  GitArgs  := TStringList.Create;
+  try
+    GitArgs.Add('blame');
+    GitArgs.Add('--porcelain');
+    GitArgs.Add('-L');
+    GitArgs.Add(IntToStr(StartLine) + ',' + IntToStr(EndLine));
+    if Modified then
+    begin
+      TmpFile := GetTempFileName('', 'mcpblame');
+      SL := TStringList.Create;
+      try
+        SL.Text := Ed.Lines.Text;
+        SL.LineBreak := FileLineBreak(FileName);   { else every line differs }
+        SL.SaveToFile(TmpFile);
+      finally
+        SL.Free;
+      end;
+      GitArgs.Add('--contents');
+      GitArgs.Add(TmpFile);
+    end;
+    GitArgs.Add('--');
+    GitArgs.Add(FileName);
+    Ok := RunGit(GitArgs.ToStringArray, ExtractFilePath(FileName), Output);
+  finally
+    GitArgs.Free;
+    if TmpFile <> '' then DeleteFile(TmpFile);
+  end;
+  if not Ok then
+  begin
+    Ctx.Error := True; Ctx.Result := Trim(Output); Exit;
+  end;
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('file', FileName);
+    if Modified then
+      Obj.Add('editor_modified', True);   { blamed as shown in the editor }
+    Obj.Add('lines', ParseBlame(Output));
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchGitTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -158,9 +360,17 @@ var
   PathsArr  : TJSONArray;
   Obj       : TJSONObject;
   GitArgs   : TStringList;
+  ActiveEd  : TSourceEditorInterface;
   I         : Integer;
 begin
   Result := False;
+
+  if Name = 'git_blame' then
+  begin
+    Result := True;
+    GitBlame(Ctx);
+    Exit;
+  end;
 
   if Name = 'git_status' then
   begin
@@ -186,6 +396,17 @@ begin
     Staged   := Assigned(Ctx.Params) and Ctx.Params.Get('staged', False);
     DiffPath := '';
     if Assigned(Ctx.Params) then DiffPath := Ctx.Params.Get('path', '');
+    ActiveEd := nil;
+    if Assigned(Ctx.Params) and Ctx.Params.Get('active_file', False) then
+    begin
+      ActiveEd := SourceEditorManagerIntf.ActiveEditor;
+      if not Assigned(ActiveEd) or not FilenameIsAbsolute(ActiveEd.FileName) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active editor with a file on disk'; Exit;
+      end;
+      DiffPath := ActiveEd.FileName;
+      WorkDir  := ExtractFilePath(DiffPath);   { the file's own repository }
+    end;
     GitArgs  := TStringList.Create;
     try
       GitArgs.Add('diff');
@@ -204,6 +425,12 @@ begin
       if Trim(Output) = '' then Output := '(no diff)';
       Obj.Add('output',   Output);
       Obj.Add('work_dir', WorkDir);
+      if Assigned(ActiveEd) then
+      begin
+        Obj.Add('file', DiffPath);
+        if ActiveEd.Modified then
+          Obj.Add('editor_modified', True);   { unsaved edits are not in the diff }
+      end;
       if not Ok then Ctx.Error := True;
       Ctx.Result := Obj.AsJSON;
     finally
@@ -449,8 +676,13 @@ begin
     SCHEMA_GIT_STATUS, MCP_ANN_RO));
   Tools.Add(MakeTool('git_diff',
     'Show changes between the working tree and the index (or, with staged=true, ' +
-    'between the index and HEAD). Optionally scoped to a single path.',
+    'between the index and HEAD). Optionally scoped to a path, or to the active ' +
+    'editor''s file.',
     SCHEMA_GIT_DIFF, MCP_ANN_RO));
+  Tools.Add(MakeTool('git_blame',
+    'Who last changed lines, and in which commit: author, date, summary per line. ' +
+    'Defaults to the active editor''s file and cursor line; unsaved edits count as uncommitted.',
+    SCHEMA_GIT_BLAME, MCP_ANN_RO));
   Tools.Add(MakeTool('git_log',
     'Show recent commit history as one-line summaries. max_count defaults to 20.',
     SCHEMA_GIT_LOG, MCP_ANN_RO));

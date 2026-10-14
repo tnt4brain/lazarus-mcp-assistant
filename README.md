@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 102 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 103 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -183,6 +183,11 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 `git_checkout`, `git_stash`, `git_stash_pop`, `git_reset` (soft/mixed only —
 no hard reset). `work_dir` defaults to the project directory.
 
+For the file open in the editor: `git_blame` (who last changed a line, and in
+which commit) defaults to the active editor's file and cursor line, and blames
+unsaved edits as uncommitted; `git_diff` with `active_file` diffs that file in
+its own repository.
+
 ### Resources
 
 | URI | Content |
@@ -308,7 +313,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
-| `TTestToolSmoke` | 12 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
+| `TTestToolSmoke` | 13 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
 | `TTestDebugger` | 12 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads (about 35 s) |
 
@@ -357,10 +362,6 @@ For v0.9:
   - Built on the IDE's debugger interfaces, not on one backend.
   - Register sets differ per CPU, and macOS uses LLDB rather than FpDebug.
   - A backend that can't provide something is reported as unsupported.
-- **Editor-aware git tools (read-only).** Diff and blame for the file and line
-  open in the editor, without passing paths: what changed in this file, who last
-  touched this line and in which commit. Everything else stays with the client's
-  own shell `git`; the existing `git_*` tools stay as they are.
 - **Package editing.** Adding and removing files and requirements in a `.lpk`.
   Reading them is done: `project_list_packages`, `package_get_info`,
   `package_find_unit`.

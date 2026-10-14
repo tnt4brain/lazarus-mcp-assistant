@@ -23,6 +23,7 @@ type
     procedure TestFormListComponentsForwardSlashes;
     procedure TestPathSpellingsNameOneFile;
     procedure TestGitStatus;
+    procedure TestGitBlameActiveEditor;
     procedure TestProjectGetSettings;
     procedure TestProjectOpenAlreadyOpen;
     procedure TestPackageGetInfo;
@@ -145,6 +146,39 @@ begin
   if Pos('TOOL ERROR', T) = 1 then
     Ignore('git not usable here: ' + T);
   CheckTrue(Pos('"output"', T) > 0, 'git_status returns its output: ' + T);
+end;
+
+procedure TTestToolSmoke.TestGitBlameActiveEditor;
+{ Blame defaults to the active editor's cursor line; an unsaved line is
+  "uncommitted" and the committed line below it keeps its commit (the buffer
+  is written with the file's own line endings). The fixture is reverted. }
+var
+  T : string;
+begin
+  if not DirectoryExists(ExpandFileName(TestsDir + '..') + PathDelim + '.git') then
+    Ignore('not a git checkout');
+  try
+    T := Call('editor_open', '{"file_path":' + JsonStr(FixtureUnit) + '}');
+    CheckNoError(Self, 'editor_open', T);
+    Call('editor_set_cursor', '{"line":1,"col":1}');
+    T := Call('git_blame', '{}');
+    if Pos('TOOL ERROR', T) = 1 then
+      Ignore('git not usable here: ' + T);
+    CheckTrue(Pos('"line" : 1, "commit" : "', T) > 0, 'cursor line blamed: ' + T);
+    CheckEquals(0, Pos('uncommitted', T), 'saved fixture is committed: ' + T);
+    Call('editor_edit_at_position',
+      '{"line":1,"col":1,"delete_len":0,"insert_text":"// scratch\n"}');
+    T := Call('git_blame', '{"start_line":1,"end_line":2}');
+    CheckTrue(Pos('"editor_modified" : true', T) > 0, 'buffer blamed: ' + T);
+    CheckTrue(Pos('"line" : 1, "commit" : "uncommitted"', T) > 0, 'new line: ' + T);
+    CheckEquals(0, Pos('"line" : 2, "commit" : "uncommitted"', T),
+      'old line keeps its commit: ' + T);
+    T := Call('git_diff', '{"active_file":true}');
+    CheckTrue(Pos('"editor_modified" : true', T) > 0, 'diff warns about unsaved edits: ' + T);
+  finally
+    Call('editor_revert', '{"file":' + JsonStr(FixtureUnit) + '}');
+    Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
+  end;
 end;
 
 procedure TTestToolSmoke.TestProjectGetSettings;
