@@ -18,7 +18,8 @@ uses
   consoletestrunner, fpcunitreport, plaintestreport,
   THttpHelper,
   TUtils, TProtocol, TAuth, TTestInfra,
-  TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke;
+  TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
+  TConsent, TDebugger;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -120,6 +121,7 @@ begin
                   '.lazarus' + PathDelim + 'mcpassistantoptions.xml';
     {$ENDIF}
   if not FileExists(ConfigPath) then Exit;
+  GOptionsFile := ConfigPath;
   SL := TStringList.Create;
   try
     SL.LoadFromFile(ConfigPath);
@@ -182,6 +184,13 @@ begin
     GetTestRegistry.AddTest(TTestProjectTools.Suite);
     GetTestRegistry.AddTest(TTestSession.Suite);
     GetTestRegistry.AddTest(TTestToolSmoke.Suite);
+    GetTestRegistry.AddTest(TTestConsent.Suite);
+    { opt-in: they switch the IDE's project and take about half a minute }
+    if (GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1') or DebuggeeIsActive then
+      GetTestRegistry.AddTest(TDebuggeeSetup.Create(TTestDebugger.Suite))
+    else
+      WriteLn('Debugger tests skipped (set MCP_DEBUG_TESTS=1, or open ',
+              'tests/debuggee/mcpdebuggee.lpi in the IDE).');
   end
   else
     WriteLn('Server not running — protocol/auth tests skipped.');

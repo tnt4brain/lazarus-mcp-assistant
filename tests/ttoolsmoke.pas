@@ -23,6 +23,7 @@ type
     procedure TestFormListComponentsForwardSlashes;
     procedure TestGitStatus;
     procedure TestProjectGetSettings;
+    procedure TestProjectOpenAlreadyOpen;
     procedure TestDebugGetState;
   end;
 
@@ -129,6 +130,34 @@ begin
     Ignore('no project open: ' + T);
   CheckNoError(Self, 'project_get_settings', T);
   CheckTrue(Pos('"project_file"', T) > 0, 'settings name the project: ' + T);
+end;
+
+procedure TTestToolSmoke.TestProjectOpenAlreadyOpen;
+{ Opening the active project again changes nothing and says so. }
+var
+  T, Prj : string;
+  D      : TJSONData;
+begin
+  T := Call('project_get_settings', '{}');
+  if Pos('TOOL ERROR', T) = 1 then
+    Ignore('no project open: ' + T);
+  D := GetJSON(T);
+  try
+    Prj := TJSONObject(D).Get('project_file', '');
+  finally
+    D.Free;
+  end;
+  if Prj = '' then
+    Ignore('the open project has no file yet');
+  T := Call('project_open', '{"file_path":' + JsonStr(Prj) + '}');
+  CheckNoError(Self, 'project_open', T);
+  D := GetJSON(T);
+  try
+    CheckTrue(TJSONObject(D).Get('already_open', False), 'already_open: ' + T);
+    CheckTrue(SameFileName(Prj, TJSONObject(D).Get('project_file', '')), T);
+  finally
+    D.Free;
+  end;
 end;
 
 procedure TTestToolSmoke.TestDebugGetState;

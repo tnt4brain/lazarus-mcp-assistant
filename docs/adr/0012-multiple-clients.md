@@ -71,7 +71,8 @@ started with F9 and later handed to an assistant.
 
 - every non-read-only `debug_*` tool
 - the tools that end or disturb the session: `project_build`, `project_run`,
-  `project_create`, `ide_rebuild`, `package_install`, `package_uninstall`
+  `project_create`, `project_open` (added later), `ide_rebuild`,
+  `package_install`, `package_uninstall`
 
 Everything else stays available: read-only tools by annotation (ADR-010), such as
 `debug_get_state`, `debug_get_locals`, `debug_evaluate` and `debug_get_call_stack`,
@@ -180,6 +181,9 @@ All of this is enforced in one place, `McpGateEnter`/`McpGateLeave` around every
   stopped (no dialog, debuggee gone), and the Messages window showed:
   `MCP: debug session lease of client (session d97f7ac2) expired after 300 s
   without calls; session stopped.`
+- **Automated since then:** `TTestSession` covers identity, and the opt-in
+  `TTestDebugger` (ADR-005) covers the refusal, the lock and expiry with a
+  10 s lease.
 - All clients without a session id or cookie count as one. Two such scripts can
   step on each other, exactly as before this ADR.
 - The debugger lock trades parallelism for correctness. A read-only debugger call

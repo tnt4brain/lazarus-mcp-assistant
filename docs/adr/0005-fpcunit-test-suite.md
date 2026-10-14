@@ -230,8 +230,8 @@ server.
 
 ## Update (2026-10-14): more extraction, and option C after all
 
-The suite grew from 38 tests (after `TTestProjectTools`, ADR-006) to 65,
-in two directions.
+The suite grew from 38 tests (after `TTestProjectTools`, ADR-006) to 73
+(68 without the opt-in debugger suite), in two directions.
 
 **More code behind the extraction boundary.** Besides `McpUtils`, two more
 plugin units have no IDE imports, so the test program links them:
@@ -264,6 +264,38 @@ The tool tests found a bug on their first run. `form_*` tools failed for
 `D:/...` paths because the open editor's `D:\...` didn't match
 (fixed in bfd3f26).
 
-Still not tested automatically: the debug lease and debugger lock, the
-install-consent gate and dialog suppression. They need a debuggee and run
-for a while; see the debugger suite below once it exists.
+### The consent and debugger suites
+
+- `TTestConsent` (`tconsent.pas`, 2 tests): with installs not allowed,
+  `package_install` and `ide_rebuild` with a new package are refused, and the
+  IDE stays up. The tests never change the setting and never see the consent
+  dialog: they are ignored when installs are allowed, and the `.lpk` path
+  doesn't exist, so even then the request would stop at "not found".
+- `TTestDebugger` (`tdebugger.pas`, 5 tests), **opt-in**: breakpoint, step
+  and evaluate; an exception coming back without a dialog (ADR-011); a second
+  client refused while the first owns the session, but able to read it; the
+  debugger lock (`debug_get_state` answers during a blocking `debug_run`,
+  `debug_evaluate` waits for it); a 10 s lease expiring and stopping the
+  session (ADR-012). Two clients are simulated with two `Mcp-Session-Id`
+  values.
+
+The debugger suite debugs `tests/debuggee/mcpdebuggee.lpr`, a console program
+(no message box waits for a click after its exception). The tests find their
+lines by `MARK:` comments. Lazarus only debugs the active project, so the
+suite runs only when asked to:
+
+- **`MCP_DEBUG_TESTS=1`:** a `TTestSetup` decorator opens the debuggee with
+  `project_open` and reopens the previous project afterwards. Setting a
+  breakpoint marks a project modified, and `project_open` won't leave a
+  modified project. So after removing the breakpoints, teardown saves the
+  fixture (unchanged on disk) before switching back. If the user's project or
+  an editor has unsaved changes, the suite fails at setup instead.
+- **Or the debuggee is already the active project:** the suite runs, for
+  example from `ide_run_tests`, and leaves the project as it is.
+
+It takes about 25 s, most of it the lease expiry. Run twice in a row, all 73
+tests passed both times.
+
+Still not tested automatically: answering the exception dialog of a session
+the user started (that dialog only appears in user-driven sessions), and the
+consent dialog itself, which only the user may answer.

@@ -105,4 +105,9 @@ That tool will also carry `openWorldHint: true` for clients.
   - left unanswered, it closed itself after 180 s and the tool reported a decline
   - "Don't install" declined at once (the tool returned after 8 s)
   - nothing was installed, and the IDE was not rebuilt
-- **Not tested:** the Install button. It would really install the package.
+- **Install button verified with the user** (2026-10-14). The user turned the
+  setting on and clicked Install for `tests/manual/consentprobe/mcpconsentprobe.lpk`,
+  an empty design-time package kept for this check. `package_install` returned
+  `rebuilding`, and the IDE rebuilt and restarted. `package_get_info` then
+  reported the probe installed and loaded from that file. The refusal while
+  installs are off is also tested automatically (`TTestConsent`, ADR-005).

@@ -15,6 +15,7 @@ var
   GServerPort  : Word    = 0;
   GServerToken : string  = '';
   GServerAvail : Boolean = False;
+  GOptionsFile : string  = '';   { mcpassistantoptions.xml the server was found by }
 
 type
   THttpResult = record
@@ -152,7 +153,7 @@ begin
   Req  := TStringStream.Create(JSON);
   Resp := TStringStream.Create('');
   try
-    Http.IOTimeout := 10000;
+    Http.IOTimeout := 90000;   { debug_run may block for its whole timeout_s }
     Http.AddHeader('Authorization', 'Bearer ' + GServerToken);
     Http.AddHeader('Content-Type', 'application/json');
     for I := Low(AHeaders) to High(AHeaders) do

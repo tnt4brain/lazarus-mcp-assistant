@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 98 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 99 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -107,7 +107,7 @@ debugger-driving tool) answers the dialog with *Break*, as you would.
 
 With several clients connected, the first one that drives the debugger owns the
 session. Until it ends, other clients are refused the debugger-driving tools and
-`project_build`/`project_run`/`project_create`/`ide_rebuild`/`package_install`/
+`project_build`/`project_run`/`project_create`/`project_open`/`ide_rebuild`/`package_install`/
 `package_uninstall`; everything else stays available. The owner's lease expires
 after 300 s without calls from it (`debug_run` `lease_idle_timeout`), and the
 abandoned session is then stopped. `debug_get_state` shows the owner. Only one
@@ -145,6 +145,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_build` | Incremental build; returns success and errors |
 | `project_get_compiler_errors` | Errors and warnings of the last build |
 | `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters) |
+| `project_open` | Open an existing `.lpi`, closing the current project; refused while debugging or building, or with unsaved changes |
 | `project_list_templates` / `project_create` | Project templates; create a project from one |
 
 ### Packages — `package_*`
@@ -304,9 +305,11 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
-| `TTestToolSmoke` | 7 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
+| `TTestToolSmoke` | 8 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
+| `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
+| `TTestDebugger` | 5 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry (about 25 s) |
 
-The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped.
+The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped. With `MCP_DEBUG_TESTS=1` the debugger suite opens the debuggee project itself and reopens yours afterwards; it stops with an error instead if your project or an editor has unsaved changes.
 
 Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 
@@ -361,6 +364,9 @@ For v0.9:
   open in the editor, without passing paths: what changed in this file, who last
   touched this line and in which commit. Everything else stays with the client's
   own shell `git`; the existing `git_*` tools stay as they are.
+- **Package and dependency tools.** What the Project Inspector and the package
+  editor show: the project's required packages and their dependency tree, a
+  `.lpk`'s files and requirements, adding and removing files in a package.
 
 ---
 
