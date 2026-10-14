@@ -248,6 +248,16 @@ begin
   T := Lfm('lblB');
   CheckTrue(Pos('AnchorSideTop.Control = btnOK', T) > 0, T);
   CheckTrue(Pos('AnchorSideTop.Side = asrBottom', T) > 0, T);
+  { and read back with form_get_properties }
+  T := Call('form_get_properties', ',"component_name":"lblB"');
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"name" : "AnchorSideTop.Control", "value" : "btnOK"', T) > 0, 'listed: ' + T);
+  CheckEquals(0, Pos('AnchorSideLeft', T), 'unanchored sides left out: ' + T);
+  T := Call('form_get_properties', ',"component_name":"lblB","names":["AnchorSideTop"]');
+  CheckTrue(Pos('"name" : "AnchorSideTop.Side", "value" : "asrBottom"', T) > 0, T);
+  CheckTrue(Pos('"asrCenter"', T) > 0, 'with the allowed values: ' + T);
+  CheckEquals(0, Pos('AnchorSide', Call('form_get_properties', ',"component_name":"btnOK"')),
+              'no anchors, none listed');
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   CheckEquals(0, Pos('AnchorSideTop', Lfm('lblB')), 'undone');

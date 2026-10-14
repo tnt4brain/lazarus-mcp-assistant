@@ -700,6 +700,28 @@ begin
   end;
 end;
 
+{ AnchorSideLeft..AnchorSideBottom have a THiddenPropertyEditor (the Anchor
+  Editor edits them), so ListLevel never meets them: list their Control and
+  Side from the control.  Without a names filter only the sides anchored to
+  a control, to keep the listing short. }
+procedure ListAnchorSides(Pool: TEditorPool; AComp: TComponent; AKinds: TTypeKinds;
+  AFilter: TStringList; AArr: TJSONArray);
+var
+  Kind : TAnchorKind;
+  Side : TAnchorSide;
+begin
+  if not (AComp is TControl) then Exit;
+  for Kind := Low(TAnchorKind) to High(TAnchorKind) do
+  begin
+    Side := TControl(AComp).AnchorSide[Kind];
+    if (Side = nil) or (((AFilter = nil) or (AFilter.Count = 0)) and (Side.Control = nil)) then
+      Continue;
+    Pool.CollectTop(Side, AKinds);
+    ListLevel(Pool, 'AnchorSide' + Copy(GetEnumName(TypeInfo(TAnchorKind), Ord(Kind)), 3, MaxInt) + '.',
+              1, AFilter, AArr);
+  end;
+end;
+
 { ── Designer helpers ─────────────────────────────────────────────────────── }
 
 function FindEditorFor(const AFile: string): TSourceEditorInterface;
@@ -1879,6 +1901,7 @@ begin
       Obj.Add('properties', Arr);
       Pool.CollectTop(Comp, Kinds);
       ListLevel(Pool, '', 0, Filter, Arr);
+      ListAnchorSides(Pool, Comp, Kinds, Filter, Arr);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
