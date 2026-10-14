@@ -285,12 +285,11 @@ To update the reference: edit `docs/lazarus-knowledge.md`, then run `tools/gen_k
 
 ## Testing
 
-A standalone FPCUnit test project lives in `tests/`. It covers the protocol/auth/utility layer — the parts that compile without IDE dependencies.
+A standalone FPCUnit test project lives in `tests/`. Plugin units without IDE dependencies (utilities, launcher, settings file) are tested in-process. Everything else is tested over HTTP against the running IDE. The `ide_run_tests` tool builds and runs it, or by hand:
 
 ```
-cd tests
-fpc -Fu../src mcpserver_tests.lpr
-mcpserver_tests.exe
+lazbuild tests/mcpserver_tests.lpi
+tests/mcpserver_tests.exe --all --format=plain
 ```
 
 **Suites:**
@@ -299,9 +298,13 @@ mcpserver_tests.exe
 |---|---|---|
 | `TTestUtils` | 7 | Nothing (always runs) |
 | `TTestJUnitWriter` | 8 | Nothing (always runs) |
+| `TTestLauncher` | 10 | Nothing (always runs): sh quoting, launch script, terminal choice |
+| `TTestSettingsFile` | 3 | Nothing (always runs): settings save/load, obsolete keys removed |
 | `TTestProtocol` | 10 | MCP server reachable |
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
+| `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
+| `TTestToolSmoke` | 7 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
 
 The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped.
 

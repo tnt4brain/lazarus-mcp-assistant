@@ -115,12 +115,12 @@ and is intentionally untested.
 ### How to run
 
 ```
-cd tests
-fpc -Fu../src mcpserver_tests.lpr
-mcpserver_tests.exe
+lazbuild tests/mcpserver_tests.lpi
+tests/mcpserver_tests.exe --all --format=plain
 ```
 
-Or via Lazarus: open `tests/mcpserver_tests.lpi` and run.  No plugin
+(Plain `fpc -Fu../src` worked until the tests started using LazUtils; see
+the update below.)  Or via Lazarus: open `tests/mcpserver_tests.lpi` and run.  No plugin
 installation needed.  The binary exits with code 0 on pass, non-zero on
 failure.
 
@@ -227,3 +227,43 @@ server.
 - Passing tests are a necessary but not sufficient condition for a correct
   plugin: IDE-level behaviour is still verified by hand or by the self-hosted
   loop.
+
+## Update (2026-10-14): more extraction, and option C after all
+
+The suite grew from 38 tests (after `TTestProjectTools`, ADR-006) to 65,
+in two directions.
+
+**More code behind the extraction boundary.** Besides `McpUtils`, two more
+plugin units have no IDE imports, so the test program links them:
+
+- `McpLauncher`: the Linux/macOS launch path is plain string code.
+  `TTestLauncher` (`tlauncher.pas`, 10 tests) covers sh quoting, the launch
+  script and the choice of terminal.
+- `McpSettingsFile`: the settings class moved here out of `McpIdeState`, which
+  now only passes it the file name. `TTestSettingsFile` (`tsettings.pas`,
+  3 tests) covers save/load and the removal of obsolete keys. It uses
+  `Laz2_XMLCfg`, so the test project requires the LazUtils package and is
+  built with `lazbuild`.
+
+Both suites always run.
+
+**Option C for tool handlers.** "Can't run in CI" still holds, but the
+suites are skipped when no server answers, and `ide_run_tests` runs them in
+the self-hosted loop anyway. So read-only tool calls are now tested over HTTP:
+
+- `TTestSession` (`tsession.pas`, 7 tests): ADR-012 identity: the
+  `Mcp-Session-Id` from `initialize`, the `mcp_session` cookie, header over
+  cookie, anonymous callers being offered a cookie, `DELETE /mcp`.
+- `TTestToolSmoke` (`ttoolsmoke.pas`, 7 tests): one read-only call per tool
+  group (editor, CodeTools, forms, git, project, debugger) against the
+  fixture unit and form in `tests/fixtures/`. The form test opens the
+  fixture in the designer and closes it again. The git and project tests are
+  ignored, not failed, without a git checkout or an open project.
+
+The tool tests found a bug on their first run. `form_*` tools failed for
+`D:/...` paths because the open editor's `D:\...` didn't match
+(fixed in bfd3f26).
+
+Still not tested automatically: the debug lease and debugger lock, the
+install-consent gate and dialog suppression. They need a debuggee and run
+for a while; see the debugger suite below once it exists.

@@ -1,0 +1,15 @@
+object FixtureForm: TFixtureForm
+  Left = 0
+  Height = 120
+  Top = 0
+  Width = 240
+  Caption = 'Fixture'
+  object btnOK: TButton
+    Left = 8
+    Height = 25
+    Top = 8
+    Width = 75
+    Caption = 'OK'
+    OnClick = btnOKClick
+  end
+end

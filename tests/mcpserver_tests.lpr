@@ -18,7 +18,7 @@ uses
   consoletestrunner, fpcunitreport, plaintestreport,
   THttpHelper,
   TUtils, TProtocol, TAuth, TTestInfra,
-  TJUnitWriter, TProjectTools;
+  TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -168,8 +168,9 @@ var
   Tok  : string;
 
 begin
-  // TTestUtils and TTestJUnitWriter are registered via their own initialization
-  // blocks.  Conditionally register protocol/auth when server is reachable.
+  // TTestUtils, TTestJUnitWriter, TTestLauncher and TTestSettingsFile are
+  // registered via their own initialization blocks.  The suites that talk to
+  // the server are registered only when it is reachable.
   if ReadServerConfig(Port, Tok) and PingServer(Port, Tok) then
   begin
     GServerPort  := Port;
@@ -179,6 +180,8 @@ begin
     GetTestRegistry.AddTest(TTestProtocol.Suite);
     GetTestRegistry.AddTest(TTestAuth.Suite);
     GetTestRegistry.AddTest(TTestProjectTools.Suite);
+    GetTestRegistry.AddTest(TTestSession.Suite);
+    GetTestRegistry.AddTest(TTestToolSmoke.Suite);
   end
   else
     WriteLn('Server not running — protocol/auth tests skipped.');

@@ -8,12 +8,11 @@ unit LazMcpAssistant;
 interface
 
 uses
-  McpIdeListeners, McpIdeState, McpLayoutPanel, 
-  McpIdeServer, McpToolContext, McpToolHelpers, McpToolsPackages, 
-  McpToolsEditor, McpToolsBuild, McpToolsCodeTools, McpToolsForms, 
-  McpToolsProject, McpToolsGit, McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent,
-  McpLauncher, McpOptions,
-  LazarusPackageIntf;
+  McpIdeListeners, McpIdeState, McpLayoutPanel, McpIdeServer, McpToolContext, 
+  McpToolHelpers, McpToolsPackages, McpToolsEditor, McpToolsBuild, 
+  McpToolsCodeTools, McpToolsForms, McpToolsProject, McpToolsGit, 
+  McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent, McpLauncher, 
+  McpOptions, McpSettingsFile, LazarusPackageIntf;
 
 implementation
 

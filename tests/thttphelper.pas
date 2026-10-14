@@ -37,7 +37,27 @@ function McpPostWithOrigin(const JSON, Origin: string): THttpResult;
 { POST to an arbitrary path on the server. }
 function McpPostPath(const Path, JSON: string): THttpResult;
 
+{ AMethod /mcp with the correct token plus AHeaders ('Name: value' items).
+  Any status code is returned rather than raised; ARespHeaders receives the
+  response headers as 'Name: value' lines. }
+function McpRequest(const AMethod, JSON: string; const AHeaders: array of string;
+  ARespHeaders: TStrings): THttpResult;
+
+{ Value of header AName in 'Name: value' lines, '' if absent. }
+function HeaderValue(AHeaders: TStrings; const AName: string): string;
+
+{ POST tools/call; the result's first text content, or 'TOOL ERROR: ...' /
+  'RPC ERROR: ...' / 'HTTP <code>'. }
+function CallToolText(const ToolName, ArgsJSON: string;
+  const AHeaders: array of string): string;
+
+{ S as a JSON string literal, quotes included. }
+function JsonStr(const S: string): string;
+
 implementation
+
+uses
+  fpjson, jsonparser;
 
 function DoPost(const Path, JSON, AuthHeader, Origin: string): THttpResult;
 var
@@ -116,6 +136,92 @@ end;
 function McpPostPath(const Path, JSON: string): THttpResult;
 begin
   Result := DoPost(Path, JSON, 'Bearer ' + GServerToken, '');
+end;
+
+function McpRequest(const AMethod, JSON: string; const AHeaders: array of string;
+  ARespHeaders: TStrings): THttpResult;
+var
+  Http : TFPHTTPClient;
+  Req  : TStringStream;
+  Resp : TStringStream;
+  I, P : Integer;
+begin
+  Result.Code := -1;
+  Result.Body := '';
+  Http := TFPHTTPClient.Create(nil);
+  Req  := TStringStream.Create(JSON);
+  Resp := TStringStream.Create('');
+  try
+    Http.IOTimeout := 10000;
+    Http.AddHeader('Authorization', 'Bearer ' + GServerToken);
+    Http.AddHeader('Content-Type', 'application/json');
+    for I := Low(AHeaders) to High(AHeaders) do
+    begin
+      P := Pos(':', AHeaders[I]);
+      Http.AddHeader(Copy(AHeaders[I], 1, P - 1), Trim(Copy(AHeaders[I], P + 1, MaxInt)));
+    end;
+    if JSON <> '' then
+      Http.RequestBody := Req;
+    try
+      Http.HTTPMethod(AMethod, Format('http://127.0.0.1:%d/mcp', [GServerPort]), Resp, []);
+      Result.Code := Http.ResponseStatusCode;
+      Result.Body := Resp.DataString;
+      if Assigned(ARespHeaders) then
+        ARespHeaders.Assign(Http.ResponseHeaders);
+    except
+      Result.Code := -1;
+    end;
+  finally
+    Req.Free;
+    Resp.Free;
+    Http.Free;
+  end;
+end;
+
+function HeaderValue(AHeaders: TStrings; const AName: string): string;
+var
+  I, P : Integer;
+begin
+  Result := '';
+  for I := 0 to AHeaders.Count - 1 do
+  begin
+    P := Pos(':', AHeaders[I]);
+    if (P > 0) and SameText(Trim(Copy(AHeaders[I], 1, P - 1)), AName) then
+      Exit(Trim(Copy(AHeaders[I], P + 1, MaxInt)));
+  end;
+end;
+
+function CallToolText(const ToolName, ArgsJSON: string;
+  const AHeaders: array of string): string;
+var
+  R       : THttpResult;
+  D       : TJSONData;
+  Obj     : TJSONObject;
+  Res     : TJSONObject;
+  Content : TJSONArray;
+begin
+  R := McpRequest('POST', '{"jsonrpc":"2.0","id":7,"method":"tools/call",' +
+    '"params":{"name":"' + ToolName + '","arguments":' + ArgsJSON + '}}', AHeaders, nil);
+  if R.Code <> 200 then
+    Exit('HTTP ' + IntToStr(R.Code));
+  D := GetJSON(R.Body);
+  try
+    Obj := D as TJSONObject;
+    if Assigned(Obj.Find('error')) then
+      Exit('RPC ERROR: ' + Obj.Objects['error'].Get('message', ''));
+    Res     := Obj.Objects['result'];
+    Content := Res.Arrays['content'];
+    Result  := TJSONObject(Content[0]).Get('text', '');
+    if Res.Get('isError', False) then
+      Result := 'TOOL ERROR: ' + Result;
+  finally
+    D.Free;
+  end;
+end;
+
+function JsonStr(const S: string): string;
+begin
+  Result := '"' + StringToJSONString(S) + '"';
 end;
 
 end.
