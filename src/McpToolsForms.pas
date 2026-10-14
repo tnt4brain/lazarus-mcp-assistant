@@ -544,15 +544,23 @@ begin
   Result := TCollection(Obj);
 end;
 
-{ Resolve a dotted property path ('BorderSpacing.Around') to its editor. }
+{ Resolve a dotted property path ('BorderSpacing.Around') to its editor.
+  Sub-objects the Object Inspector hides (AnchorSideLeft..AnchorSideBottom
+  have a THiddenPropertyEditor; it edits them in the Anchor Editor) are
+  entered through RTTI, and their own properties (Control, Side) through
+  their editors. }
 function ResolvePath(Pool: TEditorPool; AItem: TPersistent;
   const APath: string; out AErr: string): TPropertyEditor;
 var
   Rest, Part : string;
   P          : Integer;
+  Cur        : TPersistent;   { the object whose properties are in the pool }
+  Info       : PPropInfo;
+  Sub        : TObject;
 begin
   Result := nil;
   AErr   := '';
+  Cur    := AItem;
   Pool.CollectTop(AItem, tkAny);
   Rest := APath;
   repeat
@@ -568,6 +576,19 @@ begin
       Rest := '';
     end;
     Result := Pool.FindInLevel(Part);
+    if (Result = nil) and (Rest <> '') and Assigned(Cur) then
+    begin
+      Info := GetPropInfo(Cur, Part);
+      Sub  := nil;
+      if Assigned(Info) and (Info^.PropType^.Kind = tkClass) then
+        Sub := GetObjectProp(Cur, Info);
+      if (Sub is TPersistent) and not (Sub is TComponent) then
+      begin
+        Cur := TPersistent(Sub);
+        Pool.CollectTop(Cur, tkAny);
+        Continue;
+      end;
+    end;
     if Result = nil then
     begin
       AErr := 'property not found: ' + Part;
@@ -580,6 +601,9 @@ begin
         AErr := Part + ' has no sub-properties';
         Exit(nil);
       end;
+      Cur := nil;
+      if (Result.GetPropType^.Kind = tkClass) and (Result.GetObjectValue is TPersistent) then
+        Cur := TPersistent(Result.GetObjectValue);
       Pool.CollectSub(Result);
     end;
   until Rest = '';

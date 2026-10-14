@@ -32,6 +32,7 @@ type
     procedure TestSnapshotNestedControl;
     procedure TestSnapshotWithRename;
     procedure TestAnchorSideKept;
+    procedure TestAnchorSideSet;
     procedure TestCreateEventHandler;
     procedure TestMenu;
     procedure TestFormItselfNotUndoable;
@@ -230,6 +231,26 @@ begin
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('AnchorSideTop.Control = btnOK', Lfm('lblAnch')) > 0, 'anchor back');
+end;
+
+procedure TTestFormUndo.TestAnchorSideSet;
+{ Regression: AnchorSide* is hidden from the Object Inspector's editors, and
+  form_set_properties answered "property not found: AnchorSideTop". }
+var
+  T : string;
+begin
+  Call('form_add_component', ',"class_name":"TLabel","name":"lblB","left":8,"top":60');
+  T := Call('form_set_properties', ',"component_name":"lblB","properties":' +
+            '{"AnchorSideTop.Control":"btnOK","AnchorSideTop.Side":"asrBottom","BorderSpacing.Top":6}');
+  CheckFalse(IsError(T), T);
+  CheckEquals(0, Pos('"error"', T), T);
+  CheckTrue(Pos('"undoable" : true', T) > 0, T);
+  T := Lfm('lblB');
+  CheckTrue(Pos('AnchorSideTop.Control = btnOK', T) > 0, T);
+  CheckTrue(Pos('AnchorSideTop.Side = asrBottom', T) > 0, T);
+  T := Call('form_undo', '');
+  CheckFalse(IsError(T), T);
+  CheckEquals(0, Pos('AnchorSideTop', Lfm('lblB')), 'undone');
 end;
 
 procedure TTestFormUndo.TestCreateEventHandler;
