@@ -329,6 +329,10 @@ For v0.9:
   - Built on the IDE's debugger interfaces, not on one backend.
   - Register sets differ per CPU, and macOS uses LLDB rather than FpDebug.
   - A backend that can't provide something is reported as unsupported.
+- **Editor-aware git tools (read-only).** Diff and blame for the file and line
+  open in the editor, without passing paths: what changed in this file, who last
+  touched this line and in which commit. Everything else stays with the client's
+  own shell `git`; the existing `git_*` tools stay as they are.
 
 ---
 
