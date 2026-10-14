@@ -14,7 +14,7 @@ implementation
 
 uses
   Classes, SysUtils, DateUtils, Math, Process, FileUtil, LazFileUtils,
-  LazIDEIntf, SrcEditorIntf,
+  LazIDEIntf, SrcEditorIntf, CodeToolManager, CodeCache, LConvEncoding,
   fpjson,
   McpToolContext, McpIdeState;
 
@@ -153,7 +153,24 @@ const
 
 { git blame --porcelain: per line "<sha> <orig> <final> [<count>]", the commit's
   headers the first time the sha appears, then TAB + the line text. }
-function ParseBlame(const AOut: string): TJSONArray;
+{ Encoding of the file on disk as CodeTools detected it ('utf8', 'utf8bom',
+  'cp1251', ...); '' for UTF-8 or unknown. Main thread. }
+function FileEncoding(const AFileName: string): string;
+var
+  Code : TCodeBuffer;
+begin
+  Result := '';
+  Code := CodeToolBoss.FindFile(AFileName);
+  if Code = nil then
+    Code := CodeToolBoss.LoadFile(AFileName, True, False);
+  if Assigned(Code) then
+    Result := LowerCase(Code.DiskEncoding);
+  if (Result = EncodingUTF8) or (Result = EncodingUTF8BOM) then
+    Result := '';
+end;
+
+{ AEnc: the file's encoding when it isn't UTF-8; git prints line text as stored. }
+function ParseBlame(const AOut, AEnc: string): TJSONArray;
 var
   SL      : TStringList;
   Commits : TStringList;   { sha=index into Infos }
@@ -190,7 +207,10 @@ begin
           LObj.Add('date', Infos[Idx].Date);
           LObj.Add('summary', Infos[Idx].Summary);
         end;
-        LObj.Add('text', Copy(S, 2, MaxInt));
+        if AEnc <> '' then
+          LObj.Add('text', ConvertEncoding(Copy(S, 2, MaxInt), AEnc, EncodingUTF8))
+        else
+          LObj.Add('text', Copy(S, 2, MaxInt));
         Continue;
       end;
       Parts := S.Split([' ']);
@@ -222,14 +242,16 @@ begin
   end;
 end;
 
-{ The line ending the file on disk uses (its first line break). }
-function FileLineBreak(const AFileName: string): string;
+{ The line ending the file on disk uses (its first line break), and its UTF-8
+  BOM if it has one: the editor's text has neither. }
+function FileLineBreak(const AFileName: string; out ABom: string): string;
 var
   FS  : TFileStream;
   Buf : string;
   P   : Integer;
 begin
   Result := LineEnding;
+  ABom   := '';
   try
     FS := TFileStream.Create(AFileName, fmOpenRead or fmShareDenyNone);
     try
@@ -242,6 +264,8 @@ begin
   except
     Exit;
   end;
+  if Copy(Buf, 1, 3) = #$EF#$BB#$BF then
+    ABom := #$EF#$BB#$BF;
   P := Pos(#10, Buf);
   if P > 1 then
     if Buf[P - 1] = #13 then Result := #13#10 else Result := #10
@@ -260,6 +284,8 @@ var
   Modified, Ok : Boolean;
   GitArgs   : TStringList;
   SL        : TStringList;
+  FS        : TFileStream;
+  Bom, Data, Enc : string;
   Obj       : TJSONObject;
 begin
   FileName  := '';
@@ -299,6 +325,7 @@ begin
   if Assigned(Ed) and (EndLine > Ed.Lines.Count) then
     EndLine := Ed.Lines.Count;
   Modified := Assigned(Ed) and Ed.Modified;
+  Enc      := FileEncoding(FileName);
   TmpFile  := '';
   GitArgs  := TStringList.Create;
   try
@@ -309,13 +336,25 @@ begin
     if Modified then
     begin
       TmpFile := GetTempFileName('', 'mcpblame');
+      { written as the file on disk is: same line breaks (else every line
+        differs) and the same BOM (else line 1 does) }
       SL := TStringList.Create;
       try
         SL.Text := Ed.Lines.Text;
-        SL.LineBreak := FileLineBreak(FileName);   { else every line differs }
-        SL.SaveToFile(TmpFile);
+        SL.LineBreak := FileLineBreak(FileName, Bom);
+        Data := SL.Text;
+        if Enc <> '' then   { the editor holds UTF-8 }
+          Data := ConvertEncoding(Data, EncodingUTF8, Enc);
+        Data := Bom + Data;
       finally
         SL.Free;
+      end;
+      FS := TFileStream.Create(TmpFile, fmCreate);
+      try
+        if Data <> '' then
+          FS.WriteBuffer(Data[1], Length(Data));
+      finally
+        FS.Free;
       end;
       GitArgs.Add('--contents');
       GitArgs.Add(TmpFile);
@@ -336,7 +375,9 @@ begin
     Obj.Add('file', FileName);
     if Modified then
       Obj.Add('editor_modified', True);   { blamed as shown in the editor }
-    Obj.Add('lines', ParseBlame(Output));
+    if Enc <> '' then
+      Obj.Add('encoding', Enc);
+    Obj.Add('lines', ParseBlame(Output, Enc));
     Ctx.Result := Obj.AsJSON;
   finally
     Obj.Free;
