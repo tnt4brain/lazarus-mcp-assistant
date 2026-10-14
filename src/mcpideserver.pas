@@ -28,7 +28,7 @@ type
     FSyncParams   : TJSONObject; // borrowed reference, server thread owns it
     FSyncResult          : string;      // output set by main thread
     FSyncError           : Boolean;     // True when SyncCallTool encountered an error
-    FSyncConnectionClose : Boolean;     // True → add Connection: close to response
+    FSyncConnectionClose : Boolean;     // unused: every response now sends Connection: close
     FSyncLogMsg   : string;
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
@@ -49,6 +49,8 @@ type
                        const Msg: string): string;
     procedure SyncCallTool;    // runs on main thread via Synchronize
     procedure SyncLogToIDE;    // runs on main thread via Synchronize
+    procedure HandleAllowConnect(Sender: TObject; ASocket: LongInt;
+                                 var Allow: Boolean);
 
   protected
     procedure Execute; override;
@@ -74,7 +76,8 @@ function  WriteMcpConfig  : string; // returns temp config file path
 implementation
 
 uses
-  LazFileUtils, Sockets, fphttpclient,
+  {$IFDEF UNIX} BaseUnix, {$ENDIF}
+  LazFileUtils, Sockets, ssockets, fphttpclient,
 
   StrUtils,
   IDEExternToolIntf, IDEMsgIntf,
@@ -107,6 +110,28 @@ begin
   Addr.sin_addr.s_bytes[4] := 1;
   fpConnect(S, @Addr, SizeOf(Addr));
   CloseSocket(S);
+end;
+
+{$IFDEF MSWINDOWS}
+function SetHandleInformation(hObject: PtrUInt; dwMask, dwFlags: DWord): LongBool;
+  stdcall; external 'kernel32' name 'SetHandleInformation';
+{$ENDIF}
+
+{ Stop child processes (the debuggee, fpc, lazbuild …) from inheriting a socket.
+  An inherited copy keeps the TCP connection open after the server closes its
+  own handle, so the client never sees FIN, reuses the connection for its next
+  request, and waits forever for a reply nobody will send. }
+procedure MakeSocketNonInheritable(ASocket: LongInt);
+const
+  HANDLE_FLAG_INHERIT = 1;
+begin
+  if ASocket < 0 then Exit;
+  {$IFDEF MSWINDOWS}
+  SetHandleInformation(PtrUInt(ASocket), HANDLE_FLAG_INHERIT, 0);
+  {$ENDIF}
+  {$IFDEF UNIX}
+  FpFcntl(ASocket, F_SETFD, FD_CLOEXEC);
+  {$ENDIF}
 end;
 
 { ── Ping check ───────────────────────────────────────────────────────────── }
@@ -151,6 +176,7 @@ begin
   FServer.Port      := APort;
   FServer.Threaded  := True;   { each connection gets its own thread — required for blocking tools }
   FServer.OnRequest := @HandleRequest;
+  FServer.OnAllowConnect := @HandleAllowConnect;
   FServer.QueueSize := 5;
 end;
 
@@ -180,12 +206,28 @@ end;
 
 { ── HTTP request handler ─────────────────────────────────────────────────── }
 
+{ Runs on the server thread right after accept().  The listening socket is
+  not reachable before the first connection, so it is fixed up here too. }
+procedure TMcpServerThread.HandleAllowConnect(Sender: TObject;
+  ASocket: LongInt; var Allow: Boolean);
+begin
+  if Sender is TSocketServer then
+    MakeSocketNonInheritable(TSocketServer(Sender).Socket);
+  MakeSocketNonInheritable(ASocket);
+  Allow := True;
+end;
+
 procedure TMcpServerThread.HandleRequest(Sender: TObject;
   var ARequest  : TFPHTTPConnectionRequest;
   var AResponse : TFPHTTPConnectionResponse);
 var
   ResponseBody : string;
 begin
+  { fphttpserver (FPC 3.2.2) serves exactly one request per connection and then
+    closes the socket.  Say so, otherwise HTTP/1.1 clients keep the connection
+    alive and send their next request into a socket nobody reads any more. }
+  AResponse.SetCustomHeader('Connection', 'close');
+
   // Only POST /mcp is accepted
   if ARequest.Method <> 'POST' then
   begin
@@ -235,10 +277,6 @@ begin
     AResponse.ContentType := 'application/json';
     AResponse.Content     := ResponseBody;
   end;
-  // rebuild_ide causes the IDE to exit — close the TCP connection cleanly so
-  // the port is fully released before the new IDE instance tries to bind it.
-  if FSyncConnectionClose then
-    AResponse.SetCustomHeader('Connection', 'close');
 end;
 
 { ── JSON-RPC dispatch ─────────────────────────────────────────────────────── }

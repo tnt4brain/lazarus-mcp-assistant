@@ -66,6 +66,7 @@ type
     { CallStack in/out }
     InMaxFrames   : Integer;
     OutCSThreadId : Integer;
+    OutCSCount    : Integer;  { -1 = count not known yet; else frames to return }
     OutCSReady    : Boolean;
     OutCSJSON     : string;
     { Local variables in/out }
@@ -198,13 +199,17 @@ begin
 end;
 
 procedure TDbgSyncHelper.InitCallStack;
-{ Trigger async call-stack load for the current thread. }
+{ Trigger async call-stack load for the current thread.
+  CountLimited → HasAtLeastCount → RequestAtLeastCount: this only updates the
+  stack's "at least N" info.  CountValidity stays ddsUnknown unless the backend
+  happened to read every frame, so ReadCallStack must not wait on it alone. }
 var
   Stack : TIdeCallStack;
   TId   : Integer;
 begin
   OutCSReady    := False;
   OutCSThreadId := 0;
+  OutCSCount    := -1;
   OutCSJSON     := '';
   if not Assigned(DebugBoss) or not Assigned(DebugBoss.CallStack) then Exit;
   if Assigned(DebugBoss.Threads) and
@@ -219,13 +224,21 @@ begin
 end;
 
 procedure TDbgSyncHelper.ReadCallStack;
-{ Called from blocking worker via Synchronize until OutCSReady = True. }
+{ Called from blocking worker via Synchronize until OutCSReady = True.
+  Two async phases, each triggered exactly once:
+    1. count  — InitCallStack requested "at least InMaxFrames+1" frames; wait
+                until either the full count or that minimum is known.
+    2. frames — PrepareRange creates the entries as ddsRequested and queues
+                one worker per frame; wait until none is still pending.
+  Both checks below only read state: HasAtLeastCount re-requests only while its
+  validity is ddsUnknown (never the case after InitCallStack), and Entries[I]
+  on an entry PrepareRange already created is a plain lookup. }
 var
   Stack  : TIdeCallStack;
   Entry  : TIdeCallStackEntry;
   Arr    : TJSONArray;
   EObj   : TJSONObject;
-  I, Cnt : Integer;
+  I      : Integer;
 begin
   OutCSReady := False;
   if not Assigned(DebugBoss) or not Assigned(DebugBoss.CallStack) then
@@ -241,15 +254,44 @@ begin
     OutCSJSON  := '[]';
     Exit;
   end;
-  if Stack.CountValidity <> ddsValid then Exit;  { still loading; caller retries }
-  Cnt := Stack.CountLimited(InMaxFrames);
-  Stack.PrepareRange(0, Cnt);
+
+  { Phase 1 — frame count }
+  if OutCSCount < 0 then
+  begin
+    case Stack.CountValidity of
+      ddsValid:
+        if Stack.Count < InMaxFrames then
+          OutCSCount := Stack.Count
+        else
+          OutCSCount := InMaxFrames;
+      ddsInvalid, ddsError:
+        OutCSCount := 0;
+    else
+      if Stack.HasAtLeastCount(InMaxFrames + 1) = nbTrue then
+        OutCSCount := InMaxFrames
+      else
+        Exit;  { still loading; caller retries }
+    end;
+    if OutCSCount > 0 then
+      Stack.PrepareRange(0, OutCSCount);  { trigger async frame load, once }
+    Exit;  { frames are read on the next poll }
+  end;
+
+  { Phase 2 — frame details }
+  for I := 0 to OutCSCount - 1 do
+  begin
+    Entry := Stack.Entries[I];
+    if Assigned(Entry) and
+       (Entry.Validity in [ddsUnknown, ddsRequested, ddsEvaluating]) then
+      Exit;  { still loading; caller retries }
+  end;
+
   Arr := TJSONArray.Create;
   try
-    for I := 0 to Cnt - 1 do
+    for I := 0 to OutCSCount - 1 do
     begin
       Entry := Stack.Entries[I];
-      if (Entry = nil) or (Entry.Validity = ddsRequested) then Break;
+      if Entry = nil then Continue;
       EObj := TJSONObject.Create;
       EObj.Add('index',    I);
       EObj.Add('file',     Entry.Source);
