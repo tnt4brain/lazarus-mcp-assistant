@@ -242,7 +242,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'file_path required'; Exit;
     end;
-    FilePath := Ctx.Params.Get('file_path', '');
+    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
     if not FileExists(FilePath) then
     begin
       Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
@@ -272,7 +272,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'file_path required'; Exit;
     end;
-    FilePath := Ctx.Params.Get('file_path', '');
+    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
     Proj := LazarusIDE.ActiveProject;
     if not Assigned(Proj) then
     begin

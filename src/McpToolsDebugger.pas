@@ -906,7 +906,7 @@ begin
     begin Ctx.Error := True; Ctx.Result := 'file_path required'; Exit; end;
     if not Assigned(DebugBoss) then
     begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
-    GSyncHelper.InBpFile    := Ctx.Params.Get('file_path', '');
+    GSyncHelper.InBpFile    := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
     GSyncHelper.InBpLine    := Ctx.Params.Get('line', 0);
     GSyncHelper.InBpEnabled := Ctx.Params.Get('enabled', True);
     GSyncHelper.AddBreakpoint;   { already on main thread }
@@ -926,7 +926,7 @@ begin
     Result := True;
     if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
     begin Ctx.Error := True; Ctx.Result := 'file_path required'; Exit; end;
-    GSyncHelper.InBpFile  := Ctx.Params.Get('file_path', '');
+    GSyncHelper.InBpFile  := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
     GSyncHelper.InBpLine  := Ctx.Params.Get('line', 0);
     GSyncHelper.OutBpFound := False;
     GSyncHelper.RemoveBreakpoint;   { already on main thread }
@@ -1171,7 +1171,7 @@ begin
     if Assigned(Ctx.Params) then
       TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
     { Add temp breakpoint on main thread }
-    GSyncHelper.InBpFile    := Ctx.Params.Get('file_path', '');
+    GSyncHelper.InBpFile    := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
     GSyncHelper.InBpLine    := Ctx.Params.Get('line', 0);
     GSyncHelper.InBpEnabled := True;
     TThread.Synchronize(nil, @GSyncHelper.AddBreakpoint);

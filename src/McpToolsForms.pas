@@ -639,8 +639,9 @@ begin
     AErr := 'FormEditingHook is nil';
     Exit;
   end;
-  { Designers belong to the unit's source editor, so look for the .pas }
-  PasFile := AFormFile;
+  { Designers belong to the unit's source editor, so look for the .pas.
+    Normalised, so D:/x/f.pas matches the editor's D:\x\f.pas. }
+  PasFile := CleanAndExpandFilename(AFormFile);
   if SameText(ExtractFileExt(PasFile), '.lfm') then
   begin
     PasFile := ChangeFileExt(AFormFile, '.pas');
