@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 109 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 110 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -161,6 +161,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `package_add_file` / `package_remove_file` | Files of a `.lpk`, as the package editor's Add/Remove: unit name and `Register` detected, unit/include path extended when needed |
 | `package_add_dependency` / `package_remove_dependency` | Required packages of a `.lpk`, with version limits; cycles, unknown packages and new code for the IDE are refused (ADR-013) |
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
+| `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS, or HTTP when the IDE has no OpenSSL) |
 | `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE |
 
@@ -318,7 +319,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
 | `TTestToolSmoke` | 13 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
-| `TTestPackageEdit` | 4 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back) |
+| `TTestPackageEdit` | 5 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
@@ -355,12 +356,6 @@ For v0.9:
 
 - **Undo for designer changes.** `form_*` changes can't be undone from the
   assistant yet; today the way back is `editor_revert` or git.
-- **Install packages from the online repository.** Download a package found
-  with `package_search_online` into the Online Package Manager's folder, check
-  it against the catalog's MD5 hash, and install it through the same consent
-  dialog as any other new package. The dialog will say whether the code comes
-  from the official repository or from a third-party URL. See
-  [ADR-013](ADR-013.md#downloads-v09-not-built-yet).
 
 ---
 

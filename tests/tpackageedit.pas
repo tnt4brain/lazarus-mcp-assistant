@@ -24,6 +24,7 @@ type
     procedure TestAddAndRemoveDependency;
     procedure TestRefusals;
     procedure TestConsentGuard;
+    procedure TestDownloadUnknownPackage;
   end;
 
 implementation
@@ -144,6 +145,17 @@ begin
   T := Call('package_remove_file',
     '{' + Lpk + ',"file":' + JsonStr(FixtureDir + 'nosuchfile.pas') + '}');
   CheckTrue(Pos('is not in', T) > 0, 'not a package file: ' + T);
+end;
+
+procedure TTestPackageEdit.TestDownloadUnknownPackage;
+{ Refused before any network access. }
+var
+  T : string;
+begin
+  T := Call('package_download', '{"name":"NoSuchPackageXyz"}');
+  if Pos('No Online Package Manager catalog', T) > 0 then
+    Ignore('no OPM catalog here: ' + T);
+  CheckTrue(Pos('is not in the catalog', T) > 0, 'unknown package: ' + T);
 end;
 
 procedure TTestPackageEdit.TestConsentGuard;

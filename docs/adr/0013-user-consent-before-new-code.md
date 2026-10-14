@@ -68,17 +68,47 @@ ordinary requirements are not refused.
 Adding a file to an installed package isn't gated. That's the same as editing
 the package's sources with the editor tools: the package is already in the IDE.
 
-### Downloads (v0.9, not built yet)
+### Downloads (v0.9)
 
-A future online-install tool will download into the Online Package Manager's
-packages directory, check the catalog's MD5 hash, and then go through this same
-gate. The dialog will name the source:
+Downloading and installing are two steps. `package_download` (`openWorldHint:
+true`) only fetches. Installing stays with `package_install` and goes through
+this gate unchanged. The download installs nothing, so it needs no consent.
 
-- the official repository archive, or
-- a third-party URL (a package's own update file or homepage), flagged as not
-  coming from the repository.
-
-That tool will also carry `openWorldHint: true` for clients.
+- **Source: the official repository only.** The archive is
+  `https://packages.lazarus-ide.org/<RepositoryFileName>`, named by the cached
+  Online Package Manager catalog. Third-party update URLs (a package's own
+  `DownloadURL`) are not supported, so the dialog's "third-party" case doesn't
+  arise.
+- **Transport.** HTTPS first. The IDE on Windows often has no OpenSSL DLLs, as
+  on this machine ("Could not initialize OpenSSL library"). Then, and only then,
+  it falls back to plain HTTP, which is what the Online Package Manager itself
+  uses (its repository address is `http://`). The result says which, with a
+  note when it was HTTP.
+- **MD5.** The archive must match the catalog's `RepositoryFileHash` (OPM
+  computes it as `MD5Print(MD5File(zip))`, but doesn't check it on download).
+  If it doesn't match, nothing is saved. Over HTTP this proves only that
+  archive and catalog agree: both came unencrypted.
+- **Extraction** goes into OPM's folders (`options.xml`: archive and packages),
+  in OPM's layout: `packages/<PackageBaseDir>`, with one top folder common to
+  all zip entries dropped. Every entry is checked first: no drive, no root, no
+  `..`. One bad entry and nothing is extracted. The archive is extracted to a
+  temporary folder and then moved into place.
+- **An earlier download** is refused unless `replace` is true. Replacing is
+  refused while a package from that folder is installed or loaded. New sources
+  under an installed package would reach the IDE at the next rebuild, past this
+  gate.
+- **The dialog names the source.** `package_download` writes
+  `mcp-download.json` into the package's folder (URL, transport, MD5, date).
+  When `package_install` asks, the dialog shows "downloaded by an assistant
+  from …, over HTTP (unencrypted)/HTTPS; the archive's MD5 matched the
+  catalog". An assistant with file access could write such a file itself.
+  That's covered by "What these gates don't protect against" below.
+- **Verified** with `Lists` (1.9 KB): downloaded over HTTP, MD5 matched,
+  extracted to `packages/Lists`, `package_search_online` then listed its
+  `downloaded_lpk`. A second download was refused, `replace` worked. Replacing
+  `richmemo` (installed from OPM's folder) was refused. The test download was
+  removed afterwards. The dialog with a source line has not been seen yet: that
+  needs the user to try an install.
 
 ## Alternatives considered
 

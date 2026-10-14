@@ -22,6 +22,7 @@ uses
   ParsedCompilerOpts, SearchPathProcs,  { IdeConfig: unit/include paths }
   CodeToolManager, CodeCache,
   Controls,               { mrOk }
+  Laz2_XMLCfg, fphttpclient, opensslsockets, md5, zipper,
   fpjson,
   McpToolContext, McpIdeState, McpConsent;
 
@@ -95,6 +96,18 @@ const
     '"max_results":{"type":"integer","description":"Default 20"}}}';
 
   OPM_REPOSITORY_URL = 'https://packages.lazarus-ide.org/';
+
+  SCHEMA_DOWNLOAD =
+    '{"type":"object","properties":{' +
+    '"name":{"type":"string","description":"Package name as package_search_online returns it"},' +
+    '"replace":{"type":"boolean","description":"Download again over an earlier download ' +
+      '(default false); refused while a package from it is installed or loaded"}},' +
+    '"required":["name"]}';
+
+  { reaches the internet }
+  MCP_ANN_OPEN = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":true}';
+
+  DOWNLOAD_MAX_BYTES = 300 * 1024 * 1024;
 
 { ── Online Package Manager catalog ───────────────────────────────────────── }
 
@@ -291,6 +304,385 @@ begin
     Res.Free;
     Obj.Free;
     Root.Free;
+  end;
+end;
+
+{ ── package_download (ADR-013 "Downloads") ───────────────────────────────── }
+
+type
+  { One download: Prepare runs on the main thread (catalog, OPM folders, IDE
+    state); the rest runs on the HTTP worker thread. }
+  TOpmDownload = class
+  public
+    InName     : string;
+    InReplace  : Boolean;
+    Err        : string;
+    PkgName    : string;
+    ZipName    : string;
+    Md5        : string;
+    Size       : Int64;
+    Target     : string;   { packages folder + PackageBaseDir }
+    PackagesDir: string;
+    ArchiveDir : string;
+    Lpks       : TStringList;   { .lpk paths below Target, as the catalog lists them }
+    Url        : string;
+    Transport  : string;
+    constructor Create;
+    destructor Destroy; override;
+    procedure Prepare;
+    procedure Run;
+  end;
+
+constructor TOpmDownload.Create;
+begin
+  inherited Create;
+  Lpks := TStringList.Create;
+end;
+
+destructor TOpmDownload.Destroy;
+begin
+  Lpks.Free;
+  inherited Destroy;
+end;
+
+{ A relative path that stays inside its folder: no drive, no root, no '..'. }
+function SafeRelPath(const S: string): Boolean;
+var
+  Parts : TStringArray;
+  P     : string;
+begin
+  Result := False;
+  if (S = '') or (Pos(':', S) > 0) or (S[1] in ['/', '\']) then Exit;
+  Parts := StringReplace(S, '\', '/', [rfReplaceAll]).Split(['/']);
+  for P in Parts do
+    if P = '..' then Exit;
+  Result := True;
+end;
+
+function OpmFolder(const AKey, ADefault: string): string;
+var
+  Cfg : TXMLConfig;
+  FN  : string;
+begin
+  Result := '';
+  FN := OpmDir('config') + 'options.xml';
+  if FileExists(FN) then
+  try
+    Cfg := TXMLConfig.Create(FN);
+    try
+      Result := Cfg.GetValue('Folders/' + AKey + '/Value', '');
+    finally
+      Cfg.Free;
+    end;
+  except
+    Result := '';
+  end;
+  if Result = '' then Result := ADefault;
+  Result := AppendPathDelim(Result);
+end;
+
+procedure TOpmDownload.Prepare;
+var
+  FileName, Text, Rel, Lpk : string;
+  SL     : TStringList;
+  Root   : TJSONData;
+  Cat, Data, F : TJSONObject;
+  Files  : TJSONArray;
+  I, J   : Integer;
+  Pkg    : TIDEPackage;
+begin
+  Err := '';
+  FileName := OpmCatalogFile;
+  if FileName = '' then
+  begin
+    Err := 'No Online Package Manager catalog found. Open Package > Online Package ' +
+           'Manager in the IDE once to download it.';
+    Exit;
+  end;
+  SL := TStringList.Create;
+  try
+    SL.LoadFromFile(FileName);
+    Text := SL.Text;
+  finally
+    SL.Free;
+  end;
+  if Copy(Text, 1, 3) = #$EF#$BB#$BF then Delete(Text, 1, 3);
+  Root := GetJSON(Text);
+  try
+    if not (Root is TJSONObject) then
+    begin Err := 'Unexpected catalog format: ' + FileName; Exit; end;
+    Cat  := TJSONObject(Root);
+    Data := nil;
+    I := 0;
+    while Cat.Find('PackageData' + IntToStr(I)) is TJSONObject do
+    begin
+      if SameText(TJSONObject(Cat.Find('PackageData' + IntToStr(I))).Get('Name', ''), InName) then
+      begin
+        Data := TJSONObject(Cat.Find('PackageData' + IntToStr(I)));
+        Break;
+      end;
+      Inc(I);
+    end;
+    if Data = nil then
+    begin
+      Err := InName + ' is not in the catalog; package_search_online shows the names';
+      Exit;
+    end;
+    PkgName := Data.Get('Name', '');
+    ZipName := Data.Get('RepositoryFileName', '');
+    Md5     := LowerCase(Trim(Data.Get('RepositoryFileHash', '')));
+    Size    := Data.Get('RepositoryFileSize', Int64(0));
+    Rel     := OpmPath(Data.Get('PackageBaseDir', ''));
+    if (ZipName = '') or (ZipName <> ExtractFileName(ZipName)) or not SafeRelPath(ZipName) or
+       not SafeRelPath(Rel) or (Length(Md5) <> 32) then
+    begin
+      Err := 'The catalog entry of ' + PkgName + ' has no usable archive name, folder ' +
+             'or MD5 hash; use the Online Package Manager';
+      Exit;
+    end;
+    if Size > DOWNLOAD_MAX_BYTES then
+    begin
+      Err := Format('%s is %d MB; download it with the Online Package Manager',
+                    [PkgName, Size div (1024 * 1024)]);
+      Exit;
+    end;
+    PackagesDir := OpmFolder('LocalRepositoryPackages', OpmDir('packages'));
+    ArchiveDir  := OpmFolder('LocalRepositoryArchive', OpmDir('archive'));
+    Target      := AppendPathDelim(PackagesDir + Rel);
+    Url         := OPM_REPOSITORY_URL + ZipName;
+
+    if Cat.Find('PackageFiles' + IntToStr(I)) is TJSONArray then
+    begin
+      Files := TJSONArray(Cat.Find('PackageFiles' + IntToStr(I)));
+      for J := 0 to Files.Count - 1 do
+        if Files[J] is TJSONObject then
+        begin
+          F := TJSONObject(Files[J]);
+          Rel := OpmPath(F.Get('RelativeFilePath', ''));
+          Lpk := F.Get('Name', '');
+          if ((Rel = '') or SafeRelPath(Rel)) and SafeRelPath(Lpk) then
+            Lpks.Add(Target + Rel + Lpk);
+        end;
+    end;
+
+    if DirectoryExists(Target) then
+    begin
+      if not InReplace then
+      begin
+        Err := PkgName + ' is downloaded already, in ' + Target + '. Install its .lpk ' +
+               'with package_install, or pass replace=true to download it again.';
+        Exit;
+      end;
+      { new sources under an installed or loaded package would reach the IDE
+        at the next rebuild without consent (ADR-013) }
+      for J := 0 to Lpks.Count - 1 do
+      begin
+        Pkg := PackageEditingInterface.FindPackageWithName(ExtractFileNameOnly(Lpks[J]));
+        if Assigned(Pkg) and (Pos(LowerCase(Target), LowerCase(Pkg.Filename)) = 1) then
+        begin
+          Err := Pkg.Name + ' is installed or loaded from ' + Target + '; its sources ' +
+                 'can''t be replaced while it is. Uninstall it first, or update it with ' +
+                 'the Online Package Manager.';
+          Exit;
+        end;
+      end;
+    end;
+  finally
+    Root.Free;
+  end;
+end;
+
+{ Fetch AUrl into AStream; HTTPS first, plain HTTP only when OpenSSL is not
+  available (the IDE on Windows often has no OpenSSL DLLs). }
+function FetchArchive(const AHttpsUrl: string; AStream: TMemoryStream;
+  out AUrl, ATransport, AErr: string): Boolean;
+
+  function Get(const U: string; out E: string): Boolean;
+  var
+    C : TFPHTTPClient;
+  begin
+    E := '';
+    AStream.Clear;
+    C := TFPHTTPClient.Create(nil);
+    try
+      C.AllowRedirect  := True;
+      C.ConnectTimeout := 15000;
+      C.IOTimeout      := 60000;
+      try
+        C.Get(U, AStream);
+        Result := C.ResponseStatusCode = 200;
+        if not Result then
+          E := Format('%s answered %d %s', [U, C.ResponseStatusCode, C.ResponseStatusText]);
+      except
+        on X: Exception do
+        begin
+          E := X.Message;
+          Result := False;
+        end;
+      end;
+    finally
+      C.Free;
+    end;
+  end;
+
+begin
+  AUrl := AHttpsUrl;
+  ATransport := 'https';
+  Result := Get(AUrl, AErr);
+  if Result or (Pos('openssl', LowerCase(AErr)) = 0) then Exit;
+  AUrl := 'http://' + Copy(AHttpsUrl, Length('https://') + 1, MaxInt);
+  ATransport := 'http';
+  Result := Get(AUrl, AErr);
+end;
+
+procedure TOpmDownload.Run;
+var
+  Mem     : TMemoryStream;
+  Zip     : TUnZipper;
+  ZipFile, TmpDir, Src, Name, Top, First : string;
+  I, P    : Integer;
+  Marker  : TJSONObject;
+  SL      : TStringList;
+  HttpsUrl: string;
+begin
+  Err := '';
+  HttpsUrl := Url;   { not Url itself: an out parameter is cleared on entry }
+  Mem := TMemoryStream.Create;
+  try
+    if not FetchArchive(HttpsUrl, Mem, Url, Transport, Err) then
+    begin
+      Err := 'Download failed: ' + Err; Exit;
+    end;
+    if LowerCase(MD5Print(MD5Buffer(Mem.Memory^, Mem.Size))) <> Md5 then
+    begin
+      Err := Format('The archive''s MD5 does not match the catalog (%d bytes from %s); ' +
+                    'nothing was saved', [Mem.Size, Url]);
+      Exit;
+    end;
+    ForceDirectories(ArchiveDir);
+    ZipFile := ArchiveDir + ZipName;
+    Mem.SaveToFile(ZipFile);
+  finally
+    Mem.Free;
+  end;
+
+  TmpDir := PackagesDir + '.mcp-tmp-' + ChangeFileExt(ZipName, '') + PathDelim;
+  if DirectoryExists(TmpDir) then DeleteDirectory(TmpDir, False);
+  Zip := TUnZipper.Create;
+  try
+    Zip.FileName := ZipFile;
+    Zip.Examine;
+    { every entry must stay inside the folder; one top folder common to all
+      entries is dropped, as the Online Package Manager does }
+    Top := '';
+    for I := 0 to Zip.Entries.Count - 1 do
+    begin
+      Name := StringReplace(Zip.Entries[I].ArchiveFileName, '\', '/', [rfReplaceAll]);
+      if not SafeRelPath(Name) then
+      begin
+        Err := 'The archive has an unsafe entry, ' + Name + '; nothing was extracted';
+        Exit;
+      end;
+      P := Pos('/', Name);
+      if P = 0 then First := '' else First := Copy(Name, 1, P);
+      if I = 0 then Top := First
+      else if First <> Top then Top := '';
+    end;
+    ForceDirectories(TmpDir);
+    Zip.OutputPath := TmpDir;
+    try
+      Zip.UnZipAllFiles;
+    except
+      on X: Exception do
+      begin
+        Err := 'Extracting ' + ZipFile + ' failed: ' + X.Message;
+        DeleteDirectory(TmpDir, False);
+        Exit;
+      end;
+    end;
+  finally
+    Zip.Free;
+  end;
+
+  Src := TmpDir + StringReplace(Top, '/', PathDelim, [rfReplaceAll]);
+  if DirectoryExists(Target) then
+    DeleteDirectory(Target, False);
+  ForceDirectories(ExtractFilePath(ChompPathDelim(Target)));
+  if not RenameFile(ChompPathDelim(Src), ChompPathDelim(Target)) and
+     not CopyDirTree(Src, Target, [cffOverwriteFile, cffCreateDestDirectory]) then
+  begin
+    Err := 'Could not move the extracted files to ' + Target;
+    DeleteDirectory(TmpDir, False);
+    Exit;
+  end;
+  if DirectoryExists(TmpDir) then DeleteDirectory(TmpDir, False);
+
+  { read by the consent dialog (McpConsent.DownloadSource) }
+  Marker := TJSONObject.Create;
+  SL := TStringList.Create;
+  try
+    Marker.Add('tool', 'package_download');
+    Marker.Add('source', 'the Online Package Manager repository');
+    Marker.Add('url', Url);
+    Marker.Add('transport', Transport);
+    Marker.Add('md5', Md5);
+    Marker.Add('date', FormatDateTime('yyyy-mm-dd hh:nn', Now));
+    SL.Text := Marker.FormatJSON;
+    SL.SaveToFile(Target + MCP_DOWNLOAD_MARKER);
+  finally
+    SL.Free;
+    Marker.Free;
+  end;
+end;
+
+{ Worker thread: the main thread only reads the catalog and the IDE's state. }
+function DispatchPackagesBlockingTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
+var
+  Job : TOpmDownload;
+  Obj : TJSONObject;
+  Arr : TJSONArray;
+  I   : Integer;
+begin
+  Result := Name = 'package_download';
+  if not Result then Exit;
+  if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('name', '')) = '') then
+  begin
+    Ctx.Error := True; Ctx.Result := 'name required'; Exit;
+  end;
+  Job := TOpmDownload.Create;
+  try
+    Job.InName    := Trim(Ctx.Params.Get('name', ''));
+    Job.InReplace := Ctx.Params.Get('replace', False);
+    TThread.Synchronize(nil, @Job.Prepare);
+    if Job.Err = '' then
+      Job.Run;
+    if Job.Err <> '' then
+    begin
+      Ctx.Error := True; Ctx.Result := Job.Err; Exit;
+    end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('package', Job.PkgName);
+      Obj.Add('url', Job.Url);
+      Obj.Add('transport', Job.Transport);
+      if Job.Transport = 'http' then
+        Obj.Add('transport_note', 'HTTPS was not available (no OpenSSL in the IDE); the ' +
+          'archive came unencrypted and was checked against the catalog''s MD5 only');
+      Obj.Add('md5_verified', True);
+      Obj.Add('directory', Job.Target);
+      Arr := TJSONArray.Create;
+      for I := 0 to Job.Lpks.Count - 1 do
+        if FileExists(Job.Lpks[I]) then
+          Arr.Add(Job.Lpks[I]);
+      Obj.Add('lpk_files', Arr);
+      Obj.Add('next', 'Nothing is installed yet. Install with package_install and an ' +
+        'lpk_path from lpk_files; the user has to allow installs and confirm in the IDE.');
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  finally
+    Job.Free;
   end;
 end;
 
@@ -1097,6 +1489,11 @@ begin
     'cache, no network). Finds packages, not component classes: for installed ' +
     'classes use form_search_palette. A result''s downloaded_lpk can go to package_install.',
     SCHEMA_SEARCH_ONLINE, MCP_ANN_RO));
+  Tools.Add(MakeTool('package_download',
+    'Download a package from the Online Package Manager repository into OPM''s ' +
+    'packages folder: MD5 checked against the catalog, archive checked before ' +
+    'extracting. Installs nothing; returns the .lpk files for package_install.',
+    SCHEMA_DOWNLOAD, MCP_ANN_OPEN));
   Tools.Add(MakeTool('package_get_info',
     'A package''s load and install status; for a loaded package also its version, ' +
     'requirements (with status: not_found etc.), the packages using it, and optionally its files.',
@@ -1147,6 +1544,7 @@ end;
 
 initialization
   RegisterMcpGroup(@DispatchPackagesTool);
+  RegisterMcpBlockingGroup(@DispatchPackagesBlockingTool);
   RegisterMcpSchemas(@RegisterPackagesSchemas);
 
 end.

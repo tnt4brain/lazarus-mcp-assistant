@@ -29,11 +29,16 @@ function McpPackageNeedsConsent(const ALpkPath: string): Boolean;
 function McpConfirmPackageInstall(const ALpkPath, AToolName: string;
   out AReason: string): Boolean;
 
+const
+  { written by package_download into the package's folder; the dialog shows it }
+  MCP_DOWNLOAD_MARKER = 'mcp-download.json';
+
 implementation
 
 uses
   Classes, SysUtils, Controls, Forms, StdCtrls, ExtCtrls, Graphics,
   LazFileUtils, Laz2_XMLCfg, PackageIntf, IDEMsgIntf, IDEExternToolIntf,
+  fpjson, jsonparser,
   McpIdeState;
 
 const
@@ -135,12 +140,20 @@ end;
 
 { ── Package details ──────────────────────────────────────────────────────── }
 
+{ Items of an .lpk list: Count + Item1.. (older files) or plain Item nodes. }
+function ListCount(ACfg: TXMLConfig; const APath: string; out ALegacy: Boolean): Integer;
+begin
+  ALegacy := ACfg.IsLegacyList(APath);
+  Result  := ACfg.GetListItemCount(APath, 'Item', ALegacy);
+end;
+
 function LpkDetails(const ALpkPath: string): string;
 var
-  Cfg  : TXMLConfig;
-  Ver  : string;
-  I, N : Integer;
-  Deps : string;
+  Cfg    : TXMLConfig;
+  Ver    : string;
+  I, N   : Integer;
+  Legacy : Boolean;
+  Deps   : string;
 begin
   Result := '';
   try
@@ -150,18 +163,19 @@ begin
         Cfg.GetValue('Package/Version/Major', 0), Cfg.GetValue('Package/Version/Minor', 0),
         Cfg.GetValue('Package/Version/Release', 0), Cfg.GetValue('Package/Version/Build', 0)]);
       Deps := '';
-      N := Cfg.GetValue('Package/RequiredPkgs/Count', 0);
-      for I := 1 to N do
+      N := ListCount(Cfg, 'Package/RequiredPkgs/', Legacy);
+      for I := 0 to N - 1 do
       begin
         if Deps <> '' then Deps := Deps + ', ';
-        Deps := Deps + Cfg.GetValue(Format('Package/RequiredPkgs/Item%d/PackageName/Value', [I]), '?');
+        Deps := Deps + Cfg.GetValue('Package/RequiredPkgs/' +
+          TXMLConfig.GetListItemXPath('Item', I, Legacy, True) + '/PackageName/Value', '?');
       end;
       Result :=
         'Package:      ' + Cfg.GetValue('Package/Name/Value', ExtractFileNameOnly(ALpkPath)) + ' ' + Ver + LineEnding +
         'Author:       ' + Cfg.GetValue('Package/Author/Value', '') + LineEnding +
         'License:      ' + Cfg.GetValue('Package/License/Value', '') + LineEnding +
         'Requires:     ' + Deps + LineEnding +
-        'Files:        ' + IntToStr(Cfg.GetValue('Package/Files/Count', 0)) + LineEnding +
+        'Files:        ' + IntToStr(ListCount(Cfg, 'Package/Files/', Legacy)) + LineEnding +
         'Description:  ' + Cfg.GetValue('Package/Description/Value', '') + LineEnding;
     finally
       Cfg.Free;
@@ -169,6 +183,57 @@ begin
   except
     on E: Exception do
       Result := 'Could not read the package file: ' + E.Message + LineEnding;
+  end;
+end;
+
+{ Where the package came from, if package_download fetched it: the marker in
+  the .lpk's folder or one of the folders above it (the .lpk often sits in a
+  subfolder of the download). '' if there is none. }
+function DownloadSource(const ALpkPath: string): string;
+var
+  Dir, FN, Transport : string;
+  I    : Integer;
+  SL   : TStringList;
+  D    : TJSONData;
+  O    : TJSONObject;
+begin
+  Result := '';
+  Dir := ExtractFilePath(ExpandFileNameUTF8(ALpkPath));
+  for I := 0 to 4 do
+  begin
+    FN := Dir + MCP_DOWNLOAD_MARKER;
+    if FileExists(FN) then Break;
+    FN := '';
+    Dir := ExtractFilePath(ChompPathDelim(Dir));
+    if Dir = '' then Break;
+  end;
+  if FN = '' then Exit;
+  SL := TStringList.Create;
+  try
+    try
+      SL.LoadFromFile(FN);
+      D := GetJSON(SL.Text);
+    except
+      Exit('Source:       ' + FN + ' could not be read' + LineEnding);
+    end;
+  finally
+    SL.Free;
+  end;
+  try
+    if not (D is TJSONObject) then Exit;
+    O := TJSONObject(D);
+    if O.Get('transport', '') = 'https' then
+      Transport := 'HTTPS'
+    else
+      Transport := 'HTTP (unencrypted)';
+    Result :=
+      'Source:       downloaded by an assistant (package_download) on ' + O.Get('date', '?') +
+        ' from' + LineEnding +
+      '              ' + O.Get('url', '?') + LineEnding +
+      '              ' + O.Get('source', '?') + ', over ' + Transport + LineEnding +
+      '              the archive''s MD5 matched the repository catalog' + LineEnding;
+  finally
+    D.Free;
   end;
 end;
 
@@ -218,7 +283,7 @@ begin
 
   Details := 'An MCP assistant (tool ' + AToolName + ') asks to install this package ' +
     'into the IDE:' + LineEnding + LineEnding +
-    'File:         ' + ALpkPath + LineEnding + LpkDetails(ALpkPath);
+    'File:         ' + ALpkPath + LineEnding + DownloadSource(ALpkPath) + LpkDetails(ALpkPath);
   Pkg := PackageEditingInterface.IsPackageInstalled(ExtractFileNameOnly(ALpkPath));
   if Assigned(Pkg) then
     Details := Details + LineEnding + 'NOTE: a package with this name is installed from a ' +
