@@ -92,7 +92,7 @@ uses
 { Open and immediately close a TCP connection to 127.0.0.1:APort.
   Used to unblock accept() after StopAccepting(False) sets the flag. }
 const
-  McpServerVersion = '0.7';
+  McpServerVersion = '0.8';
 
 procedure MakeDummyConnect(APort: Word);
 var
