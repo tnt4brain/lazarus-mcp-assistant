@@ -2168,7 +2168,8 @@ const
 
   SCHEMA_EVALUATE_EXPRESSION =
     '{"type":"object","properties":{' +
-    '"expression":{"type":"string","description":"Pascal expression to evaluate"},' +
+    '"expression":{"type":"string","description":"Pascal expression to evaluate. Raw ' +
+      'memory: ^Byte($1000A0)[0..15] (the type must be one the program uses)"},' +
     THREAD_FRAME_PROPS + '},' +
     '"required":["expression"]}';
 

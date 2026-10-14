@@ -574,8 +574,9 @@ on Windows x86-64.
     `ntdll:Zw…+20`), but the IDE's debugger interfaces have no name-to-address
     lookup, and this ADR doesn't reach into one backend. So the roadmap's
     example, `Beep+12` for code without source, works only as a number. The
-    error says so and points to `debug_get_call_stack` for addresses. The
-    disassembler (batch 2) would give another way to find them.
+    error says so and points to `debug_get_call_stack` for addresses. Name
+    lookup for such code is not planned (see "v0.9: registers and
+    disassembly").
   - **Code only.** `@Counter` evaluates to `^LongInt($…)`, and a code
     breakpoint there would write an int3 byte into the variable. A symbol is
     accepted only if its type is a procedure or function; otherwise the error
@@ -648,13 +649,26 @@ Windows x86-64.
   address, bytes, `asm`, `function+offset`, the call/jump `target` name, and
   `file`/`line` on the first instruction of a source line. `at` marks the
   requested address.
-- **Not built: reading memory.** The IDE's debugger interfaces have no
-  memory-read call. Evaluating a typed pointer works only with debug info. The
-  other route is the one CPU-View takes: FpDebug's process object
-  (`TFpDebugDebugger.DbgController.CurrentProcess`) can read memory and look up
-  exported names (which would also make `Beep+12` work). That is FpDebug-only
-  and an internal API. The units are already linked into the IDE (IdeDebugger
-  requires LazDebuggerFp), but whether to depend on them is open.
+- **Not planned: `debug_read_memory`** (decided 2026-10-14). A raw dump is
+  mostly a reverse engineer's tool. A Lazarus programmer is better served by
+  typed values, and every tool's description costs context in every session.
+  - **`debug_evaluate` reads raw memory already**, at any numeric address:
+    `^Type($addr)^`, or a slice such as `^Byte($addr)[0..15]`. Measured:
+    `^LongInt($100016160)[0..1]` gave `(1, 0)`, `Total` and the 4 bytes after
+    it. The type has to be in the program's debug info: in the debuggee, which
+    uses only `Integer`, `Byte`, `Char`, `Word` and `PByte` were "Identifier
+    not found". The `expression` parameter's description mentions the form.
+  - **The route not taken**, for whoever wants it later, is the one CPU-View
+    uses: FpDebug's process object
+    (`TFpDebugDebugger(DebugBoss.Snapshots.Debugger).DbgController.CurrentProcess`).
+    It can read memory and look up names in the modules' symbol and export
+    tables, which would also make `Beep+12` resolve. The units are already
+    linked (IdeDebugger requires LazDebuggerFp). The costs:
+    - an internal API that changes between Lazarus versions;
+    - the FpDebug backend only, and x86/x86-64 only, since FpDebug has no
+      ARM64 decoder;
+    - reads on the debug thread;
+    - breakpoint bytes in what is read have to be hidden.
 
 `TTestDebugger.TestRegistersAndDisassembly` checks:
 - the refusal while not paused;

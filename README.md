@@ -123,7 +123,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `debug_get_state` | State and source location, in any state |
 | `debug_get_call_stack` | Frames with file, line, function and address (`max_frames`) |
 | `debug_get_locals` | Locals and parameters of a frame (`thread`, `frame`) |
-| `debug_evaluate` | Evaluate a Pascal expression in the selected frame, or in `thread`/`frame` for this call only |
+| `debug_evaluate` | Evaluate a Pascal expression in the selected frame, or in `thread`/`frame` for this call only. Raw memory too: `^Byte($1000A0)[0..15]`, with a type the program uses (there is no separate memory dump tool; see [ADR-009](ADR-009.md#v09-registers-and-disassembly)) |
 | `debug_select_frame` | Select a thread and stack frame, as the Threads and Call Stack windows do |
 | `debug_set_variable` | Modify a variable or expression |
 | `debug_get_exception` | The exception the program is paused at |
@@ -358,9 +358,6 @@ For v0.9:
   dialog as any other new package. The dialog will say whether the code comes
   from the official repository or from a third-party URL. See
   [ADR-013](ADR-013.md#downloads-v09-not-built-yet).
-- **Debugger: reading memory.** `debug_read_memory` (hex and ASCII). The IDE's
-  debugger interfaces have no memory-read call; see
-  [ADR-009](ADR-009.md#v09-registers-and-disassembly).
 - **Package editing.** Adding and removing files and requirements in a `.lpk`.
   Reading them is done: `project_list_packages`, `package_get_info`,
   `package_find_unit`.
