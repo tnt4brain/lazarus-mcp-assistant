@@ -26,6 +26,9 @@ function McpRunTests(const ResolvedLpi, JUnitOut: string;
 { Search all files listed in FileListJSON (JSON array of paths) for Query. }
 function McpDoSearchInProject(const FileListJSON, Query: string): string;
 
+{ TODO/FIXME/DONE comments in the given files, as a JSON array. }
+function McpDoListTodos(const FileListJSON: string; AIncludeDone: Boolean): string;
+
 { Convert a 1-based byte offset in S to 1-based (ALine, ACol). }
 procedure McpOffsetToLineCol(const S: string; Offset: Integer;
                              out ALine, ACol: Integer);
@@ -376,6 +379,69 @@ begin
             end;
         except
           // skip unreadable files
+        end;
+      end;
+    finally
+      FileList.Free;
+    end;
+    Result := Results.AsJSON;
+  finally
+    Lines.Free;
+    Results.Free;
+  end;
+end;
+
+{ ── ToDo list scanner ────────────────────────────────────────────────────── }
+
+{ Same markers the IDE's ToDo List understands ({ TODO ...}, {#todo ...},
+  { DONE ...}, {#done ...}) plus // TODO and FIXME comments. }
+function McpDoListTodos(const FileListJSON: string; AIncludeDone: Boolean): string;
+const
+  Markers : array[0..9] of string = (
+    '{ todo', '{todo', '{#todo', '{ #todo', '// todo', '//todo', '(* todo',
+    'fixme', '{ done', '{#done');
+var
+  FileList : TJSONArray;
+  Results  : TJSONArray;
+  Item     : TJSONObject;
+  Lines    : TStringList;
+  FilePath : string;
+  L        : string;
+  Kind     : string;
+  I, J, M  : Integer;
+begin
+  Results := TJSONArray.Create;
+  Lines   := TStringList.Create;
+  try
+    FileList := TJSONArray(GetJSON(FileListJSON));
+    try
+      for I := 0 to FileList.Count - 1 do
+      begin
+        FilePath := FileList.Strings[I];
+        if not FileExists(FilePath) then Continue;
+        try
+          Lines.LoadFromFile(FilePath);
+        except
+          Continue;  { skip unreadable files }
+        end;
+        for J := 0 to Lines.Count - 1 do
+        begin
+          L := LowerCase(Lines[J]);
+          for M := Low(Markers) to High(Markers) do
+            if Pos(Markers[M], L) > 0 then
+            begin
+              if M >= 8 then Kind := 'done'
+              else if M = 7 then Kind := 'fixme'
+              else Kind := 'todo';
+              if (Kind = 'done') and not AIncludeDone then Break;
+              Item := TJSONObject.Create;
+              Item.Add('file', FilePath);
+              Item.Add('line', J + 1);
+              Item.Add('kind', Kind);
+              Item.Add('text', Trim(Lines[J]));
+              Results.Add(Item);
+              Break;
+            end;
         end;
       end;
     finally

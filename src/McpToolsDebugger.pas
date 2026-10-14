@@ -30,6 +30,11 @@ uses
   LazDebuggerIntf,           { TDebuggerDataState (ddsValid, ddsRequested, …) }
   DbgIntfDebuggerBase,       { TDBGType, TDBGEvaluateResultCallback }
   Debugger,                  { TIDEBreakPoint, TIDEBreakPoints }
+  IdeDebuggerBase,           { TWatchValue / TLocalsValue .ResultData }
+  IdeDebuggerWatchResult,    { TWatchResultData }
+  IdeDebuggerWatchValueIntf, { DefaultWatchDisplayFormat }
+  IdeDebuggerWatchResPrinter,{ TWatchResultPrinter }
+  TypInfo,
   fpjson,
   McpDebugGuard,             { GMcpLastExc, McpMarkDebugDriven }
   McpToolContext;
@@ -78,6 +83,13 @@ type
     OutLocalsThread: Integer;
     OutLocalsReady : Boolean;
     OutLocalsJSON  : string;
+    { Watches / threads out (same init-once / read-only-poll pattern) }
+    OutWatchThread : Integer;
+    OutWatchFrame  : Integer;
+    OutWatchReady  : Boolean;
+    OutWatchJSON   : string;
+    OutThrReady    : Boolean;
+    OutThrJSON     : string;
     { Methods }
     procedure ReadState;
     procedure IssueCmd;
@@ -90,7 +102,42 @@ type
     procedure ReadCallStack;
     procedure InitLocals;
     procedure ReadLocals;
+    procedure InitWatches;
+    procedure ReadWatches;
+    procedure ReadWatchNames;  { expressions only — not paused or timed out }
+    procedure InitThreads;
+    procedure ReadThreads;
   end;
+
+{ Render a watch/local result the way the IDE's hints and Watches window do.
+  The plain Value string is empty for structured values (objects, records). }
+function PrintResult(AData: TWatchResultData; const APlain, AExpr: string): string;
+const
+  MAX_VALUE_LEN = 2000;  { an object dump can be tens of KB }
+var
+  Printer  : TWatchResultPrinter;
+  OldFlags : TWatchResultPrinterFormatFlags;
+begin
+  Result := APlain;
+  if Assigned(AData) and Assigned(DebugBoss) and
+     Assigned(DebugBoss.HintWatchPrinter) then
+  begin
+    Printer  := DebugBoss.HintWatchPrinter;
+    OldFlags := Printer.FormatFlags;
+    Printer.FormatFlags := [];  { single line }
+    try
+      try
+        Result := Printer.PrintWatchValue(AData, DefaultWatchDisplayFormat, AExpr);
+      except
+        Result := APlain;
+      end;
+    finally
+      Printer.FormatFlags := OldFlags;
+    end;
+  end;
+  if Length(Result) > MAX_VALUE_LEN then
+    Result := Copy(Result, 1, MAX_VALUE_LEN) + '... (truncated; evaluate a field for details)';
+end;
 
 function ExceptionJSON: TJSONObject;
 begin
@@ -407,11 +454,179 @@ begin
       LVal := TIdeLocalsValue(Locals.Entries[I]);
       LObj := TJSONObject.Create;
       LObj.Add('name',  LVal.DisplayName);
-      LObj.Add('value', LVal.Value);
+      LObj.Add('value', PrintResult(LVal.ResultData, LVal.Value, LVal.Name));
       Arr.Add(LObj);
     end;
     OutLocalsJSON  := Arr.AsJSON;
     OutLocalsReady := True;
+  finally
+    Arr.Free;
+  end;
+end;
+
+{ ── Watches ── }
+
+function CurrentThreadAndFrame(out AThread, AFrame: Integer): Boolean;
+var
+  Stack : TIdeCallStack;
+begin
+  AThread := 0;
+  AFrame  := 0;
+  Result  := Assigned(DebugBoss) and Assigned(DebugBoss.Threads) and
+             Assigned(DebugBoss.Threads.CurrentThreads);
+  if not Result then Exit;
+  AThread := DebugBoss.Threads.CurrentThreads.CurrentThreadId;
+  if Assigned(DebugBoss.CallStack) then
+  begin
+    Stack := DebugBoss.CallStack.CurrentCallStackList.EntriesForThreads[AThread];
+    if Assigned(Stack) and (Stack.CurrentIndex > 0) then
+      AFrame := Stack.CurrentIndex;  { frame selected in the Call Stack window }
+  end;
+end;
+
+procedure TDbgSyncHelper.InitWatches;
+var
+  W : TCurrentWatches;
+  I : Integer;
+begin
+  OutWatchReady := False;
+  OutWatchJSON  := '[]';
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
+  begin
+    OutWatchReady := True; Exit;
+  end;
+  CurrentThreadAndFrame(OutWatchThread, OutWatchFrame);
+  W := DebugBoss.Watches.CurrentWatches;
+  for I := 0 to W.Count - 1 do
+    if W[I].Enabled then
+      W[I].Values[OutWatchThread, OutWatchFrame].Value;  { trigger async load, once }
+end;
+
+procedure TDbgSyncHelper.ReadWatches;
+var
+  W    : TCurrentWatches;
+  V    : TIdeWatchValue;
+  I    : Integer;
+  Arr  : TJSONArray;
+  Obj  : TJSONObject;
+begin
+  OutWatchReady := False;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
+  begin
+    OutWatchReady := True; Exit;
+  end;
+  W := DebugBoss.Watches.CurrentWatches;
+  { Validity only reads state; Value would re-request unknown entries }
+  for I := 0 to W.Count - 1 do
+    if W[I].Enabled and
+       (W[I].Values[OutWatchThread, OutWatchFrame].Validity in
+         [ddsUnknown, ddsRequested, ddsEvaluating]) then
+      Exit;  { still loading; caller retries }
+  Arr := TJSONArray.Create;
+  try
+    for I := 0 to W.Count - 1 do
+    begin
+      Obj := TJSONObject.Create;
+      Obj.Add('expression', W[I].Expression);
+      Obj.Add('enabled',    W[I].Enabled);
+      if W[I].Enabled then
+      begin
+        V := W[I].Values[OutWatchThread, OutWatchFrame];
+        case V.Validity of
+          ddsValid : Obj.Add('value', PrintResult(V.ResultData, V.Value, W[I].Expression));
+          ddsError : Obj.Add('error', V.Value);
+        else         Obj.Add('error', 'not available in this context');
+        end;
+        if Assigned(V.TypeInfo) then
+          Obj.Add('type', V.TypeInfo.TypeName);
+      end;
+      Arr.Add(Obj);
+    end;
+    OutWatchJSON  := Arr.AsJSON;
+    OutWatchReady := True;
+  finally
+    Arr.Free;
+  end;
+end;
+
+procedure TDbgSyncHelper.ReadWatchNames;
+var
+  W   : TCurrentWatches;
+  I   : Integer;
+  Arr : TJSONArray;
+  Obj : TJSONObject;
+begin
+  Arr := TJSONArray.Create;
+  try
+    if Assigned(DebugBoss) and Assigned(DebugBoss.Watches) then
+    begin
+      W := DebugBoss.Watches.CurrentWatches;
+      for I := 0 to W.Count - 1 do
+      begin
+        Obj := TJSONObject.Create;
+        Obj.Add('expression', W[I].Expression);
+        Obj.Add('enabled',    W[I].Enabled);
+        Arr.Add(Obj);
+      end;
+    end;
+    OutWatchJSON := Arr.AsJSON;
+  finally
+    Arr.Free;
+  end;
+end;
+
+{ ── Threads ── }
+
+procedure TDbgSyncHelper.InitThreads;
+begin
+  OutThrReady := False;
+  OutThrJSON  := '[]';
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Threads) or
+     not Assigned(DebugBoss.Threads.CurrentThreads) then
+  begin
+    OutThrReady := True; Exit;
+  end;
+  DebugBoss.Threads.CurrentThreads.Count;  { trigger async load, once }
+end;
+
+procedure TDbgSyncHelper.ReadThreads;
+var
+  T   : TCurrentThreads;
+  E   : TIdeThreadEntry;
+  I   : Integer;
+  Arr : TJSONArray;
+  Obj : TJSONObject;
+begin
+  OutThrReady := False;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Threads) or
+     not Assigned(DebugBoss.Threads.CurrentThreads) then
+  begin
+    OutThrReady := True; Exit;
+  end;
+  T := DebugBoss.Threads.CurrentThreads;
+  { Count requests data only while its validity is unknown, so it is safe to
+    poll; a paused process always has at least one thread. }
+  if T.Count = 0 then Exit;
+  Arr := TJSONArray.Create;
+  try
+    for I := 0 to T.Count - 1 do
+    begin
+      E   := T[I];
+      Obj := TJSONObject.Create;
+      Obj.Add('id',      E.ThreadId);
+      Obj.Add('name',    E.ThreadName);
+      Obj.Add('state',   GetEnumName(TypeInfo(TDbgThreadState), Ord(E.ThreadState)));
+      Obj.Add('current', E.ThreadId = T.CurrentThreadId);
+      if Assigned(E.TopFrame) then
+      begin
+        Obj.Add('function', E.TopFrame.FunctionName);
+        Obj.Add('file',     E.TopFrame.Source);
+        Obj.Add('line',     E.TopFrame.Line);
+      end;
+      Arr.Add(Obj);
+    end;
+    OutThrJSON  := Arr.AsJSON;
+    OutThrReady := True;
   finally
     Arr.Free;
   end;
@@ -560,6 +775,7 @@ var
   Arr   : TJSONArray;
   BpObj : TJSONObject;
   BP    : TIDEBreakPoint;
+  Watch : TCurrentWatch;
   I     : Integer;
 begin
   Result := False;
@@ -680,6 +896,76 @@ begin
         Obj.Add('error',
           'Modify rejected — dcModify not in Commands or debugger not ready');
       end;
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
+  end
+
+  else if Name = 'debug_add_watch' then
+  begin
+    Result := True;
+    if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('expression', '')) = '') then
+    begin Ctx.Error := True; Ctx.Result := 'expression required'; Exit; end;
+    if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
+    begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
+    Watch := DebugBoss.Watches.CurrentWatches.Find(Trim(Ctx.Params.Get('expression', '')));
+    Obj := TJSONObject.Create;
+    try
+      if Assigned(Watch) then
+        Obj.Add('status', 'exists')
+      else
+      begin
+        Watch := DebugBoss.Watches.CurrentWatches.Add(Trim(Ctx.Params.Get('expression', '')));
+        Obj.Add('status', 'added');
+      end;
+      Watch.Enabled := True;
+      Obj.Add('expression', Watch.Expression);
+      Obj.Add('count', DebugBoss.Watches.CurrentWatches.Count);
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
+  end
+
+  else if Name = 'debug_remove_watch' then
+  begin
+    Result := True;
+    if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('expression', '')) = '') then
+    begin Ctx.Error := True; Ctx.Result := 'expression required (or "*" for all)'; Exit; end;
+    if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
+    begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
+    I := 0;
+    if Trim(Ctx.Params.Get('expression', '')) = '*' then
+    begin
+      I := DebugBoss.Watches.CurrentWatches.Count;
+      DebugBoss.Watches.CurrentWatches.Clear;
+    end
+    else
+    begin
+      Watch := DebugBoss.Watches.CurrentWatches.Find(Trim(Ctx.Params.Get('expression', '')));
+      if Assigned(Watch) then
+      begin
+        Watch.Free;
+        I := 1;
+      end;
+    end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('removed', I);
+      Obj.Add('count', DebugBoss.Watches.CurrentWatches.Count);
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
+  end
+
+  else if Name = 'debug_get_output' then
+  begin
+    Result := True;
+    I := 200;
+    if Assigned(Ctx.Params) then
+      I := Ctx.Params.Get('max_lines', 200);
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('console',  McpGetConsoleOutput(I));
+      Obj.Add('debugger', McpGetDebugOutput(I));
+      if Assigned(Ctx.Params) and Ctx.Params.Get('clear', False) then
+        McpClearDebugOutput;
       Ctx.Result := Obj.AsJSON;
     finally Obj.Free; end;
   end;
@@ -893,6 +1179,58 @@ begin
     Ctx.Result := GSyncHelper.OutLocalsJSON;
   end
 
+  else if Name = 'debug_list_watches' then
+  begin
+    Result := True;
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    TThread.Synchronize(nil, @GSyncHelper.InitWatches);
+    if GSyncHelper.OutState = dsPause then
+    begin
+      TimeoutMs := 5000;
+      Elapsed   := 0;
+      while not GSyncHelper.OutWatchReady and (Elapsed < TimeoutMs) do
+      begin
+        Sleep(100);
+        Inc(Elapsed, 100);
+        TThread.Synchronize(nil, @GSyncHelper.ReadWatches);
+      end;
+    end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
+      if GSyncHelper.OutWatchReady then
+        Obj.Add('watches', GetJSON(GSyncHelper.OutWatchJSON))
+      else
+      begin
+        TThread.Synchronize(nil, @GSyncHelper.ReadWatchNames);
+        Obj.Add('watches', GetJSON(GSyncHelper.OutWatchJSON));
+        if GSyncHelper.OutState = dsPause then
+          Obj.Add('note', 'Values did not arrive within 5 s')
+        else
+          Obj.Add('note', 'Values are available only while the debugger is paused');
+      end;
+      Ctx.Result := Obj.AsJSON;
+    finally Obj.Free; end;
+  end
+
+  else if Name = 'debug_list_threads' then
+  begin
+    Result := True;
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+    if GSyncHelper.OutState <> dsPause then
+    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+    TThread.Synchronize(nil, @GSyncHelper.InitThreads);
+    TimeoutMs := 5000;
+    Elapsed   := 0;
+    while not GSyncHelper.OutThrReady and (Elapsed < TimeoutMs) do
+    begin
+      Sleep(100);
+      Inc(Elapsed, 100);
+      TThread.Synchronize(nil, @GSyncHelper.ReadThreads);
+    end;
+    Ctx.Result := GSyncHelper.OutThrJSON;
+  end
+
   else if Name = 'exception_info' then
   begin
     Result := True;
@@ -972,6 +1310,21 @@ const
   SCHEMA_EXCEPTION_INFO =
     '{"type":"object","properties":{}}';
 
+  SCHEMA_WATCH_EXPRESSION =
+    '{"type":"object","properties":{' +
+    '"expression":{"type":"string","description":"Pascal expression, as in the Watches window"}},' +
+    '"required":["expression"]}';
+
+  SCHEMA_REMOVE_WATCH =
+    '{"type":"object","properties":{' +
+    '"expression":{"type":"string","description":"Watch expression to remove, or \"*\" for all"}},' +
+    '"required":["expression"]}';
+
+  SCHEMA_GET_OUTPUT =
+    '{"type":"object","properties":{' +
+    '"max_lines":{"type":"integer","description":"Last N lines of each stream (default 200, 0 = all buffered)"},' +
+    '"clear":{"type":"boolean","description":"Clear the buffers after reading (default false)"}}}';
+
 { ── Schema registration ──────────────────────────────────────────────────── }
 
 procedure RegisterDebuggerSchemas(Tools: TJSONArray);
@@ -1039,6 +1392,25 @@ begin
     'Modify a local variable or parameter in the current stack frame. ' +
     'Debugger must be paused. Call get_local_variables afterwards to verify.',
     SCHEMA_SET_LOCAL_VARIABLE, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('debug_add_watch',
+    'Add an expression to the IDE Watches window (kept across sessions). ' +
+    'Values are read with debug_list_watches while paused.',
+    SCHEMA_WATCH_EXPRESSION, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('debug_remove_watch',
+    'Remove a watch expression from the Watches window, or all with "*".',
+    SCHEMA_REMOVE_WATCH, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('debug_list_watches',
+    'List the Watches window entries. While paused, each comes with its value ' +
+    'and type in the current thread and selected stack frame.',
+    SCHEMA_NO_PARAMS, MCP_ANN_RO));
+  Tools.Add(MakeTool('debug_list_threads',
+    'List the debuggee''s threads (id, name, state, current flag, top frame ' +
+    'function/file/line). Debugger must be paused.',
+    SCHEMA_NO_PARAMS, MCP_ANN_RO));
+  Tools.Add(MakeTool('debug_get_output',
+    'Return what the program wrote to its console (stdout/stderr) and the ' +
+    'debugger''s own output/messages in the current or last debug session.',
+    SCHEMA_GET_OUTPUT, MCP_ANN_RO));
   Tools.Add(MakeTool('exception_info',
     'Return information about the current exception when the debugger is paused ' +
     'at an exception. Returns has_exception=false if not paused at an exception. ' +

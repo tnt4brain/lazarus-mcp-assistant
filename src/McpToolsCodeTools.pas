@@ -73,6 +73,10 @@ const
     '"query":{"type":"string","description":"Text or substring to search for (case-insensitive)"}},' +
     '"required":["query"]}';
 
+  SCHEMA_LIST_TODOS =
+    '{"type":"object","properties":{' +
+    '"include_done":{"type":"boolean","description":"Also list DONE items (default false)"}}}';
+
   SCHEMA_CREATE_UNIT =
     '{"type":"object","properties":{' +
     '"filename":{"type":"string","description":"Absolute path for the new .pas file"},' +
@@ -324,6 +328,20 @@ begin
     end;
     Ctx.Result := McpDoSearchInProject(TmpCtx.Result,
       IfThen(Assigned(Ctx.Params), Ctx.Params.Get('query', ''), ''));
+  end
+
+  else if Name = 'project_list_todos' then
+  begin
+    Result := True;
+    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+    TmpCtx.ConnectionClose := False; TmpCtx.StopServer := nil;
+    McpDispatch('get_project_files', TmpCtx, TmpHandled);
+    if TmpCtx.Error then
+    begin
+      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+    end;
+    Ctx.Result := McpDoListTodos(TmpCtx.Result,
+      Assigned(Ctx.Params) and Ctx.Params.Get('include_done', False));
   end
 
   else if Name = 'get_symbol_declaration' then
@@ -1198,6 +1216,11 @@ begin
     'Search for a text substring across all project source files. ' +
     'Returns matching file, line number, and line content.',
     SCHEMA_SEARCH_IN_PROJECT, MCP_ANN_RO));
+  Tools.Add(MakeTool('project_list_todos',
+    'List TODO / FIXME items in the project''s source files, as the IDE''s ToDo ' +
+    'List shows them ({ TODO ...}, {#todo ...}, // TODO, FIXME). Returns file, ' +
+    'line, kind and the comment text.',
+    SCHEMA_LIST_TODOS, MCP_ANN_RO));
   Tools.Add(MakeTool('create_unit',
     'Create a new Pascal unit file on disk, add it to the active project, ' +
     'and open it in the editor. Provide content or receive a blank unit skeleton.',
