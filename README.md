@@ -295,10 +295,12 @@ mcpserver_tests.exe
 | Suite | Count | Requires |
 |---|---|---|
 | `TTestUtils` | 7 | Nothing (always runs) |
+| `TTestJUnitWriter` | 8 | Nothing (always runs) |
 | `TTestProtocol` | 10 | MCP server reachable |
 | `TTestAuth` | 7 | MCP server reachable |
+| `TTestProjectTools` | 6 | MCP server reachable |
 
-The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, `TTestProtocol` and `TTestAuth` are skipped and only the utility tests run.
+The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped.
 
 Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 
@@ -360,5 +362,3 @@ Designed and directed by Sergei Pechenko: the requirements, design decisions (re
 ## License
 
 BSD-3-Clause — see `LICENSE`.
-
-> **Note:** the `LICENSE` file is currently empty. If you are reading this in the repository, that is a known gap. The intent is BSD-3-Clause as declared in `lazmcpassistant.lpk`.
