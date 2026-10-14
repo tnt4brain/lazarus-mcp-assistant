@@ -440,7 +440,11 @@ begin
           Entry := TJSONObject.Create;
           Entry.Add('kind', NodeDescriptionAsString(TreeNode.Desc));
           Entry.Add('line', NewY);
-          Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
+          if TreeNode.Desc = ctnProcedure then
+            { a procedure node starts with its keyword }
+            Entry.Add('name', Tool.ExtractProcName(TreeNode, []))
+          else
+            Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
           Outline.Add(Entry);
         end;
         if Assigned(TreeNode.FirstChild) and
