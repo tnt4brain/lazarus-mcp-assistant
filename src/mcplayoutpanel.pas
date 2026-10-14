@@ -185,6 +185,20 @@ begin
   end;
 end;
 
+var
+  AllowInstallCmd : TIDEMenuCommand = nil;
+
+{ Called from the menu: toggles whether assistants may install packages that
+  are not installed yet (each install is still confirmed; ADR-013). }
+procedure ToggleAllowPackageInstall(Sender: TObject);
+begin
+  if not Assigned(McpSettings) then Exit;
+  McpSettings.AllowPackageInstall := not McpSettings.AllowPackageInstall;
+  McpSettings.SaveSettings;
+  if Assigned(AllowInstallCmd) then
+    AllowInstallCmd.Checked := McpSettings.AllowPackageInstall;
+end;
+
 { ── Form ─────────────────────────────────────────────────────────────────── }
 
 constructor TMcpChatForm.Create(AOwner: TComponent);
@@ -270,6 +284,11 @@ begin
     RegisterIDEMenuCommand(
       McpMenu, 'SetExtraArgs', 'Extra CLI Options...',
       nil, @SetExtraCliOptions);
+    AllowInstallCmd := RegisterIDEMenuCommand(
+      McpMenu, 'AllowPackageInstall', 'Allow Assistants to Install Packages',
+      nil, @ToggleAllowPackageInstall);
+    AllowInstallCmd.ShowAlwaysCheckable := True;
+    AllowInstallCmd.Checked := McpSettings.AllowPackageInstall;
     RegisterIDEMenuSection(McpMenu, 'McpSep2');
     RegisterIDEMenuCommand(
       McpMenu, 'CopyMcpConfig', 'Copy Server Config to Clipboard',

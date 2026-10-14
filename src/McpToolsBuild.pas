@@ -20,7 +20,7 @@ uses
   Controls, Forms,
   fpjson,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
-  McpToolContext, McpIdeListeners, McpDebugGuard;
+  McpToolContext, McpIdeListeners, McpDebugGuard, McpConsent;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -190,6 +190,9 @@ type
     PasFile    : string;
     FpcDir     : string;
     StopServer : TMcpStopServerProc;
+    ConsentOk  : Boolean;
+    ConsentMsg : string;
+    procedure CheckConsent;
     procedure DismissExceptionDialog;
     procedure ReadPollPaths;
     procedure DoStopDebugger;
@@ -214,6 +217,12 @@ begin
       Break;
     end;
   end;
+end;
+
+{ Main thread: may LpkPath be installed? (ADR-013) }
+procedure TBuildSyncHelper.CheckConsent;
+begin
+  ConsentOk := McpConfirmPackageInstall(LpkPath, 'ide_rebuild', ConsentMsg);
 end;
 
 procedure TBuildSyncHelper.ReadPollPaths;
@@ -268,7 +277,9 @@ begin
   if Assigned(StopServer) then StopServer();
   PkgList := TObjectList.Create(True);
   try
-    if LpkPath <> '' then
+    { A package already installed from this file is just rebuilt: listing it
+      again made the IDE rebuild but not restart (2026-10-14). }
+    if (LpkPath <> '') and McpPackageNeedsConsent(LpkPath) then
     begin
       PackageEditingInterface.DoOpenPackageFile(LpkPath, [pofDoNotOpenEditor], False);
       IDEPkg := PackageEditingInterface.FindPackageWithName(
@@ -309,6 +320,18 @@ begin
   GBuildHelper.StopServer := Ctx.StopServer;
   if Assigned(Ctx.Params) then
     GBuildHelper.LpkPath := Ctx.Params.Get('lpk_path', '');
+
+  { installing a package that is not installed yet needs the user's consent }
+  if GBuildHelper.LpkPath <> '' then
+  begin
+    TThread.Synchronize(nil, @GBuildHelper.CheckConsent);
+    if not GBuildHelper.ConsentOk then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := GBuildHelper.ConsentMsg;
+      Exit;
+    end;
+  end;
 
   { Phase 1 — if the exception dialog is open, close it from the main thread
     via TThread.Queue (non-blocking), then poll until the LCL form is gone.
@@ -400,6 +423,8 @@ begin
   Tools.Add(MakeTool('ide_rebuild',
     'Rebuild and restart the Lazarus IDE. Pass lpk_path to install a package ' +
     'before rebuilding; omit it to rebuild with currently installed packages. ' +
+    'Installing a package that is not installed yet needs the user''s consent: the ' +
+    'user must have enabled it in the IDE and confirms each install there. ' +
     'The IDE exits immediately after this call; the MCP server will be ' +
     'unavailable for ~60 s. Call package_compile first to catch errors early.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));

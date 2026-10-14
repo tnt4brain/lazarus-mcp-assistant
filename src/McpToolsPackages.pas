@@ -15,7 +15,7 @@ uses
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf,
   LazFileUtils, FileUtil,
   fpjson,
-  McpToolContext;
+  McpToolContext, McpConsent;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -388,6 +388,11 @@ begin
       Ctx.Error := True; Ctx.Result := 'lpk_path required'; Exit;
     end;
     LpkPath := Ctx.Params.Get('lpk_path', '');
+    { new code into the IDE needs the user's consent (ADR-013) }
+    if not McpConfirmPackageInstall(LpkPath, 'package_install', PkgName) then
+    begin
+      Ctx.Error := True; Ctx.Result := PkgName; Exit;
+    end;
     Obj := TJSONObject.Create;
     try
       Obj.Add('status',  'rebuilding');
@@ -529,7 +534,9 @@ begin
     'No rebuild required. Returns the updated list of project package dependencies.',
     SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('package_install',
-    'Install a package into the Lazarus IDE (design-time / palette). ' +
+    'Install a package into the Lazarus IDE (design-time / palette). A package that is ' +
+    'not installed yet needs the user''s consent: the user must have enabled installs ' +
+    '(Tools > MCP Assistant) and confirms each one in the IDE; if refused, ask the user. ' +
     'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}. ' +
     'Use package_compile first to catch errors early.',
     SCHEMA_INSTALL_PACKAGE, MCP_ANN_DEST));

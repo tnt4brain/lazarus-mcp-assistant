@@ -150,6 +150,13 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE |
 
+Installing a package that is not installed yet — via `package_install` or
+`ide_rebuild` with `lpk_path` — is off by default. Turn it on with
+**Tools → MCP Assistant → Allow Assistants to Install Packages**; each install is
+then shown to you in the IDE (package, author, license, dependencies) and
+happens only if you click *Install* (no answer in 180 s means no). Rebuilding
+packages that are already installed never asks. See [ADR-013](docs/adr/0013-user-consent-before-new-code.md).
+
 ### IDE — `ide_*`
 
 | Tool | Description |
@@ -292,6 +299,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-010](docs/adr/0010-tool-naming-scheme.md) | Tool naming scheme `<category>_<action>`, titles, annotations; v0.7 → v0.8 rename table |
 | [ADR-011](docs/adr/0011-no-ide-modals-in-mcp-sessions.md) | No IDE modals in MCP-driven debug sessions |
 | [ADR-012](docs/adr/0012-multiple-clients.md) | Multiple clients: session identity, debug session lease, debugger lock |
+| [ADR-013](docs/adr/0013-user-consent-before-new-code.md) | User consent before new code enters the IDE (package installs) |
 
 ---
 

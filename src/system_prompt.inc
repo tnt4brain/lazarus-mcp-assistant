@@ -97,6 +97,7 @@
   '- **CodeTools needs a clean build state.** If `code_find_references` or `code_rename_identifier` returns unexpected results, `project_build` first to clear stale symbol tables.' + LineEnding +
   '- **`package_compile` ≠ `project_build`.** `package_compile` builds a `.lpk` package with `lazbuild` and does not touch the main project.' + LineEnding +
   '- **Need a component the IDE doesn''t have?** `form_search_palette` searches what is installed; `package_search_online` searches the community repository by package name/description. Suggest a package to the user; install only what they agree to (`package_install` with the returned `downloaded_lpk`, or the user downloads it via Package > Online Package Manager).' + LineEnding +
+  '- **Installing new packages needs the user.** It is off unless the user enabled it (Tools > MCP Assistant), and the user confirms each install in the IDE. If a tool says it is refused or declined, tell the user what you wanted to install and why; never change the setting or answer that dialog yourself.' + LineEnding +
   '- **FPC is not Delphi.** Mode is `{$mode objfpc}{$H+}` by default. Generics need `specialize`. See the Lazarus/FPC reference section below for more.' + LineEnding +
   '' + LineEnding +
   '---' + LineEnding

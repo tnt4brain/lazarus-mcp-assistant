@@ -22,6 +22,7 @@ type
     FLastConfigPath: string;
     FWorkingDirectory: string;
     FExtraClaudeArgs: string;
+    FAllowPackageInstall: Boolean;  { assistants may install new packages (ADR-013) }
     procedure LoadDefaultSettings;
   public
     constructor Create;
@@ -39,6 +40,7 @@ type
     property LastConfigPath: string read FLastConfigPath write FLastConfigPath;
     property WorkingDirectory: string read FWorkingDirectory write FWorkingDirectory;
     property ExtraClaudeArgs: string read FExtraClaudeArgs write FExtraClaudeArgs;
+    property AllowPackageInstall: Boolean read FAllowPackageInstall write FAllowPackageInstall;
   end;
 
   TMcpProjectState = class
@@ -80,6 +82,7 @@ begin
   FQuietMode := False;
   FApiKey := '';
   FModel  := 'claude-opus-5-5';
+  FAllowPackageInstall := False;
 end;
 
 procedure TMcpIdeSettings.LoadSettings;
@@ -107,6 +110,7 @@ begin
     FLastConfigPath   := FXmlConfig.GetValue('Server/LastConfigPath', '');
     FWorkingDirectory := FXmlConfig.GetValue('Claude/WorkingDirectory', '');
     FExtraClaudeArgs  := FXmlConfig.GetValue('Claude/ExtraArgs', '');
+    FAllowPackageInstall := FXmlConfig.GetValue('Security/AllowPackageInstall', False);
   except
     LoadDefaultSettings;
   end;
@@ -126,6 +130,7 @@ begin
     FXmlConfig.SetValue('Server/LastConfigPath', FLastConfigPath);
     FXmlConfig.SetValue('Claude/WorkingDirectory', FWorkingDirectory);
     FXmlConfig.SetValue('Claude/ExtraArgs',        FExtraClaudeArgs);
+    FXmlConfig.SetValue('Security/AllowPackageInstall', FAllowPackageInstall);
     FXmlConfig.Flush;
   except
   end;

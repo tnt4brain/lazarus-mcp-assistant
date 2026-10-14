@@ -11,7 +11,7 @@ uses
   McpProcessWorker, McpIdeListeners, McpIdeState, McpLayoutPanel, 
   McpIdeServer, McpToolContext, McpToolHelpers, McpToolsPackages, 
   McpToolsEditor, McpToolsBuild, McpToolsCodeTools, McpToolsForms, 
-  McpToolsProject, McpToolsGit, McpToolsDebugger, McpDebugGuard, McpDebugLease,
+  McpToolsProject, McpToolsGit, McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent,
   LazarusPackageIntf;
 
 implementation
