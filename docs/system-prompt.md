@@ -95,6 +95,7 @@ debug_set_breakpoint → debug_run → debug_get_locals / debug_evaluate / debug
 - **LFM files are not plain text.** They sync with the Form Designer's object model. `editor_replace_range` on an `.lfm` will corrupt designer state. Use the GUI tools.
 - **CodeTools needs a clean build state.** If `code_find_references` or `code_rename_identifier` returns unexpected results, `project_build` first to clear stale symbol tables.
 - **`package_compile` ≠ `project_build`.** `package_compile` builds a `.lpk` package with `lazbuild` and does not touch the main project.
+- **Need a component the IDE doesn't have?** `form_search_palette` searches what is installed; `package_search_online` searches the community repository by package name/description. Suggest a package to the user; install only what they agree to (`package_install` with the returned `downloaded_lpk`, or the user downloads it via Package > Online Package Manager).
 - **FPC is not Delphi.** Mode is `{$mode objfpc}{$H+}` by default. Generics need `specialize`. See the Lazarus/FPC reference section below for more.
 
 ---
