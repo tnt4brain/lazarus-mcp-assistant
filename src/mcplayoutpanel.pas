@@ -33,7 +33,7 @@ implementation
 
 uses
   LazLogger, Process, Clipbrd,
-  McpToolsProject;
+  McpToolsProject, McpDebugGuard;
 
 { Called from the menu: copies the current MCP server config JSON to the clipboard. }
 procedure CopyMcpConfigToClipboard(Sender: TObject);
@@ -236,7 +236,8 @@ type
 procedure TMcpAutoStarter.Run(Data: PtrInt);
 begin
   try
-    if not IsServerRunning then
+    McpEnsureDebugGuard;  { DebugBoss exists once the message loop runs }
+    if (McpSettings.ServerToken <> '') and not IsServerRunning then
       InitializeMcpServer;
   except
     on E: Exception do
@@ -255,9 +256,9 @@ begin
     InitializeIdeHooks;
     RegisterChatPanel;
     RegisterIDECloseHook;
-    // Defer auto-start until after the IDE message loop is running
-    if McpSettings.ServerToken <> '' then
-      Application.QueueAsyncCall(@TMcpAutoStarter.Create.Run, 0);
+    // Defer auto-start (and the debugger guard) until after the IDE message
+    // loop is running
+    Application.QueueAsyncCall(@TMcpAutoStarter.Create.Run, 0);
     McpMenu := RegisterIDESubMenu(itmSecondaryTools, 'McpAssistantMenu', 'MCP Assistant');
     RegisterIDEMenuCommand(
       McpMenu, 'LaunchMcpAssistant', 'Launch MCP Assistant',

@@ -81,7 +81,7 @@ uses
 
   StrUtils,
   IDEExternToolIntf, IDEMsgIntf,
-  McpUtils, McpToolContext, McpToolHelpers;
+  McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard;
 
 
 
@@ -321,7 +321,15 @@ begin
     if      Method = 'initialize'       then Result := HandleInitialize(ID, Params)
     else if Method = 'ping'             then Result := HandlePing(ID)
     else if Method = 'tools/list'       then Result := HandleToolsList(ID)
-    else if Method = 'tools/call'       then Result := HandleToolsCall(ID, Params)
+    else if Method = 'tools/call'       then
+    begin
+      InterLockedIncrement(GMcpToolCallsActive);  { lets IDE modals be auto-answered }
+      try
+        Result := HandleToolsCall(ID, Params);
+      finally
+        InterLockedDecrement(GMcpToolCallsActive);
+      end;
+    end
     else if Method = 'resources/list'   then Result := HandleResourcesList(ID)
     else if Method = 'resources/read'          then Result := HandleResourcesRead(ID, Params)
     else if Method = 'resources/templates/list' then Result := HandleResourcesTemplatesList(ID)
@@ -1071,6 +1079,7 @@ type
 
 procedure TMcpIDEHook.OnIDEClose(Sender: TObject);
 begin
+  McpShutdownDebugGuard;
   FinalizeMcpServer;
 end;
 

@@ -31,7 +31,7 @@ uses
   DbgIntfDebuggerBase,       { TDBGType, TDBGEvaluateResultCallback }
   Debugger,                  { TIDEBreakPoint, TIDEBreakPoints }
   fpjson,
-  McpIdeListeners,           { GMcpLastExceptionLabel }
+  McpDebugGuard,             { GMcpLastExc, McpMarkDebugDriven }
   McpToolContext;
 
 
@@ -48,6 +48,10 @@ type
     OutState    : TDBGState;
     OutFileName : string;
     OutLine     : Integer;
+    OutExcValid : Boolean;  { snapshot of GMcpLastExc — strings are main-thread data }
+    OutExcSeq   : Integer;
+    OutExcJSON  : string;
+    OutFeedback : string;   { suppressed debugger messages, accumulated; worker resets }
     { IssueCmd input }
     InCmd       : Integer;  { 0=run 1=pause 2=stop 3=stepover 4=stepinto 5=stepout }
     { Breakpoint in/out }
@@ -88,13 +92,45 @@ type
     procedure ReadLocals;
   end;
 
+function ExceptionJSON: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  Result.Add('type',     GMcpLastExc.ExcType);
+  Result.Add('class',    GMcpLastExc.ClassName);
+  Result.Add('message',  GMcpLastExc.Message);
+  Result.Add('file',     GMcpLastExc.FileName);
+  Result.Add('line',     GMcpLastExc.Line);
+  Result.Add('function', GMcpLastExc.FuncName);
+  Result.Add('address',  Format('$%x', [GMcpLastExc.Address]));
+end;
+
 procedure TDbgSyncHelper.ReadState;
 var
-  Ed : TSourceEditorInterface;
+  Ed  : TSourceEditorInterface;
+  Exc : TJSONObject;
 begin
   OutState    := dsNone;
   OutFileName := '';
   OutLine     := 0;
+  OutExcValid := GMcpLastExc.Valid;
+  OutExcSeq   := GMcpLastExc.Seq;
+  OutExcJSON  := '';
+  if OutExcValid then
+  begin
+    Exc := ExceptionJSON;
+    try
+      OutExcJSON := Exc.AsJSON;
+    finally
+      Exc.Free;
+    end;
+  end;
+  if GMcpLastFeedback <> '' then
+  begin
+    if OutFeedback <> '' then
+      OutFeedback := OutFeedback + LineEnding;
+    OutFeedback      := OutFeedback + GMcpLastFeedback;
+    GMcpLastFeedback := '';
+  end;
   if not Assigned(DebugBoss) then Exit;
   OutState := DebugBoss.State;
   if OutState = dsPause then
@@ -110,6 +146,7 @@ end;
 
 procedure TDbgSyncHelper.IssueCmd;
 begin
+  McpMarkDebugDriven;  { no stop/exception/feedback modals for this session }
   case InCmd of
     { Run/continue: use the full F9 path so a fresh session initializes the
       debugger backend and sets ToolStatus=itDebugger before calling
@@ -399,8 +436,12 @@ begin
   end;
 end;
 
+{ AExcSeqBefore: exception sequence sampled before the command was issued, or
+  -1 to never report an exception.  Uses the GSyncHelper snapshot taken by the
+  last ReadState: a newer exception turns the reason into 'exception' and adds
+  its details; suppressed debugger messages are passed on once. }
 function MakeStateJSON(S: TDBGState; const AFile: string;
-  ALine: Integer; const AReason: string): string;
+  ALine: Integer; const AReason: string; AExcSeqBefore: Integer = -1): string;
 var
   Obj : TJSONObject;
 begin
@@ -409,15 +450,33 @@ begin
     Obj.Add('state',  DbgStateStr(S));
     Obj.Add('file',   AFile);
     Obj.Add('line',   ALine);
-    Obj.Add('reason', AReason);
+    if (AExcSeqBefore >= 0) and GSyncHelper.OutExcValid and
+       (GSyncHelper.OutExcSeq <> AExcSeqBefore) then
+    begin
+      Obj.Add('reason',    'exception');
+      Obj.Add('exception', GetJSON(GSyncHelper.OutExcJSON));
+    end
+    else
+      Obj.Add('reason', AReason);
+    if GSyncHelper.OutFeedback <> '' then
+    begin
+      Obj.Add('debugger_message', GSyncHelper.OutFeedback);
+      GSyncHelper.OutFeedback := '';
+    end;
     Result := Obj.AsJSON;
   finally
     Obj.Free;
   end;
 end;
 
+var
+  GCmdExcSeq : Integer = -1;  { exception sequence when the last command was issued }
+
 procedure DoIssueCmd(ACmd: Integer);
 begin
+  TThread.Synchronize(nil, @GSyncHelper.ReadState);
+  GCmdExcSeq              := GSyncHelper.OutExcSeq;
+  GSyncHelper.OutFeedback := '';  { report only messages caused by this command }
   GSyncHelper.InCmd := ACmd;
   TThread.Synchronize(nil, @GSyncHelper.IssueCmd);
 end;
@@ -591,7 +650,10 @@ begin
   begin
     Result := True;
     if Assigned(DebugBoss) then
+    begin
+      McpMarkDebugDriven;        { no "Execution stopped" dialog }
       DebugBoss.DoStopProject;   { non-blocking, already on main thread }
+    end;
     Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
   end
 
@@ -602,6 +664,7 @@ begin
     begin Ctx.Error := True; Ctx.Result := 'name required'; Exit; end;
     if not Assigned(DebugBoss) or (DebugBoss.State <> dsPause) then
     begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+    McpMarkDebugDriven;  { a failed modify reports via a feedback dialog }
     Obj := TJSONObject.Create;
     try
       if DebugBoss.Modify(Ctx.Params.Get('name', ''),
@@ -648,20 +711,13 @@ var
   FinalFile : string;
   FinalLine : Integer;
   Obj       : TJSONObject;
-  ExcLbl    : string;  { raw exception dialog label }
-  ExcTmp    : string;  { scratch for parsing }
-  ExcPos    : Integer;
-  ExcQ      : Integer;
-  ExcClass   : string;
-  ExcMsg     : string;
-  ExcLineNum : Integer;
 
   procedure Finish(const AReason: string);
   var
     R : string;
   begin
     if S = dsRun then R := 'timeout' else R := AReason;
-    Ctx.Result := MakeStateJSON(S, FinalFile, FinalLine, R);
+    Ctx.Result := MakeStateJSON(S, FinalFile, FinalLine, R, GCmdExcSeq);
   end;
 
 begin
@@ -840,84 +896,20 @@ begin
   else if Name = 'exception_info' then
   begin
     Result := True;
-    { GMcpLastExceptionLabel is written on the main thread (before the modal
-      loop starts) and read here on the MCP worker thread.  No Synchronize
-      needed — main thread has already left the write site by the time the
-      modal loop is spinning and we receive the HTTP request. }
-    ExcLbl := GMcpLastExceptionLabel;
-    if ExcLbl = '' then
-    begin
-      { Dialog not showing — fall back to synchronised state check. }
-      TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    end;
+    { McpDebugGuard records every exception the debugger reports (class,
+      message, location) before any dialog would appear.  The record lives
+      until the program is resumed past it or a new session starts. }
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
     Obj := TJSONObject.Create;
     try
-      if ExcLbl <> '' then
-      begin
-        { Exception dialog is currently showing — parse the label text.
-          Format (English, from lazarusidestrconsts):
-            no message : 'Project %s raised exception class ''%s''.'
-            with message: 'Project %s raised exception class ''%s'' with message:%s%s'
-          where the %s%s at the end is LineEnding + ExceptionText. }
-        Obj.Add('has_exception', True);
-        { Extract class: text between "exception class '" and next "'" }
-        ExcClass := '';
-        ExcPos := Pos('exception class ''', ExcLbl);
-        if ExcPos > 0 then
-        begin
-          ExcTmp := Copy(ExcLbl, ExcPos + Length('exception class '''), MaxInt);
-          ExcQ   := Pos('''', ExcTmp);
-          if ExcQ > 0 then ExcClass := Copy(ExcTmp, 1, ExcQ - 1);
-        end;
-        { Extract message: text after "with message:" stripped of leading newline }
-        ExcMsg := '';
-        ExcPos := Pos('with message:', ExcLbl);
-        if ExcPos > 0 then
-        begin
-          ExcTmp := Copy(ExcLbl, ExcPos + Length('with message:'), MaxInt);
-          while (Length(ExcTmp) > 0) and (ExcTmp[1] in [#10, #13]) do Delete(ExcTmp, 1, 1);
-          { Stop before the location part which starts with LineEnding+LineEnding }
-          ExcQ := Pos(LineEnding + LineEnding, ExcTmp);
-          if ExcQ > 0 then ExcMsg := TrimRight(Copy(ExcTmp, 1, ExcQ - 1))
-          else           ExcMsg := Trim(ExcTmp);
-        end;
-        { Extract file and line from "In file 'x' at line N" — present when
-          the exception has source location info. }
-        ExcTmp := '';
-        ExcLineNum := 0;
-        ExcPos := Pos('In file ''', ExcLbl);
-        if ExcPos > 0 then
-        begin
-          ExcTmp := Copy(ExcLbl, ExcPos + Length('In file '''), MaxInt);
-          ExcQ   := Pos('''', ExcTmp);
-          if ExcQ > 0 then
-          begin
-            ExcTmp := Copy(ExcTmp, 1, ExcQ - 1);
-            { Now find "at line " after the closing quote }
-            ExcPos := Pos('at line ', ExcLbl);
-            if ExcPos > 0 then
-              ExcLineNum := StrToIntDef(
-                Trim(Copy(ExcLbl, ExcPos + Length('at line '), 20)), 0);
-          end;
-        end;
-        Obj.Add('file',    ExcTmp);
-        Obj.Add('line',    ExcLineNum);
-        Obj.Add('class',   ExcClass);
-        Obj.Add('message', ExcMsg);
-      end
+      Obj.Add('has_exception', GSyncHelper.OutExcValid);
+      Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
+      if GSyncHelper.OutExcValid then
+        Obj.Add('exception', GetJSON(GSyncHelper.OutExcJSON))
+      else if GSyncHelper.OutState in [dsNone, dsIdle, dsStop] then
+        Obj.Add('note', 'Debugger is not running.')
       else
-      begin
-        { Dialog not showing.  Possible causes: debugger not running,
-          user already clicked Break/Continue, or paused at a breakpoint. }
-        Obj.Add('has_exception', False);
-        if GSyncHelper.OutState = dsPause then
-          Obj.Add('note', 'Debugger is paused (at a breakpoint or after Break was clicked). ' +
-                          'Call exception_info while the exception dialog is still showing to get class and message.')
-        else if GSyncHelper.OutState = dsNone then
-          Obj.Add('note', 'Debugger is not running.')
-        else
-          Obj.Add('note', 'No exception dialog is currently visible.');
-      end;
+        Obj.Add('note', 'No exception since the program was last resumed.');
       Ctx.Result := Obj.AsJSON;
     finally Obj.Free; end;
   end;

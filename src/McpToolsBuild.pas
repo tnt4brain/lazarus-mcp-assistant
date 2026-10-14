@@ -20,7 +20,7 @@ uses
   Controls, Forms,
   fpjson,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
-  McpToolContext, McpIdeListeners;
+  McpToolContext, McpIdeListeners, McpDebugGuard;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -257,7 +257,10 @@ end;
 procedure TBuildSyncHelper.DoStopDebugger;
 begin
   if Assigned(DebugBoss) and (DebugBoss.State in [dsRun, dsPause, dsInternalPause]) then
+  begin
+    McpMarkDebugDriven;  { no "Execution stopped" dialog }
     DebugBoss.DoStopProject;
+  end;
 end;
 
 procedure TBuildSyncHelper.DoRebuild;

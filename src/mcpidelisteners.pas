@@ -17,6 +17,7 @@ type
     procedure OnCompilerFinished(Sender: TObject; BuildSuccessful: boolean);
     procedure OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
     procedure OnFormRemoved(Sender: TObject; Form: TCustomForm);
+    procedure AutoAnswer(AForm: TCustomForm; AResult: TModalResult);
   public
     constructor Create;
     destructor Destroy; override;
@@ -37,11 +38,19 @@ var
     Set on the main thread in OnActiveFormChanged before the modal loop starts.
     Read from the worker thread without Synchronize. }
   GMcpExceptionDialogHwnd: THandle = 0;
+  { Number of MCP tools/call requests currently executing (interlocked).
+    While > 0 nobody is at the keyboard for the IDE, so known IDE modals are
+    answered automatically — see OnActiveFormChanged. }
+  GMcpToolCallsActive: LongInt = 0;
 
 procedure InitializeIdeHooks;
 procedure FinalizeIdeHooks;
 
 implementation
+
+uses
+  LazLogger,
+  McpDebugGuard;  { GMcpDriven }
 
 constructor TMcpIdeHookManager.Create;
 begin
@@ -75,13 +84,54 @@ procedure TMcpIdeHookManager.OnActiveFormChanged(Sender: TObject; Form: TCustomF
 var
   C: TComponent;
 begin
-  if Assigned(Form) and Form.ClassNameIs('TIDEExceptionDlg') and Form.Visible then
+  if not Assigned(Form) or not Form.Visible then Exit;
+  if Form.ClassNameIs('TIDEExceptionDlg') then
   begin
     C := Form.FindComponent('lblMessage');
     if Assigned(C) and (C is TLabel) then
       GMcpLastExceptionLabel := TLabel(C).Caption;
     GMcpExceptionDialogHwnd := Form.Handle;
+    { Normally McpDebugGuard prevents this dialog in MCP-driven sessions;
+      this is the fallback.  mrOK = Break (mrCancel would continue). }
+    if GMcpDriven then
+      AutoAnswer(Form, mrOK);
+  end
+  else if Form.ClassNameIs('TDiskDiffsDlg') and (GMcpToolCallsActive > 0) then
+    { "Some files have changed on disk" — typically files an agent edited.
+      Pre-checked are only files without unsaved editor changes, so OK
+      reloads exactly those and keeps the user's unsaved edits. }
+    AutoAnswer(Form, mrOK);
+end;
+
+type
+  TMcpAutoAnswer = class
+    Form   : TCustomForm;
+    Answer : TModalResult;
+    procedure Apply(Data: PtrInt);
   end;
+
+procedure TMcpAutoAnswer.Apply(Data: PtrInt);
+begin
+  { The form may have been closed meanwhile; only touch it if still alive. }
+  if (Screen.CustomFormIndex(Form) >= 0) and (fsModal in Form.FormState) then
+  begin
+    DebugLn(['[MCP Assistant] auto-answered ', Form.ClassName, ' (', Form.Caption,
+             ') with modal result ', Answer]);
+    Form.ModalResult := Answer;
+  end;
+  Free;
+end;
+
+procedure TMcpIdeHookManager.AutoAnswer(AForm: TCustomForm; AResult: TModalResult);
+var
+  A : TMcpAutoAnswer;
+begin
+  { Deferred: the modal loop has not started yet while the form activates,
+    and ShowModal resets ModalResult when it does. }
+  A := TMcpAutoAnswer.Create;
+  A.Form   := AForm;
+  A.Answer := AResult;
+  Application.QueueAsyncCall(@A.Apply, 0);
 end;
 
 procedure TMcpIdeHookManager.OnFormRemoved(Sender: TObject; Form: TCustomForm);
