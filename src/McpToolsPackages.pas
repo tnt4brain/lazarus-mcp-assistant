@@ -471,14 +471,9 @@ end;
 procedure RegisterPackagesSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('package_search_online',
-    'Search the Lazarus online package repository (the Online Package Manager''s ' +
-    'catalog of community packages, cached locally — no network access) by words in ' +
-    'package names, descriptions, categories and .lpk names. Returns per package: ' +
-    'category, description, homepage, archive URL and each .lpk with version, license, ' +
-    'Lazarus/FPC/widgetset compatibility, dependencies, whether it is installed, and ' +
-    'downloaded_lpk when OPM has already downloaded it (pass that to package_install). ' +
-    'The catalog lists packages, not component classes; for classes already on the ' +
-    'palette use form_search_palette.',
+    'Search the Online Package Manager''s catalog of community packages (local ' +
+    'cache, no network). Finds packages, not component classes: for installed ' +
+    'classes use form_search_palette. A result''s downloaded_lpk can go to package_install.',
     SCHEMA_SEARCH_ONLINE, MCP_ANN_RO));
   Tools.Add(MakeTool('package_get_info',
     'Query a package''s load and install status in the running IDE.',
@@ -493,11 +488,9 @@ begin
     'No rebuild required. Returns the updated list of project package dependencies.',
     SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('package_install',
-    'Install a package into the Lazarus IDE (design-time / palette). A package that is ' +
-    'not installed yet needs the user''s consent: the user must have enabled installs ' +
-    '(Tools > MCP Assistant) and confirms each one in the IDE; if refused, ask the user. ' +
-    'Triggers an IDE rebuild and restart. Returns {"status":"rebuilding","poll_command":"..."}. ' +
-    'Use package_compile first to catch errors early.',
+    'Install a package into the IDE (design-time / palette); the IDE rebuilds and ' +
+    'restarts. A package not installed yet needs the user''s consent. Run ' +
+    'package_compile first.',
     SCHEMA_INSTALL_PACKAGE, MCP_ANN_DEST));
   Tools.Add(MakeTool('package_uninstall',
     'Uninstall a package from the Lazarus IDE. ' +

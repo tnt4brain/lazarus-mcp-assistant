@@ -40,19 +40,13 @@ const
 
   SCHEMA_REBUILD_IDE =
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +
-    '"description":"Absolute path to the .lpk package file to install and ' +
-    'rebuild with. Omit to rebuild with currently installed packages ' +
-    '(e.g. after package_compile)."}}}';
+    '"description":"Absolute path of a .lpk to install first; omit to just rebuild"}}}';
 
   SCHEMA_RUN_TESTS =
     '{"type":"object","properties":{' +
-    '"test_project":{"type":"string","description":"Path to the FPCUnit test ' +
-    'project .lpi (absolute, or relative to the active project directory). ' +
-    'Defaults to the plugin''s own tests/mcpserver_tests.lpi, whatever project ' +
-    'is open; else tests/mcpserver_tests.lpi in the active project."},' +
-    '"junit_out":{"type":"string","description":"If provided, also write ' +
-    'JUnit-compatible XML to this absolute path. Readable by GitHub Actions, ' +
-    'Jenkins, and other CI tools."}}}';
+    '"test_project":{"type":"string","description":"Test project .lpi, absolute or ' +
+    'relative to the project directory. Default: the plugin''s own tests"},' +
+    '"junit_out":{"type":"string","description":"Absolute path to also write JUnit XML to"}}}';
 
   SCHEMA_GET_COMPILER_ERRORS =
     '{"type":"object","properties":{}}';
@@ -396,19 +390,13 @@ begin
     'Does not restart the IDE.',
     SCHEMA_COMPILE_PLUGIN, MCP_ANN_WRITE));
   Tools.Add(MakeTool('ide_rebuild',
-    'Rebuild and restart the Lazarus IDE. Pass lpk_path to install a package ' +
-    'before rebuilding; omit it to rebuild with currently installed packages. ' +
-    'Installing a package that is not installed yet needs the user''s consent: the ' +
-    'user must have enabled it in the IDE and confirms each install there. ' +
-    'The IDE exits immediately after this call; the MCP server will be ' +
-    'unavailable for ~60 s. Run the returned poll_command to wait for it. ' +
-    'Call package_compile first to catch errors early.',
+    'Rebuild and restart the IDE, optionally installing a package first; the ' +
+    'server is down for about a minute (the result says how to wait). A package ' +
+    'not installed yet needs the user''s consent. Run package_compile first.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
   Tools.Add(MakeTool('ide_run_tests',
-    'Compile and run the FPCUnit test project, then return structured results ' +
-    '(pass/fail counts, individual test output). Standalone utility and ' +
-    'infrastructure tests always run; protocol and auth tests run only when ' +
-    'the MCP server is reachable. Optionally writes JUnit XML for CI consumption.',
+    'Compile and run an FPCUnit test project; returns pass/fail counts and ' +
+    'per-test output, optionally also JUnit XML.',
     SCHEMA_RUN_TESTS, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_get_compiler_errors',
     'Return the current build compiler errors and warnings.',

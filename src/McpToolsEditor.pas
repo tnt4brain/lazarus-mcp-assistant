@@ -64,7 +64,7 @@ const
     '"new_string":{"type":"string","description":"Replacement text; empty string to delete the match"},' +
     '"file":{"type":"string","description":"Absolute path to the file; omit to edit the active editor"},' +
     '"replace_all":{"type":"boolean","description":"Replace all occurrences (default false — fails if >1 match)"},' +
-    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["old_string","new_string"]}';
 
   SCHEMA_SAVE_FILE =
@@ -91,7 +91,7 @@ const
     '"col":{"type":"integer","description":"1-based column number of the edit point"},' +
     '"delete_len":{"type":"integer","description":"Number of characters to delete forward from (line,col); 0 for pure insert"},' +
     '"insert_text":{"type":"string","description":"Text to insert at (line,col) after deletion; empty string for pure delete"},' +
-    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["line","col","delete_len","insert_text"]}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
@@ -707,12 +707,8 @@ begin
     'Opens the file first if it is not already open.',
     SCHEMA_REPLACE_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_edit_text',
-    'Replace text by content: find old_string in the editor buffer and replace ' +
-    'with new_string. Fails if old_string is not found or matches more than once ' +
-    '(pass replace_all=true to replace every occurrence). ' +
-    'Prefer this over editor_replace_range — no stale line-number offsets. ' +
-    'The edit is recorded in the editor''s undo history (Ctrl+Z works). ' +
-    'Opens the file first if it is not already open.',
+    'Replace old_string with new_string in the editor buffer (opens the file if ' +
+    'needed; Ctrl+Z works). Prefer this over editor_replace_range: no stale line numbers.',
     SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_save',
     'Save the editor buffer to disk. Omit file to save the active editor.',
@@ -730,11 +726,9 @@ begin
     'without moving the cursor. Returns {"file":..., "already_open":bool}.',
     SCHEMA_OPEN_FILE, MCP_ANN_RO));
   Tools.Add(MakeTool('editor_edit_at_position',
-    'Replace exactly delete_len characters starting at (line, col) with insert_text. ' +
-    'No string matching — use coordinates from a prior code_get_outline, ' +
-    'code_find_declaration, or code_get_procedure_ast call. ' +
-    'Pass delete_len=0 for a pure insert; insert_text="" for a pure delete. ' +
-    'The edit is recorded in the undo history (Ctrl+Z works).',
+    'Replace delete_len characters at (line, col) with insert_text, using ' +
+    'coordinates from code_get_outline, code_find_declaration or ' +
+    'code_get_procedure_ast. Ctrl+Z works.',
     SCHEMA_EDIT_AT_POSITION, MCP_ANN_WRITE));
 end;
 

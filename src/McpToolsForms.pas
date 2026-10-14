@@ -40,7 +40,7 @@ uses
 
 const
   FORM_FILE_PROP =
-    '"form_file":{"type":"string","description":"Absolute path to the form''s .lfm (or its .pas unit)"}';
+    '"form_file":{"type":"string","description":"Absolute path of the .lfm or its .pas"}';
 
   SCHEMA_FORM_LIST_COMPONENTS =
     '{"type":"object","properties":{' + FORM_FILE_PROP + '},' +
@@ -64,7 +64,8 @@ const
       '\"Parent\":\"Panel1\",\"Name\":\"btnOK\",\"Columns[0].Width\":120,\"Lines\":[\"first\",\"second\"]}. ' +
       'Collection items are addressed by index (Columns[0].Caption, Panels[2].Text); string lists ' +
       '(Lines, Items) take an array of strings or one text with line breaks. Parent moves the control ' +
-      'into another container; Name renames it in the source as well. Applied in order Parent, others, Name."}},' +
+      'into another container; Name renames it in the source as well; events take a handler name (created if missing). ' +
+      'Applied in order Parent, others, Name. Returns one result per property."}},' +
     '"required":["form_file","component_name","properties"]}';
 
   SCHEMA_FORM_ADD_COMPONENT =
@@ -115,9 +116,8 @@ const
 
   COLLECTION_PROPS =
     FORM_FILE_PROP + ',' +
-    '"component_name":{"type":"string","description":"Component that owns the collection (e.g. ListView1, StatusBar1, StringGrid1)"},' +
-    '"property":{"type":"string","description":"Collection property: Columns, Panels, Sections, Bands, ... ' +
-      '(an item path such as Bands[0].Controls also works)"}';
+    '"component_name":{"type":"string","description":"Owner of the collection, e.g. ListView1"},' +
+    '"property":{"type":"string","description":"Columns, Panels, Bands, ... or an item path such as Bands[0].Controls"}';
 
   SCHEMA_FORM_LIST_COLLECTION_ITEMS =
     '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
@@ -1905,25 +1905,17 @@ end;
 procedure RegisterFormsSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('form_list_components',
-    'List every component on a form with class, parent, bounds (left/top/width/' +
-    'height), Align, Anchors, Visible, Caption/Text and TabOrder; non-visual ' +
-    'components are flagged. Also returns the form''s size and client size. ' +
-    'Opens the form in the designer if needed.',
+    'List every component on a form with class, parent, bounds and key ' +
+    'properties, plus the form''s size. Opens the form in the designer if needed.',
     SCHEMA_FORM_LIST_COMPONENTS, MCP_ANN_RO));
   Tools.Add(MakeTool('form_get_properties',
     'Read a component''s published properties as the Object Inspector shows them, ' +
-    'including nested ones as dotted paths (BorderSpacing.Around, Font.Style, ' +
-    'AnchorSideLeft.Control, ChildSizing.Layout). Pass names to read only some ' +
-    'properties; then enum/set/reference properties also return their allowed values.',
+    'nested ones as dotted paths (BorderSpacing.Around, Font.Style).',
     SCHEMA_FORM_GET_PROPERTIES, MCP_ANN_RO));
   Tools.Add(MakeTool('form_set_properties',
-    'Set one or more properties on a component through the Object Inspector''s ' +
-    'property editors: dotted paths for nested properties, enums/sets as text, ' +
-    'component references by name, events by handler name (created if missing). ' +
-    'Name renames the component in the source too; Parent moves it into another ' +
-    'container. Use BorderSpacing.*, Anchors, AnchorSide*.Control/Side, Align ' +
-    'and the container''s ChildSizing.* for layout and spacing. Returns one result ' +
-    'per property. Changes are in the designer; save with editor_save.',
+    'Set component properties through the Object Inspector''s property editors. ' +
+    'For layout prefer Align, Anchors, AnchorSide*, BorderSpacing.* and the ' +
+    'container''s ChildSizing.* to pixel positions. Save with editor_save.',
     SCHEMA_FORM_SET_PROPERTIES, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_add_component',
     'Add a component from the IDE palette to a form, optionally inside a container, ' +
@@ -1936,11 +1928,8 @@ begin
     'items with their submenus. Save with editor_save.',
     SCHEMA_FORM_DELETE_COMPONENT, MCP_ANN_DEST));
   Tools.Add(MakeTool('form_arrange',
-    'Arrange controls that share a parent: copy the first control''s size ' +
-    '(same_size), place them one after another with a fixed gap or spread them ' +
-    'evenly (distribute, spacing), and align edges or centres to the first ' +
-    'control or to the parent (align, relative_to). Applied in that order. ' +
-    'Returns the new bounds.',
+    'Arrange controls that share a parent: same_size, then distribute, then ' +
+    'align. Returns the new bounds.',
     SCHEMA_FORM_ARRANGE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_get_lfm',
     'Return the form as LFM text from the live designer state (including unsaved ' +
@@ -1954,9 +1943,7 @@ begin
     SCHEMA_FORM_CREATE_EVENT_HANDLER, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_list_collection_items',
     'List the items of a collection property (ListView Columns, StatusBar Panels, ' +
-    'StringGrid/DBGrid Columns, HeaderControl Sections, CoolBar Bands, ...) with ' +
-    'their index, display name and properties. Set item properties with ' +
-    'form_set_properties using indexed paths, e.g. {"Columns[0].Caption":"Name"}.',
+    '...). Edit them with form_set_properties and indexed paths: Columns[0].Caption.',
     SCHEMA_FORM_LIST_COLLECTION_ITEMS, MCP_ANN_RO));
   Tools.Add(MakeTool('form_add_collection_item',
     'Add an item to a collection property (Columns, Panels, Sections, Bands, ...), ' +
@@ -1972,16 +1959,12 @@ begin
     'Save with editor_save.',
     SCHEMA_FORM_MOVE_COLLECTION_ITEM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_get_menu',
-    'Return the item tree of a TMainMenu/TPopupMenu (or a submenu): name, caption, ' +
-    'shortcut, separator, checked/enabled/visible, action and OnClick handler. ' +
-    'Set item properties with form_set_properties; delete items (with their ' +
-    'submenus) with form_delete_component.',
+    'Return the item tree of a TMainMenu/TPopupMenu or submenu. Edit items with ' +
+    'form_set_properties; delete them (with submenus) with form_delete_component.',
     SCHEMA_FORM_GET_MENU, MCP_ANN_RO));
   Tools.Add(MakeTool('form_add_menu_item',
-    'Add a menu item to a TMainMenu/TPopupMenu (top level) or to a menu item ' +
-    '(submenu), optionally at an index and with properties such as ShortCut, ' +
-    'OnClick, Checked. Caption "-" adds a separator. Closes the IDE''s Menu Editor ' +
-    'window if open. Save with editor_save.',
+    'Add an item to a TMainMenu/TPopupMenu or a submenu. Closes the IDE''s Menu ' +
+    'Editor if open. Save with editor_save.',
     SCHEMA_FORM_ADD_MENU_ITEM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_move_menu_item',
     'Move a menu item (with its submenu) to another position and/or another parent ' +

@@ -1355,14 +1355,14 @@ end;
 const
   SCHEMA_SET_BREAKPOINT =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"file_path":{"type":"string","description":"Absolute path"},' +
     '"line":{"type":"integer","description":"1-based line number"},' +
     '"enabled":{"type":"boolean","description":"Default true"}},' +
     '"required":["file_path","line"]}';
 
   SCHEMA_REMOVE_BREAKPOINT =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"file_path":{"type":"string","description":"Absolute path"},' +
     '"line":{"type":"integer","description":"1-based line number of the breakpoint"}},' +
     '"required":["file_path","line"]}';
 
@@ -1371,7 +1371,7 @@ const
 
   SCHEMA_TIMEOUT_ONLY =
     '{"type":"object","properties":{' +
-    '"timeout_s":{"type":"integer","description":"Seconds to wait; default varies"}}}';
+    '"timeout_s":{"type":"integer","description":"Default 10 (step out: 30)"}}}';
 
   SCHEMA_RUN_DEBUGGER =
     '{"type":"object","properties":{' +
@@ -1381,7 +1381,7 @@ const
 
   SCHEMA_RUN_TO_LINE =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"file_path":{"type":"string","description":"Absolute path"},' +
     '"line":{"type":"integer","description":"1-based line number to run to"},' +
     '"timeout_s":{"type":"integer","description":"Default 30"}},' +
     '"required":["file_path","line"]}';
@@ -1446,11 +1446,9 @@ begin
     SCHEMA_NO_PARAMS, MCP_ANN_RO));
   { Group 3 — Session control (blocking) }
   Tools.Add(MakeTool('debug_run',
-    'Start a debug session or continue from pause (F9). Blocks until the ' +
-    'program hits a breakpoint or stops. Returns state=timeout if timeout_s ' +
-    'elapses while the program is still running. The first client that drives ' +
-    'the debugger owns the session until it ends (or lease_idle_timeout passes ' +
-    'without calls from it); other clients meanwhile get read-only debugger tools.',
+    'Start debugging or continue from a pause (F9); blocks until the program ' +
+    'pauses or ends, or returns state=timeout. The client that drives the ' +
+    'debugger owns the session (see lease_idle_timeout).',
     SCHEMA_RUN_DEBUGGER, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_pause',
     'Pause a running debug session. Blocks until the program pauses.',

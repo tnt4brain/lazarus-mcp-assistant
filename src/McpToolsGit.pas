@@ -23,63 +23,63 @@ uses
 const
   SCHEMA_GIT_STATUS =
     '{"type":"object","properties":{' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_DIFF =
     '{"type":"object","properties":{' +
     '"staged":{"type":"boolean","description":"Diff staged (index) changes instead of working-tree (default false)"},' +
     '"path":{"type":"string","description":"Limit diff to this file or directory"},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_LOG =
     '{"type":"object","properties":{' +
     '"max_count":{"type":"integer","description":"Maximum number of commits to show (default 20)"},' +
     '"branch":{"type":"string","description":"Branch or ref to log; defaults to HEAD"},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_ADD =
     '{"type":"object","properties":{' +
     '"paths":{"type":"array","items":{"type":"string"},"description":"Files or directories to stage"},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":["paths"]}';
 
   SCHEMA_GIT_COMMIT =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Commit message"},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":["message"]}';
 
   SCHEMA_GIT_CHECKOUT =
     '{"type":"object","properties":{' +
     '"target":{"type":"string","description":"Branch name, tag, commit hash, or file path to restore"},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":["target"]}';
 
   SCHEMA_GIT_BRANCHES =
     '{"type":"object","properties":{' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_STASH =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Optional stash description"},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_STASH_POP =
     '{"type":"object","properties":{' +
     '"index":{"type":"integer","description":"Stash index to pop (default 0 = most recent)"},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_RESET =
     '{"type":"object","properties":{' +
     '"target":{"type":"string","description":"Ref or file to reset: e.g. HEAD, HEAD~1, a commit hash, or a file path"},' +
     '"mode":{"type":"string","enum":["mixed","soft"],"description":"mixed (default): unstage changes, keep working tree. soft: keep changes staged."},' +
-    '"work_dir":{"type":"string","description":"Repository root; defaults to active project directory"}},' +
+    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
     '"required":["target"]}';
 
 { ── Helpers ──────────────────────────────────────────────────────────────── }

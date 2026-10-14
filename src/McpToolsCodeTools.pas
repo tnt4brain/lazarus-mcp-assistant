@@ -32,7 +32,7 @@ const
 
   SCHEMA_GET_UNIT_INTERFACE =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the .pas file"}},' +
+    '"file":{"type":"string","description":"Absolute path"}},' +
     '"required":["file"]}';
 
   SCHEMA_GET_IDENTIFIER_CONTEXT =
@@ -44,7 +44,7 @@ const
 
   SCHEMA_GET_CODE_OUTLINE =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the .pas file"}},' +
+    '"file":{"type":"string","description":"Absolute path"}},' +
     '"required":["file"]}';
 
   SCHEMA_FIND_ALL_REFERENCES =
@@ -88,39 +88,39 @@ const
     '"file":{"type":"string","description":"Absolute path to the Pascal file to modify"},' +
     '"unit_name":{"type":"string","description":"Unit name to add to the uses clause"},' +
     '"in_interface":{"type":"boolean","description":"Add to interface uses (true, default) or implementation uses (false)"},' +
-    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","unit_name"]}';
 
   SCHEMA_INSERT_IN_PROCEDURE =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
     '"text":{"type":"string","description":"Pascal text to insert at the start of the procedure body, immediately after begin"},' +
-    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","proc_name","text"]}';
 
   SCHEMA_REPLACE_PROCEDURE_BODY =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
     '"new_body":{"type":"string","description":"New body content placed between begin and end; replaces everything currently there"},' +
-    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","proc_name","new_body"]}';
 
   SCHEMA_ADD_TO_CLASS_SECTION =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"file":{"type":"string","description":"Absolute path"},' +
     '"class_name":{"type":"string","description":"Class type name (e.g. TMyForm)"},' +
     '"section":{"type":"string","description":"Class section to append to: public (default), private, protected, or published"},' +
     '"text":{"type":"string","description":"Declaration text to append to the section"},' +
-    '"auto_save":{"type":"boolean","description":"Save the file to disk immediately after editing (default false)"}},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","class_name","text"]}';
 
   SCHEMA_GET_AST_PARTIAL =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the .pas file"},' +
+    '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name to inspect (without class prefix)"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for standalone procedures"},' +
     '"line":{"type":"integer","description":"1-based line inside the procedure — alternative to proc_name; finds the enclosing scope"},' +
@@ -1202,11 +1202,9 @@ begin
     'across all project files.',
     SCHEMA_FIND_ALL_REFERENCES, MCP_ANN_RO));
   Tools.Add(MakeTool('code_rename_identifier',
-    'Rename an identifier at the given declaration position across all ' +
-    'project files. WARNING: this operation writes directly to disk and ' +
-    'bypasses the IDE undo stack — it CANNOT be undone with Ctrl+Z. ' +
-    'Use git to revert if needed. Only call this after confirming the ' +
-    'new name with the user.',
+    'Rename the identifier declared at (file, line, col) in all project files. ' +
+    'Writes straight to disk; Ctrl+Z can''t undo it (use git), so confirm the ' +
+    'new name with the user first.',
     SCHEMA_RENAME_IDENTIFIER, MCP_ANN_DEST));
   Tools.Add(MakeTool('code_goto_declaration',
     'Find where an identifier is declared and jump the editor cursor there. ' +
@@ -1247,12 +1245,9 @@ begin
     'Uses the editor undo stack (Ctrl+Z works).',
     SCHEMA_ADD_TO_CLASS_SECTION, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_get_procedure_ast',
-    'Return the structural content of a named procedure body: local variable ' +
-    'declarations and a flat list of block-level control-flow nodes (if, for, ' +
-    'while, try, case, repeat, with) with their line ranges. Locate by ' +
-    'proc_name (+ optional class_name) or by a line number inside the body. ' +
-    'Read-only — use the returned line numbers as inputs to editor_edit_at_position ' +
-    'or the Tier-2 structural edit tools.',
+    'Return a procedure''s local variables and its block-level control flow ' +
+    '(if, for, while, try, case, ...) with line ranges, for use with ' +
+    'editor_edit_at_position.',
     SCHEMA_GET_AST_PARTIAL, MCP_ANN_RO));
 end;
 
