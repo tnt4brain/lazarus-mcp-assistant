@@ -109,8 +109,16 @@ begin
   Result := False;
   APort  := 0;
   AToken := '';
-  ConfigPath := GetEnvironmentVariable('LOCALAPPDATA') +
-                '\lazarus\mcpassistantoptions.xml';
+  { MCP_OPTIONS_FILE overrides the default, e.g. for Lazarus run with --pcp }
+  ConfigPath := GetEnvironmentVariable('MCP_OPTIONS_FILE');
+  if ConfigPath = '' then
+    {$IFDEF WINDOWS}
+    ConfigPath := IncludeTrailingPathDelimiter(GetEnvironmentVariable('LOCALAPPDATA')) +
+                  'lazarus' + PathDelim + 'mcpassistantoptions.xml';
+    {$ELSE}
+    ConfigPath := IncludeTrailingPathDelimiter(GetUserDir) +
+                  '.lazarus' + PathDelim + 'mcpassistantoptions.xml';
+    {$ENDIF}
   if not FileExists(ConfigPath) then Exit;
   SL := TStringList.Create;
   try

@@ -15,7 +15,7 @@ uses
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf,
   LazFileUtils, FileUtil,
   fpjson,
-  McpToolContext, McpConsent;
+  McpToolContext, McpIdeState, McpConsent;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -264,8 +264,7 @@ var
   FPList   : TFPList;
   PkgList  : TObjectList;
   PkgID    : TLazPackageID;
-  PollExe  : string;
-  PasFile  : string;
+  PollCmd  : string;
   RefArr   : TJSONArray;
   Obj      : TJSONObject;
   Proj     : TLazProject;
@@ -398,28 +397,9 @@ begin
       Obj.Add('status',  'rebuilding');
       Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
                          'command in poll_command until it succeeds.');
-      PollExe := ExtractFilePath(LazarusIDE.GetFPCompilerFilename) +
-                 'instantfpc' + GetExeExt;
-      IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
-      if Assigned(IDEPkg) then
-        PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
-                     ExtractFilePath(IDEPkg.Filename))) + 'wait_for_restart.pas'
-      else
-        PasFile := '';
-      if PasFile <> '' then
-      begin
-        {$IFDEF WINDOWS}
-        Obj.Add('poll_command',
-          'cmd /c "SET PATH=' +
-          ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
-          ';%PATH% && "' + PollExe + '" "' + PasFile + '""');
-        {$ELSE}
-        Obj.Add('poll_command',
-          'sh -c ''PATH="' +
-          ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
-          ':$PATH" "' + PollExe + '" "' + PasFile + '"''');
-        {$ENDIF}
-      end;
+      PollCmd := McpPollCommand;
+      if PollCmd <> '' then
+        Obj.Add('poll_command', PollCmd);
       Ctx.Result          := Obj.AsJSON;
       Ctx.ConnectionClose := True;
     finally
@@ -465,28 +445,9 @@ begin
       Obj.Add('status',  'rebuilding');
       Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
                          'command in poll_command until it succeeds.');
-      PollExe := ExtractFilePath(LazarusIDE.GetFPCompilerFilename) +
-                 'instantfpc' + GetExeExt;
-      IDEPkg2 := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
-      if Assigned(IDEPkg2) then
-        PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
-                     ExtractFilePath(IDEPkg2.Filename))) + 'wait_for_restart.pas'
-      else
-        PasFile := '';
-      if PasFile <> '' then
-      begin
-        {$IFDEF WINDOWS}
-        Obj.Add('poll_command',
-          'cmd /c "SET PATH=' +
-          ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
-          ';%PATH% && "' + PollExe + '" "' + PasFile + '""');
-        {$ELSE}
-        Obj.Add('poll_command',
-          'sh -c ''PATH="' +
-          ExcludeTrailingPathDelimiter(ExtractFilePath(LazarusIDE.GetFPCompilerFilename)) +
-          ':$PATH" "' + PollExe + '" "' + PasFile + '"''');
-        {$ENDIF}
-      end;
+      PollCmd := McpPollCommand;
+      if PollCmd <> '' then
+        Obj.Add('poll_command', PollCmd);
       Ctx.Result          := Obj.AsJSON;
       Ctx.ConnectionClose := True;
     finally

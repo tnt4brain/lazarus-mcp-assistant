@@ -4,8 +4,10 @@
 { wait_for_restart.pas — poll the Lazarus MCP server until it responds.
   Use after calling ide_rebuild, when the MCP transport is broken.
 
-  Usage:  instantfpc wait_for_restart.pas [timeout_seconds]
-  Default timeout: 180 s }
+  Usage:  instantfpc wait_for_restart.pas [timeout_seconds] [settings_file]
+  Default timeout: 180 s.  settings_file is mcpassistantoptions.xml in the
+  IDE's primary config directory; ide_rebuild's poll_command passes it, since
+  the default guess below is wrong when Lazarus runs with --pcp. }
 program WaitForRestart;
 
 uses
@@ -49,12 +51,18 @@ var
   Body, Resp    : TStringStream;
   Client        : TFPHTTPClient;
   SL            : TStringList;
+  I             : Integer;
 begin
   Timeout := 180;
-  if ParamCount >= 1 then
-    Timeout := StrToIntDef(ParamStr(1), 180);
-
-  CFG := ConfigPath;
+  CFG     := '';
+  { a number is the timeout, anything else the settings file }
+  for I := 1 to ParamCount do
+    if StrToIntDef(ParamStr(I), -1) >= 0 then
+      Timeout := StrToInt(ParamStr(I))
+    else if ParamStr(I) <> '' then
+      CFG := ParamStr(I);
+  if CFG = '' then
+    CFG := ConfigPath;
   if not FileExists(CFG) then
   begin
     WriteLn('ERROR: settings not found at ', CFG);

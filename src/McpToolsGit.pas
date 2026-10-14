@@ -3,7 +3,7 @@ unit McpToolsGit;
 
 { Git integration tools: git_status, git_diff, git_log, git_add,
   git_commit, git_checkout, git_branches.
-  All operations shell out to git.exe; work_dir defaults to the active
+  All operations shell out to git (McpGitExecutable); work_dir defaults to the active
   project directory when not supplied by the caller. }
 
 {$mode objfpc}{$H+}
@@ -16,7 +16,7 @@ uses
   Classes, SysUtils, Process, FileUtil, LazFileUtils,
   LazIDEIntf,
   fpjson,
-  McpToolContext;
+  McpToolContext, McpIdeState;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -95,10 +95,11 @@ var
 const
   BufSize = 4096;
 begin
-  GitExe := FindDefaultExecutablePath('git');
+  GitExe := McpGitExecutable;
   if GitExe = '' then
   begin
-    Output := 'git executable not found on PATH';
+    Output := 'git executable not found on PATH; the user can set its path in ' +
+              'Tools > Options > MCP Assistant';
     Result := False;
     Exit;
   end;

@@ -7,7 +7,7 @@ unit McpConsent;
   runs with the user's rights every time Lazarus starts.  So installing any
   .lpk that is not installed yet (from that very file) needs
     1. the setting "Allow Assistants to Install Packages" (off by default,
-       Tools > MCP Assistant), and
+       Tools > MCP Assistant, or Tools > Options > MCP Assistant), and
     2. a yes in a dialog shown in the IDE for this install.
   The dialog is for the human at the keyboard: it is not one of the dialogs
   McpIdeListeners answers during tool calls, its default button is
@@ -204,7 +204,7 @@ begin
   begin
     AReason := 'Refused: installing packages that are not installed yet is turned off. ' +
       'Only the user can allow it: Tools > MCP Assistant > Allow Assistants to Install ' +
-      'Packages. Each install is then confirmed by the user in the IDE. Ask the user; ' +
+      'Packages, or the same checkbox in Tools > Options > MCP Assistant. Each install is then confirmed by the user in the IDE. Ask the user; ' +
       'do not try to change the setting yourself.';
     LogToIDE('MCP: refused to install ' + ALpkPath + ' (installing packages is turned off).');
     Exit(False);

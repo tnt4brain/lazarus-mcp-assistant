@@ -12,6 +12,7 @@ uses
   McpIdeServer, McpToolContext, McpToolHelpers, McpToolsPackages, 
   McpToolsEditor, McpToolsBuild, McpToolsCodeTools, McpToolsForms, 
   McpToolsProject, McpToolsGit, McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent,
+  McpLauncher, McpOptions,
   LazarusPackageIntf;
 
 implementation

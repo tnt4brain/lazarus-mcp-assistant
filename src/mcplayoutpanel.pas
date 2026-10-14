@@ -32,8 +32,8 @@ implementation
 {$R *.lfm}
 
 uses
-  LazLogger, Process, Clipbrd,
-  McpToolsProject, McpDebugGuard;
+  LazLogger, Clipbrd,
+  McpToolsProject, McpDebugGuard, McpLauncher, McpOptions;
 
 { Called from the menu: copies the current MCP server config JSON to the clipboard. }
 procedure CopyMcpConfigToClipboard(Sender: TObject);
@@ -48,7 +48,7 @@ begin
   if not IsServerRunning then
   begin
     ShowMessage('MCP server is not running. Launch it first via ' +
-                'Tools → Secondary Tools → Launch MCP Assistant.');
+                'Tools → MCP Assistant → Launch MCP Assistant.');
     Exit;
   end;
   Port  := GetServerPort;
@@ -82,9 +82,8 @@ procedure LaunchMcpAssistant(Sender: TObject);
 var
   ConfigPath : string;
   WorkDir    : string;
-  ExtraArgs  : TStringList;
-  Proc       : TProcess;
-  I          : Integer;
+  Req        : TMcpLaunchRequest;
+  Err        : string;
 begin
   if not IsServerRunning then
   begin
@@ -111,82 +110,34 @@ begin
   else
     WorkDir := '';
 
-  Proc := TProcess.Create(nil);
-  try
-    Proc.Executable := 'claude';
-    Proc.Parameters.Add('--mcp-config');
-    Proc.Parameters.Add(ConfigPath);
-    Proc.Parameters.Add('--strict-mcp-config');
-    Proc.Parameters.Add('--append-system-prompt');
-    Proc.Parameters.Add(GetSystemPromptText);
-    // Extra user-specified CLI args (space-separated)
-    if Assigned(McpSettings) and (Trim(McpSettings.ExtraClaudeArgs) <> '') then
-    begin
-      ExtraArgs := TStringList.Create;
-      try
-        ExtraArgs.Delimiter     := ' ';
-        ExtraArgs.DelimitedText := McpSettings.ExtraClaudeArgs;
-        for I := 0 to ExtraArgs.Count - 1 do
-          if Trim(ExtraArgs[I]) <> '' then
-            Proc.Parameters.Add(ExtraArgs[I]);
-      finally
-        ExtraArgs.Free;
-      end;
-    end;
-    Proc.Options        := [poNewConsole];
-    Proc.InheritHandles := False; // prevent MCP listening socket inheritance
-    if WorkDir <> '' then
-      Proc.CurrentDirectory := WorkDir;
-    try
-      Proc.Execute;
-      DebugLn('[MCP Assistant] Launched claude with config: ' + ConfigPath);
-    except
-      on E: Exception do
-        ShowMessage('Could not launch claude: ' + E.Message +
-          LineEnding + 'Make sure "claude" is in your PATH.');
-    end;
-  finally
-    Proc.Free;
-  end;
-end;
-
-{ Called from the menu: lets user pick a working directory override for claude. }
-procedure SetWorkingDirectory(Sender: TObject);
-var
-  Dir: string;
-begin
+  Req.ClaudeExe       := '';
+  Req.ExtraArgs       := '';
+  Req.TerminalCommand := '';
   if Assigned(McpSettings) then
-    Dir := McpSettings.WorkingDirectory
-  else
-    Dir := '';
-  if SelectDirectory('Select default working directory for Claude', '', Dir) then
   begin
-    McpSettings.WorkingDirectory := Dir;
-    McpSettings.SaveSettings;
+    Req.ClaudeExe       := McpSettings.ClaudePath;
+    Req.ExtraArgs       := McpSettings.ExtraClaudeArgs;
+    Req.TerminalCommand := McpSettings.TerminalCommand;
   end;
+  Req.WorkDir       := WorkDir;
+  Req.McpConfigPath := ConfigPath;
+  Req.SystemPrompt  := GetSystemPromptText;
+  Err := McpLaunchClaude(Req);
+  if Err = '' then
+    DebugLn('[MCP Assistant] Launched claude with config: ' + ConfigPath)
+  else
+    ShowMessage(Err + LineEnding +
+      'Claude Code and terminal settings: Tools > Options > MCP Assistant.');
 end;
 
-{ Called from the menu: lets user set extra CLI args appended to the claude launch. }
-procedure SetExtraCliOptions(Sender: TObject);
-var
-  Args: string;
+{ Called from the menu: the options dialog with only our pages.  The filter
+  must name the group: without one the IDE filters by the frame's
+  SupportedOptionsClass, which is nil here, and the dialog came up empty. }
+procedure OpenMcpOptions(Sender: TObject);
 begin
-  if Assigned(McpSettings) then
-    Args := McpSettings.ExtraClaudeArgs
-  else
-    Args := '';
-  if InputQuery('Extra Claude CLI Options',
-    'Additional arguments passed to claude (space-separated):' + LineEnding +
-    'Example: --verbose --model claude-opus-5-5',
-    Args) then
-  begin
-    McpSettings.ExtraClaudeArgs := Trim(Args);
-    McpSettings.SaveSettings;
-  end;
+  LazarusIDE.DoOpenIDEOptions(TMcpOptionsFrame, 'MCP Assistant Options',
+    [TMcpOptionsGroup], []);
 end;
-
-var
-  AllowInstallCmd : TIDEMenuCommand = nil;
 
 { Called from the menu: toggles whether assistants may install packages that
   are not installed yet (each install is still confirmed; ADR-013). }
@@ -195,8 +146,7 @@ begin
   if not Assigned(McpSettings) then Exit;
   McpSettings.AllowPackageInstall := not McpSettings.AllowPackageInstall;
   McpSettings.SaveSettings;
-  if Assigned(AllowInstallCmd) then
-    AllowInstallCmd.Checked := McpSettings.AllowPackageInstall;
+  McpSyncAllowInstallMenu;
 end;
 
 { ── Form ─────────────────────────────────────────────────────────────────── }
@@ -279,16 +229,14 @@ begin
       nil, @LaunchMcpAssistant);
     RegisterIDEMenuSection(McpMenu, 'McpSep1');
     RegisterIDEMenuCommand(
-      McpMenu, 'SetWorkDir', 'Set Working Directory...',
-      nil, @SetWorkingDirectory);
-    RegisterIDEMenuCommand(
-      McpMenu, 'SetExtraArgs', 'Extra CLI Options...',
-      nil, @SetExtraCliOptions);
-    AllowInstallCmd := RegisterIDEMenuCommand(
+      McpMenu, 'McpOptions', 'Options...',
+      nil, @OpenMcpOptions);
+    McpAllowInstallCmd := RegisterIDEMenuCommand(
       McpMenu, 'AllowPackageInstall', 'Allow Assistants to Install Packages',
       nil, @ToggleAllowPackageInstall);
-    AllowInstallCmd.ShowAlwaysCheckable := True;
-    AllowInstallCmd.Checked := McpSettings.AllowPackageInstall;
+    McpAllowInstallCmd.ShowAlwaysCheckable := True;
+    McpSyncAllowInstallMenu;
+    RegisterMcpOptionsPage;
     RegisterIDEMenuSection(McpMenu, 'McpSep2');
     RegisterIDEMenuCommand(
       McpMenu, 'CopyMcpConfig', 'Copy Server Config to Clipboard',

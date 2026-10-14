@@ -27,7 +27,8 @@ requires the two steps below. Both `package_install` and `ide_rebuild` with
 
 1. **An opt-in setting, off by default.** Tools → MCP Assistant →
    *Allow Assistants to Install Packages* (a checkable menu item, stored as
-   `Security/AllowPackageInstall` in `mcpassistantoptions.xml`). While it is off,
+   `Security/AllowPackageInstall` in `mcpassistantoptions.xml`). The same
+   checkbox is on the Tools → Options → MCP Assistant page. While it is off,
    the tool refuses at once. The refusal says only the user can change the setting
    and tells the assistant not to change it itself.
 2. **A confirmation in the IDE for each install.** A dialog of its own class,

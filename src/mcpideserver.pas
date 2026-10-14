@@ -75,7 +75,7 @@ implementation
 
 uses
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
-  LazFileUtils, FileUtil, Sockets, ssockets, fphttpclient,
+  LazFileUtils, Sockets, ssockets, fphttpclient,
 
   StrUtils,
   IDEExternToolIntf, IDEMsgIntf,
@@ -967,7 +967,7 @@ begin
   Proc := TProcess.Create(nil);
   SL   := TStringList.Create;
   try
-    Proc.Executable      := FindDefaultExecutablePath('git');
+    Proc.Executable      := McpGitExecutable;
     if Proc.Executable = '' then begin GMcpGitHash := Result; Exit; end;
     Proc.Parameters.Add('rev-parse');
     Proc.Parameters.Add('--short');

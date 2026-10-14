@@ -66,7 +66,9 @@ before the IDE exits:
 
 `poll_command` is a ready-to-run shell command invoking `instantfpc.exe` with
 `wait_for_restart.pas`.  That script polls the MCP `/ping` endpoint until it
-responds, then exits with the port number on stdout.  Claude runs it via the
+responds, then exits with the port number on stdout.  The command passes the
+path of `mcpassistantoptions.xml` (where the script reads port and token), so
+it also works when Lazarus runs with a non-default primary config path (`--pcp`).  Claude runs it via the
 Bash/PowerShell tool; success means the new IDE is up and tool calls can resume.
 
 `lpk_path` is optional on `rebuild_ide`.  Omitting it rebuilds Lazarus with its

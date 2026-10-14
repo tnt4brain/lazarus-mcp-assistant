@@ -3,9 +3,9 @@
 An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 98 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
-> the plugin uses only LCL/IDE interfaces (no Win32 API), but *Launch MCP
-> Assistant* opens Claude Code in a console, which only works on Windows, and the
-> Unix code paths have never been compiled.
+> the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
+> for launching Claude Code in a terminal, but that code has never been compiled
+> or run on those systems.
 
 ---
 
@@ -155,7 +155,8 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 
 Installing a package that is not installed yet — via `package_install` or
 `ide_rebuild` with `lpk_path` — is off by default. Turn it on with
-**Tools → MCP Assistant → Allow Assistants to Install Packages**; each install is
+**Tools → MCP Assistant → Allow Assistants to Install Packages** (or the same
+checkbox in **Tools → Options → MCP Assistant**); each install is
 then shown to you in the IDE (package, author, license, dependencies) and
 happens only if you click *Install* (no answer in 180 s means no). Rebuilding
 packages that are already installed never asks. See [ADR-013](docs/adr/0013-user-consent-before-new-code.md).
@@ -219,13 +220,30 @@ Package dependencies — all bundled with Lazarus: `SynEdit`, `IDEIntf`, `FCL`, 
 
 ## Usage
 
-1. In the IDE: **Tools → Secondary Tools → Launch MCP Assistant**.
-   - This starts the HTTP server on a random local port and opens Claude Code in a separate console window.
+1. In the IDE: **Tools → MCP Assistant → Launch MCP Assistant**.
+   - This starts the HTTP server on a random local port and opens Claude Code in a terminal window.
+   - Windows opens a new console. Linux opens the first terminal it finds: `x-terminal-emulator`, `gnome-terminal`, `konsole`, `xfce4-terminal` or `xterm`. macOS opens Terminal.app.
    - The MCP config file is written to a stable path in your system temp directory and reused on subsequent launches.
 
 2. Claude Code starts pre-configured with the server URL and bearer token. No manual `--mcp-config` flag needed for subsequent sessions — the config path is persisted in `mcpassistantoptions.xml`.
 
 3. Tools are available as `mcp__lazarus-ide__<tool_name>` in Claude Code.
+
+### Options
+
+**Tools → Options → MCP Assistant** (also **Tools → MCP Assistant → Options...**):
+
+| Setting | Empty means |
+|---|---|
+| Claude Code executable | `claude` on `PATH` |
+| Working directory | The open project's directory |
+| Extra command-line options | None |
+| Terminal command (Linux/macOS), e.g. `kitty -e` | Detect a terminal |
+| git executable | `git` on `PATH` |
+| Allow assistants to install packages | Off; see [ADR-013](docs/adr/0013-user-consent-before-new-code.md) |
+
+Settings are stored in `mcpassistantoptions.xml` in the IDE's primary config
+directory, together with the server's token and port.
 
 ---
 
@@ -242,7 +260,7 @@ This plugin was built using itself. The development loop:
 
 **Why this works across a restart:** the bearer token is generated once and stored in `mcpassistantoptions.xml`; subsequent starts reuse it. The new IDE writes the same token back to the same config file at the same path. The port stays stable because `TProcess.InheritHandles := False` prevents Claude Code from holding a duplicate of the listening socket across the rebuild.
 
-**Boot-loop escape hatch:** if a bad build causes the IDE to crash on startup, open a terminal and run:
+**Boot-loop escape hatch (Windows):** if a bad build causes the IDE to crash on startup, open a terminal and run:
 ```
 rename lazarus.old.exe lazarus.exe
 ```
@@ -280,7 +298,7 @@ mcpserver_tests.exe
 | `TTestProtocol` | 10 | MCP server reachable |
 | `TTestAuth` | 7 | MCP server reachable |
 
-The runner detects the running server by reading `%LOCALAPPDATA%\lazarus\mcpassistantoptions.xml` and pinging it. If the server is not up, `TTestProtocol` and `TTestAuth` are skipped and only the utility tests run.
+The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, `TTestProtocol` and `TTestAuth` are skipped and only the utility tests run.
 
 Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 

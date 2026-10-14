@@ -20,7 +20,7 @@ uses
   Controls, Forms,
   fpjson,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
-  McpToolContext, McpIdeListeners, McpDebugGuard, McpConsent;
+  McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -186,9 +186,7 @@ type
   TBuildSyncHelper = class
   public
     LpkPath    : string;
-    PollExe    : string;
-    PasFile    : string;
-    FpcDir     : string;
+    PollCmd    : string;
     StopServer : TMcpStopServerProc;
     ConsentOk  : Boolean;
     ConsentMsg : string;
@@ -226,24 +224,8 @@ begin
 end;
 
 procedure TBuildSyncHelper.ReadPollPaths;
-var
-  IDEPkg: TIDEPackage;
 begin
-  FpcDir  := ExtractFilePath(LazarusIDE.GetFPCompilerFilename);
-  PollExe := FpcDir + 'instantfpc' + GetExeExt;
-  FpcDir  := ExcludeTrailingPathDelimiter(FpcDir);
-  if LpkPath <> '' then
-    PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
-                 ExtractFilePath(LpkPath))) + 'wait_for_restart.pas'
-  else
-  begin
-    IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
-    if Assigned(IDEPkg) then
-      PasFile := ExtractFilePath(ExcludeTrailingPathDelimiter(
-                   ExtractFilePath(IDEPkg.Filename))) + 'wait_for_restart.pas'
-    else
-      PasFile := '';
-  end;
+  PollCmd := McpPollCommand(LpkPath);
 end;
 
 procedure TBuildSyncHelper.DoStopDebugger;
@@ -365,18 +347,8 @@ begin
     Obj.Add('status',  'rebuilding');
     Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
                        'command in poll_command until it succeeds.');
-    if GBuildHelper.PasFile <> '' then
-    begin
-      {$IFDEF WINDOWS}
-      Obj.Add('poll_command',
-        'cmd /c "SET PATH=' + GBuildHelper.FpcDir +
-        ';%PATH% && "' + GBuildHelper.PollExe + '" "' + GBuildHelper.PasFile + '""');
-      {$ELSE}
-      Obj.Add('poll_command',
-        'sh -c ''PATH="' + GBuildHelper.FpcDir +
-        ':$PATH" "' + GBuildHelper.PollExe + '" "' + GBuildHelper.PasFile + '"''');
-      {$ENDIF}
-    end;
+    if GBuildHelper.PollCmd <> '' then
+      Obj.Add('poll_command', GBuildHelper.PollCmd);
     Ctx.Result          := Obj.AsJSON;
     Ctx.ConnectionClose := True;
   finally
