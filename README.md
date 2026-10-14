@@ -100,7 +100,10 @@ Run and step tools block until the program pauses or `timeout_s` elapses.
 Sessions driven through these tools never show IDE modals: an exception pauses
 the program and is returned as `reason: "exception"` with class, message, file
 and line; "Execution stopped" is suppressed; debugger error messages are
-returned as `debugger_message`. Sessions you start yourself (F9) behave as usual.
+returned as `debugger_message`. Sessions you start yourself (F9) behave as usual. If such a
+session stops in the IDE's exception dialog, an assistant can take it over:
+`debug_get_state` reports `waiting_for`, and `debug_pause` (or any other
+debugger-driving tool) answers the dialog with *Break*, as you would.
 
 With several clients connected, the first one that drives the debugger owns the
 session. Until it ends, other clients are refused the debugger-driving tools and

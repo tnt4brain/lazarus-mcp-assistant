@@ -23,7 +23,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils,
+  Classes, SysUtils, Forms, Controls, LazLogger,
   LazIDEIntf, LazFileUtils, SrcEditorIntf,
   BaseDebugManager,
   LazDebuggerIntfBaseTypes,  { TDBGState }
@@ -38,6 +38,7 @@ uses
   fpjson,
   McpDebugGuard,             { GMcpLastExc, McpMarkDebugDriven }
   McpDebugLease,             { McpLeaseJSON }
+  McpIdeListeners,           { GMcpExceptionDialogHwnd }
   McpToolContext;
 
 
@@ -106,10 +107,49 @@ type
     procedure ReadWatchNames;  { expressions only — not paused or timed out }
     procedure InitThreads;
     procedure ReadThreads;
+    procedure BreakAtExceptionDialog;
+    procedure StopLater(Data: PtrInt);
   end;
 
 var
   GSyncHelper : TDbgSyncHelper = nil;
+
+{ The IDE's "Debugger Exception Notification" dialog, if it is showing; it
+  appears only in sessions the user drives (McpDebugGuard prevents it in
+  MCP-driven ones).  Main thread. }
+function FindExceptionDialog: TCustomForm;
+var
+  I : Integer;
+begin
+  for I := 0 to Screen.CustomFormCount - 1 do
+    if Screen.CustomForms[I].ClassNameIs('TIDEExceptionDlg') and
+       Screen.CustomForms[I].Visible and
+       (fsModal in Screen.CustomForms[I].FormState) then
+      Exit(Screen.CustomForms[I]);
+  Result := nil;
+end;
+
+{ Take over a session the user started that is waiting in the exception
+  dialog: answer it with Break (mrOK; Continue is mrCancel), so the program
+  pauses at the exception, and mark the session as MCP-driven.  Runs inside
+  the dialog's modal loop; the dialog closes once this returns. }
+procedure TDbgSyncHelper.BreakAtExceptionDialog;
+var
+  Dlg : TCustomForm;
+begin
+  Dlg := FindExceptionDialog;
+  if Dlg = nil then Exit;
+  McpMarkDebugDriven;
+  DebugLn(['[MCP Assistant] took over the debug session: answered ',
+           Dlg.Caption, ' with Break']);
+  Dlg.ModalResult := mrOK;
+end;
+
+procedure TDbgSyncHelper.StopLater(Data: PtrInt);
+begin
+  if Assigned(DebugBoss) then
+    DebugBoss.DoStopProject;
+end;
 
 { Render a watch/local result the way the IDE's hints and Watches window do.
   The plain Value string is empty for structured values (objects, records). }
@@ -715,11 +755,37 @@ end;
 var
   GCmdExcSeq : Integer = -1;  { exception sequence when the last command was issued }
 
-procedure DoIssueCmd(ACmd: Integer);
+{ A session the user started may be waiting in the exception dialog.  Answer
+  it with Break and wait (up to 5 s) until the program is paused at the
+  exception.  Returns True if it took over. }
+function TakeOverFromExceptionDialog: Boolean;
+var
+  Waited : Integer;
 begin
+  Result := GMcpExceptionDialogHwnd <> 0;
+  if not Result then Exit;
+  TThread.Synchronize(nil, @GSyncHelper.BreakAtExceptionDialog);
+  Waited := 0;
+  repeat
+    Sleep(100);
+    Inc(Waited, 100);
+    TThread.Synchronize(nil, @GSyncHelper.ReadState);
+  until ((GMcpExceptionDialogHwnd = 0) and (GSyncHelper.OutState <> dsRun)) or
+        (Waited >= 5000);
+end;
+
+procedure DoIssueCmd(ACmd: Integer);
+var
+  TookOver : Boolean;
+begin
+  TookOver := TakeOverFromExceptionDialog;
   TThread.Synchronize(nil, @GSyncHelper.ReadState);
   GCmdExcSeq              := GSyncHelper.OutExcSeq;
+  if TookOver and GSyncHelper.OutExcValid then
+    Dec(GCmdExcSeq);  { report the exception we are now paused at }
   GSyncHelper.OutFeedback := '';  { report only messages caused by this command }
+  { debug_pause: Break already paused the program }
+  if TookOver and (ACmd = 1) and (GSyncHelper.OutState = dsPause) then Exit;
   GSyncHelper.InCmd := ACmd;
   TThread.Synchronize(nil, @GSyncHelper.IssueCmd);
 end;
@@ -819,6 +885,11 @@ begin
       Obj.Add('file',   GSyncHelper.OutFileName);
       Obj.Add('line',   GSyncHelper.OutLine);
       Obj.Add('reason', '');
+      if FindExceptionDialog <> nil then
+        Obj.Add('waiting_for', 'The IDE shows the exception dialog of a session ' +
+          'the user started; the program is stopped at the exception. ' +
+          'debug_get_exception shows it; debug_pause breaks there and takes ' +
+          'the session over (as clicking Break would).');
       Lease := McpLeaseJSON;
       if Assigned(Lease) then
         Obj.Add('lease', Lease);
@@ -900,7 +971,14 @@ begin
     if Assigned(DebugBoss) then
     begin
       McpMarkDebugDriven;        { no "Execution stopped" dialog }
-      DebugBoss.DoStopProject;   { non-blocking, already on main thread }
+      if FindExceptionDialog <> nil then
+      begin
+        { inside the exception dialog: Break first, stop once it has closed }
+        GSyncHelper.BreakAtExceptionDialog;
+        Application.QueueAsyncCall(@GSyncHelper.StopLater, 0);
+      end
+      else
+        DebugBoss.DoStopProject;   { non-blocking, already on main thread }
     end;
     Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
   end

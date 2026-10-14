@@ -165,9 +165,21 @@ All of this is enforced in one place, `McpGateEnter`/`McpGateLeave` around every
   sends `Mcp-Session-Id` back. Two `ide_ping` calls reported the same session id,
   not `anonymous`. (`ide_ping` returns the caller's identity as `client` for this
   kind of check.)
-- **Not verified:**
-  - the line in the Messages window on expiry
-  - a session the user starts with F9 and an assistant then claims
+- **Verified: taking over a session the user started** (4b6a10e). The user
+  pressed F9 and the program stopped in the IDE's exception dialog. That dialog
+  appears only in sessions the user drives (ADR-011).
+  - `debug_get_state` reported `waiting_for`.
+  - `debug_pause` answered the dialog with Break, as the user would, and
+    returned the pause at the exception (`reason: "exception"`).
+  - The Claude Code session then held the lease, and the call stack and locals
+    could be read.
+  - Every debugger-driving tool takes over this way: `debug_run` and the steps
+    continue after the Break, and `debug_stop` stops once the dialog has closed.
+- **Verified: lease expiry with Claude Code** (2026-10-14). After the takeover
+  above, the Claude Code session made no calls for 300 s. The session was then
+  stopped (no dialog, debuggee gone), and the Messages window showed:
+  `MCP: debug session lease of client (session d97f7ac2) expired after 300 s
+  without calls; session stopped.`
 - All clients without a session id or cookie count as one. Two such scripts can
   step on each other, exactly as before this ADR.
 - The debugger lock trades parallelism for correctness. A read-only debugger call

@@ -212,7 +212,10 @@ begin
     F := Screen.Forms[I];
     if F.ClassNameIs('TIDEExceptionDlg') and F.Visible then
     begin
-      F.Close;
+      { Break (mrOK): Close would mean Continue, and the program would run
+        past the exception (possibly into its own error box) before the
+        debugger is stopped }
+      F.ModalResult := mrOK;
       Break;
     end;
   end;
