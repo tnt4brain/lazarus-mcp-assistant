@@ -27,6 +27,7 @@ uses
   Classes, SysUtils, StrUtils,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
+  BasicCodeTools,
   Controls,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpLineDiff;
@@ -105,11 +106,13 @@ const
 
   SCHEMA_RENAME_IDENTIFIER =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the file containing the declaration"},' +
-    '"line":{"type":"integer","description":"Line of the declaration (1-based)"},' +
-    '"col":{"type":"integer","description":"Column of the declaration (1-based)"},' +
-    '"new_name":{"type":"string","description":"New identifier name"}},' +
-    '"required":["file","line","col","new_name"]}';
+    '"file":{"type":"string","description":"Absolute path to a file with the declaration or a reference"},' +
+    '"line":{"type":"integer","description":"Line of the identifier (1-based)"},' +
+    '"col":{"type":"integer","description":"Column of the identifier (1-based)"},' +
+    '"new_name":{"type":"string","description":"New identifier name (not needed with dry_run)"},' +
+    '"dry_run":{"type":"boolean","description":"List the references with their line text and change nothing (default false)"},' +
+    '"auto_save":{"type":"boolean","description":"Save the changed files after renaming (default false: they stay unsaved, Ctrl+Z works)"}},' +
+    '"required":["file","line","col"]}';
 
   SCHEMA_GOTO_DECLARATION =
     '{"type":"object","properties":{' +
@@ -458,6 +461,202 @@ begin
   end;
 end;
 
+{ code_rename_identifier: the IDE's Rename Identifier without its dialogs.
+  As in DoFindRenameIdentifier (findrenameidentifier.pas): (line, col) may be
+  any reference, the main declaration is looked up first; CodeTools changes
+  the buffers with OpenEditorsOnCodeToolChange on, so the IDE opens every
+  changed file in an editor and mirrors the change there, unsaved: Ctrl+Z
+  undoes it per file.  A unit name is refused, as the IDE does (Save As
+  renames the file too).  dry_run lists the references and changes nothing.
+  Main thread. }
+procedure DoRenameIdentifier(var Ctx: TMcpToolCall);
+var
+  FilePath, NewName, Ident : string;
+  Line, Col, I             : Integer;
+  DeclX, DeclY, DeclTop    : Integer;
+  DryRun, AutoSave, OldOpen: Boolean;
+  CodeBuf, DeclCode, Buf   : TCodeBuffer;
+  DeclPt                   : TPoint;
+  TmpCtx                   : TMcpToolCall;
+  TmpHandled               : Boolean;
+  FileListJ                : TJSONArray;
+  FileNames, OpenBefore    : TStringList;
+  Bufs                     : TFPList;
+  OldSources               : TStringList;
+  RefTree                  : TAVLTree;
+  RefNode                  : TAVLTreeNode;
+  RefPos                   : PCodeXYPosition;
+  Obj, RefObj              : TJSONObject;
+  Refs, Changed, Opened    : TJSONArray;
+begin
+  if not Assigned(Ctx.Params) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+  end;
+  FilePath := Ctx.Params.Get('file', '');
+  Line     := Ctx.Params.Get('line', 0);
+  Col      := Ctx.Params.Get('col', 0);
+  NewName  := Ctx.Params.Get('new_name', '');
+  DryRun   := Ctx.Params.Get('dry_run', False);
+  AutoSave := Ctx.Params.Get('auto_save', False);
+  if (FilePath = '') or (Line < 1) or (Col < 1) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'file, line and col (1-based) required'; Exit;
+  end;
+  if not DryRun and not IsValidIdent(NewName, True, True) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'new_name must be a Pascal identifier, got "' + NewName + '"';
+    Exit;
+  end;
+  if not LazarusIDE.BeginCodeTools then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+    Exit;
+  end;
+  CodeBuf := McpLoadCode(FilePath, False);
+  if not Assigned(CodeBuf) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+  end;
+  if not CodeToolBoss.FindMainDeclaration(CodeBuf, Col, Line,
+           DeclCode, DeclX, DeclY, DeclTop) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := Format('No declaration found at %d:%d: %s',
+                         [Line, Col, CodeToolBoss.ErrorMessage]);
+    Exit;
+  end;
+  DeclPt := Point(DeclX, DeclY);
+  if not CodeToolBoss.GetIdentifierAt(DeclCode, DeclX, DeclY, Ident) or
+     (Ident = '') then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := Format('No identifier at %d:%d', [Line, Col]);
+    Exit;
+  end;
+  if CompareDottedIdentifiers(PChar(Ident),
+       PChar(ExtractFileNameOnly(DeclCode.Filename))) = 0 then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := '"' + Ident + '" is a unit name; renaming it means renaming ' +
+      'the file too (File > Save As in the IDE)';
+    Exit;
+  end;
+  if not DryRun and (Ident = NewName) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'The identifier is already named ' + NewName; Exit;
+  end;
+
+  TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+  TmpCtx.StopServer := nil;
+  McpDispatch('project_list_files', TmpCtx, TmpHandled);
+  if TmpCtx.Error then
+  begin
+    Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+  end;
+  FileListJ  := TJSONArray(GetJSON(TmpCtx.Result));
+  FileNames  := TStringList.Create;
+  OpenBefore := TStringList.Create;
+  Bufs       := TFPList.Create;
+  OldSources := TStringList.Create;
+  RefTree    := nil;
+  Obj        := TJSONObject.Create;
+  try
+    for I := 0 to FileListJ.Count - 1 do
+      FileNames.Add(FileListJ.Strings[I]);
+    { as the IDE does: the declaring file and the one asked about, either
+      of them may be outside the project }
+    if FileNames.IndexOf(DeclCode.Filename) < 0 then
+      FileNames.Add(DeclCode.Filename);
+    if FileNames.IndexOf(CodeBuf.Filename) < 0 then
+      FileNames.Add(CodeBuf.Filename);
+    if not CodeToolBoss.FindReferencesInFiles(FileNames, DeclCode,
+             DeclPt, False, RefTree) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'FindReferences failed: ' + CodeToolBoss.ErrorMessage;
+      Exit;
+    end;
+    { positions and text before the rename; the buffers each one is in }
+    Refs := TJSONArray.Create;
+    Obj.Add('identifier', Ident);
+    Obj.Add('declaration', DeclCode.Filename + ':' + IntToStr(DeclY));
+    Obj.Add('references', Refs);
+    if Assigned(RefTree) then
+    begin
+      RefNode := RefTree.FindLowest;
+      while Assigned(RefNode) do
+      begin
+        RefPos := PCodeXYPosition(RefNode.Data);
+        RefObj := TJSONObject.Create;
+        RefObj.Add('file', RefPos^.Code.Filename);
+        RefObj.Add('line', RefPos^.Y);
+        RefObj.Add('col',  RefPos^.X);
+        RefObj.Add('line_text', RefPos^.Code.GetLine(RefPos^.Y - 1, False));
+        Refs.Add(RefObj);
+        if Bufs.IndexOf(RefPos^.Code) < 0 then
+        begin
+          Bufs.Add(RefPos^.Code);
+          OldSources.Add(RefPos^.Code.Source);
+        end;
+        RefNode := RefNode.Successor;
+      end;
+    end;
+    if DryRun or (Refs.Count = 0) then
+    begin
+      Ctx.Result := Obj.AsJSON;
+      Exit;
+    end;
+
+    for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+      OpenBefore.Add(SourceEditorManagerIntf.SourceEditors[I].FileName);
+    OldOpen := LazarusIDE.OpenEditorsOnCodeToolChange;
+    LazarusIDE.OpenEditorsOnCodeToolChange := True;
+    try
+      if not CodeToolBoss.RenameIdentifier(RefTree, Ident, NewName,
+               DeclCode, @DeclPt, False) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'RenameIdentifier failed: ' + CodeToolBoss.ErrorMessage;
+        Exit;
+      end;
+    finally
+      LazarusIDE.OpenEditorsOnCodeToolChange := OldOpen;
+      { the editors have the changes: TMainIDE.ApplyCodeToolChanges }
+      CodeToolBoss.SourceCache.ClearAllSourceLogEntries;
+    end;
+
+    Changed := TJSONArray.Create;
+    Opened  := TJSONArray.Create;
+    Obj.Add('renamed_to', NewName);
+    Obj.Add('files_changed', Changed);
+    Obj.Add('files_opened', Opened);
+    for I := 0 to Bufs.Count - 1 do
+    begin
+      Buf := TCodeBuffer(Bufs[I]);
+      if Buf.Source = OldSources[I] then Continue;
+      Changed.Add(Buf.Filename);
+      if OpenBefore.IndexOf(Buf.Filename) < 0 then
+        Opened.Add(Buf.Filename);
+      if AutoSave then
+        LazarusIDE.DoSaveEditorFile(Buf.Filename, []);
+    end;
+    Obj.Add('saved', AutoSave);
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+    OldSources.Free;
+    Bufs.Free;
+    OpenBefore.Free;
+    FileNames.Free;
+    FileListJ.Free;
+    if Assigned(RefTree) then
+      CodeToolBoss.FreeTreeOfPCodeXYPosition(RefTree);
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DoDispatchCodeTools(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -754,107 +953,7 @@ begin
   else if Name = 'code_rename_identifier' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file',     '');
-    NewX     := Ctx.Params.Get('col',       0);
-    NewY     := Ctx.Params.Get('line',      0);
-    NewName  := Ctx.Params.Get('new_name', '');
-    if (FilePath = '') or (NewName = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file and new_name required'; Exit;
-    end;
-    for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
-    begin
-      Ed := SourceEditorManagerIntf.SourceEditors[I];
-      if Ed.Modified then
-        LazarusIDE.DoSaveEditorFile(Ed, []);
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    Snippet := CodeBuf.GetLine(NewY - 1, False);
-    I := NewX;
-    while (I > 1) and (Snippet[I - 1] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
-      Dec(I);
-    Symbol := '';
-    while (I <= Length(Snippet)) and (Snippet[I] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
-    begin
-      Symbol := Symbol + Snippet[I];
-      Inc(I);
-    end;
-    if Symbol = '' then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'No identifier at line ' + IntToStr(NewY) + ' col ' + IntToStr(NewX);
-      Exit;
-    end;
-    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.StopServer := nil;
-    McpDispatch('project_list_files', TmpCtx, TmpHandled);
-    if TmpCtx.Error then
-    begin
-      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
-    end;
-    FileListJ := TJSONArray(GetJSON(TmpCtx.Result));
-    FileNames := TStringList.Create;
-    RefTree   := nil;
-    try
-      for J := 0 to FileListJ.Count - 1 do
-        FileNames.Add(FileListJ.Strings[J]);
-      DeclPt := Point(NewX, NewY);
-      if not CodeToolBoss.FindReferencesInFiles(FileNames, CodeBuf,
-             DeclPt, False, RefTree) then
-      begin
-        Ctx.Error  := True;
-        Ctx.Result := 'FindReferences failed: ' + CodeToolBoss.ErrorMessage;
-        Exit;
-      end;
-      if not CodeToolBoss.RenameIdentifier(RefTree, Symbol, NewName,
-             CodeBuf, @DeclPt, False) then
-      begin
-        Ctx.Error  := True;
-        Ctx.Result := 'RenameIdentifier failed: ' + CodeToolBoss.ErrorMessage;
-        Exit;
-      end;
-      if not CodeToolBoss.ApplyChanges then
-      begin
-        Ctx.Error := True; Ctx.Result := 'ApplyChanges failed'; Exit;
-      end;
-      RefArr := TJSONArray.Create;
-      try
-        for J := 0 to FileNames.Count - 1 do
-        begin
-          NewCode := CodeToolBoss.SourceCache.FindFile(FileNames[J]);
-          if Assigned(NewCode) and NewCode.Modified then
-          begin
-            NewCode.Save;
-            LazarusIDE.DoRevertEditorFile(NewCode.Filename);
-            RefArr.Add(NewCode.Filename);
-          end;
-        end;
-        Obj := TJSONObject.Create;
-        try
-          Obj.Add('renamed_to',    NewName);
-          Obj.Add('files_changed', RefArr.Count);
-          Obj.Add('files',         RefArr.Clone as TJSONArray);
-          Ctx.Result := Obj.AsJSON;
-        finally
-          Obj.Free;
-        end;
-      finally
-        RefArr.Free;
-      end;
-    finally
-      FileNames.Free;
-      FileListJ.Free;
-      if Assigned(RefTree) then
-        CodeToolBoss.FreeTreeOfPCodeXYPosition(RefTree);
-    end;
+    DoRenameIdentifier(Ctx);
   end
 
   else if Name = 'code_goto_declaration' then
@@ -1446,10 +1545,14 @@ begin
     'across all project files.',
     SCHEMA_FIND_ALL_REFERENCES, MCP_ANN_RO));
   Tools.Add(MakeTool('code_rename_identifier',
-    'Rename the identifier declared at (file, line, col) in all project files. ' +
-    'Writes straight to disk; Ctrl+Z can''t undo it (use git), so confirm the ' +
-    'new name with the user first.',
-    SCHEMA_RENAME_IDENTIFIER, MCP_ANN_DEST));
+    'Rename the identifier at (file, line, col), its declaration or any ' +
+    'reference, in all project files, as the IDE''s Rename Identifier does. ' +
+    'Changed files are opened in editors and left unsaved, so Ctrl+Z undoes ' +
+    'the rename per file; auto_save=true saves them. dry_run=true lists the ' +
+    'references (file, line, col, line_text) without changing anything. ' +
+    'Unit names are refused (rename the file instead). .lfm files are not ' +
+    'changed.',
+    SCHEMA_RENAME_IDENTIFIER, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_goto_declaration',
     'Find where an identifier is declared and jump the editor cursor there. ' +
     'Opens the declaration file if needed.',

@@ -32,8 +32,7 @@ with a human-readable `title` ("Debugger: get call stack") and annotations:
   or opening a tab counts as read-only.
 - `destructiveHint` only for changes that neither Ctrl+Z nor `form_undo` can
   take back: closing or reverting an editor with unsaved changes,
-  `git_checkout`, `git_reset`, `code_rename_identifier`, rebuilds and
-  installs.
+  `git_checkout`, `git_reset`, rebuilds and installs.
 - `idempotentHint` where repeating a call with the same arguments changes
   nothing more.
 
@@ -72,7 +71,7 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `code_goto_declaration` | Jump the editor cursor to a declaration |
 | `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
 | `code_find_references` | Every reference to an identifier across the project |
-| `code_rename_identifier` | Rename across all project files. **Writes to disk, not undoable with Ctrl+Z — use git** |
+| `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
 | `code_add_uses` | Add a unit to the interface or implementation uses clause |
 | `code_insert_in_procedure` | Insert text right after a routine's `begin` |
 | `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end` |
@@ -82,7 +81,7 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 
 Changing `code_*` tools edit the editor buffer, as the IDE's own commands do:
 Ctrl+Z undoes them, and nothing is written to disk until `editor_save` (or
-`auto_save: true`). `code_rename_identifier` is the exception.
+`auto_save: true`).
 
 `code_complete` is the IDE's Ctrl+Shift+C without its dialogs. `code_format`
 runs JEDI Code Format, as **Source → JEDI Code Format** does, on `.pas`, `.pp`,
@@ -368,11 +367,12 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
-| `TTestToolSmoke` | 17 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
+| `TTestToolSmoke` | 21 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
 | `TTestFormUndo` | 11 | MCP server reachable: `form_undo`/`form_redo` and what the `form_*` tools record, on a temp copy of the fixture form |
 | `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
 | `TTestCodeFormat` | 7 | MCP server reachable: `code_format` on temp files (whole file, line range, parse errors, include files, trailing lines) |
+| `TTestCodeRename` | 5 | MCP server reachable: `code_rename_identifier` on two temp units (dry run, rename into unsaved editors, unsaved edits, `auto_save`, refusals) |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` of a new package is refused; `ide_rebuild` refuses `lpk_path` |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
@@ -408,8 +408,6 @@ ADR-007 was never assigned; no document is missing.
 
 For v1.0:
 
-- **Undoable rename.** `code_rename_identifier` writes to disk today; a preview
-  of the changes and a rename that Ctrl+Z can undo are next.
 - **macOS builds.** Never compiled or run there yet.
 
 ---

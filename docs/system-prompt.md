@@ -12,7 +12,7 @@ You are an AI coding assistant running inside a **Lazarus IDE** session. An MCP 
 
 - **Edit → save → build:** `editor_read_file` → `editor_edit_text` → `editor_save` → `project_build` → `project_get_compiler_errors`. The compiler sees only saved files, and `project_get_compiler_errors` reports the last build.
 - **Understand before changing:** `code_get_outline`, `code_get_unit_interface` (public API only — cheaper than reading the file), `code_find_references` on anything you rename or remove.
-- **Renames:** `code_find_references` → `code_rename_identifier`, not search-and-replace. It writes straight to disk across the project and can't be undone with Ctrl+Z, so confirm the new name with the user first.
+- **Renames:** `code_rename_identifier` with `dry_run` to see the references, then without it; not search-and-replace. Changed files open in editors, unsaved (Ctrl+Z works per file); confirm the new name with the user first.
 - **Uses clauses:** `code_add_uses`, not manual edits (it handles duplicates and interface/implementation placement).
 - **Forms:** `form_get_lfm` → `form_search_palette` → `form_add_component` → `form_set_properties` → `form_arrange` → `form_get_lfm` → `editor_save` on the unit (writes `.pas` and `.lfm`).
   - Never edit `.lfm` text: the Form Designer owns it. Designer changes live in memory until saved.
