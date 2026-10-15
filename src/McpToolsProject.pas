@@ -186,6 +186,7 @@ var
   DescObj    : TJSONObject;
   Proj       : TLazProject;
   PF         : TLazProjectFile;
+  AlreadyIn  : Boolean;
   IDEPkg     : TIDEPackage;
   Descriptor : TProjectDescriptor;
   FilePath   : string;
@@ -367,13 +368,33 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
     end;
-    PF := Proj.CreateProjectFile(FilePath);
-    Proj.AddFile(PF, False);
-    LazarusIDE.DoSaveProject([]);
+    { The project also lists files only open in an editor.  TProject.AddFile
+      only warns about a file listed already and adds it a second time, so a
+      listed one is marked as part of the project instead, as the IDE's
+      "Add editor file to project" does. }
+    PF := nil;
+    for I := 0 to Proj.FileCount - 1 do
+      if SameFileName(Proj.Files[I].Filename, FilePath) then
+      begin
+        PF := Proj.Files[I]; Break;
+      end;
+    AlreadyIn := Assigned(PF) and PF.IsPartOfProject;
+    if not AlreadyIn then
+    begin
+      if Assigned(PF) then
+        PF.IsPartOfProject := True
+      else
+      begin
+        PF := Proj.CreateProjectFile(FilePath);
+        Proj.AddFile(PF, False);
+      end;
+      LazarusIDE.DoSaveProject([]);
+    end;
     Obj := TJSONObject.Create;
     try
       Obj.Add('file',    FilePath);
       Obj.Add('project', Proj.ProjectInfoFile);
+      if AlreadyIn then Obj.Add('already_in_project', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -400,9 +421,18 @@ begin
         J := I;
         Break;
       end;
-    if J < 0 then
+    { the list also has files only open in an editor }
+    if (J < 0) or not Proj.Files[J].IsPartOfProject then
     begin
       Ctx.Error := True; Ctx.Result := 'File not in project: ' + FilePath; Exit;
+    end;
+    { RemoveUnit frees the file's unit info, which an open editor still uses }
+    if Assigned(SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath)) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := FilePath + ' is open in the editor: save or revert it, close it ' +
+                    'with editor_close, then remove it.';
+      Exit;
     end;
     Proj.RemoveUnit(J);
     LazarusIDE.DoSaveProject([]);
