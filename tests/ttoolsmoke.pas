@@ -26,6 +26,7 @@ type
     procedure TestPathSpellingsNameOneFile;
     procedure TestGitStatus;
     procedure TestGitBlameActiveEditor;
+    procedure TestGitCommitMessage;
     procedure TestEditorReadFileRange;
     procedure TestEditorReplaceRange;
     procedure TestEditorFileDeletedAndCreatedAgain;
@@ -40,7 +41,7 @@ type
 implementation
 
 uses
-  Classes, SysUtils, fpjson, jsonparser;
+  Classes, SysUtils, Process, FileUtil, fpjson, jsonparser;
 
 function TestsDir: string;
 begin
@@ -268,6 +269,46 @@ begin
   finally
     Call('editor_revert', '{"file":' + JsonStr(FixtureUnit) + '}');
     Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
+  end;
+end;
+
+{ git_commit with a message as assistants write them: double quotes, an
+  apostrophe, line breaks, non-ASCII.  As a -m argument the message was cut
+  into words on Windows (each became a pathspec); it goes through stdin now.
+  Works in a throwaway repository in the temp folder. }
+procedure TTestToolSmoke.TestGitCommitMessage;
+const
+  Msg = 'fix: the "file" argument, client''s limit' + #10#10 +
+        'Body line with "quotes" and ünïcödé.';
+var
+  Dir, T, O : string;
+  SL        : TStringList;
+begin
+  Dir := GetTempDir(False) + 'mcpgitcommit';
+  DeleteDirectory(Dir, False);
+  ForceDirectories(Dir);
+  try
+    if not RunCommandInDir(Dir, 'git', ['init', '-q'], O) then
+      Ignore('git not usable here: ' + O);
+    RunCommandInDir(Dir, 'git', ['config', 'user.name', 'MCP Test'], O);
+    RunCommandInDir(Dir, 'git', ['config', 'user.email', 'mcp@test.invalid'], O);
+    SL := TStringList.Create;
+    try
+      { new content each run: git's read-only object files can outlive
+        DeleteDirectory on Windows, and the repository is then reused }
+      SL.Text := IntToStr(GetTickCount64);
+      SL.SaveToFile(Dir + PathDelim + 'a.txt');
+    finally
+      SL.Free;
+    end;
+    T := Call('git_add', '{"paths":["a.txt"],"work_dir":' + JsonStr(Dir) + '}');
+    CheckNoError(Self, 'git_add', T);
+    T := Call('git_commit', '{"message":' + JsonStr(Msg) + ',"work_dir":' + JsonStr(Dir) + '}');
+    CheckNoError(Self, 'git_commit', T);
+    RunCommandInDir(Dir, 'git', ['log', '-1', '--format=%B'], O);
+    CheckEquals(Msg, TrimRight(AdjustLineBreaks(O, tlbsLF)), 'message kept whole');
+  finally
+    DeleteDirectory(Dir, False);
   end;
 end;
 

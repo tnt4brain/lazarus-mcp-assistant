@@ -91,8 +91,11 @@ const
 
 { ── Helpers ──────────────────────────────────────────────────────────────── }
 
+{ AInput, if any, is written to git's standard input (git commit -F -): on
+  Windows TProcess joins the arguments into one command line without escaping
+  double quotes, so free text must not be an argument. }
 function RunGit(const Args: array of string; const WorkDir: string;
-  out Output: string): Boolean;
+  out Output: string; const AInput: string = ''): Boolean;
 var
   GitExe    : string;
   Proc      : TProcess;
@@ -120,6 +123,9 @@ begin
     if WorkDir <> '' then
       Proc.CurrentDirectory := WorkDir;
     Proc.Execute;
+    if AInput <> '' then
+      Proc.Input.Write(AInput[1], Length(AInput));
+    Proc.CloseInput;
     Chunk := '';
     repeat
       SetLength(Chunk, BufSize);
@@ -568,7 +574,7 @@ begin
       Ctx.Result := 'message required';
       Exit;
     end;
-    Ok := RunGit(['commit', '-m', Message], WorkDir, Output);
+    Ok := RunGit(['commit', '-F', '-'], WorkDir, Output, Message);
     Obj := TJSONObject.Create;
     try
       Obj.Add('output',   Output);
