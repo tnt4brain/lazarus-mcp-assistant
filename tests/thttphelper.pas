@@ -55,6 +55,10 @@ function CallToolText(const ToolName, ArgsJSON: string;
 { S as a JSON string literal, quotes included. }
 function JsonStr(const S: string): string;
 
+{ A new MCP session: initialize's Mcp-Session-Id.  The server answers 404 to
+  a session id it didn't hand out, so tests that act as clients start one. }
+function McpNewSession: string;
+
 implementation
 
 uses
@@ -223,6 +227,21 @@ end;
 function JsonStr(const S: string): string;
 begin
   Result := '"' + StringToJSONString(S) + '"';
+end;
+
+function McpNewSession: string;
+var
+  H : TStringList;
+begin
+  H := TStringList.Create;
+  try
+    McpRequest('POST', '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{' +
+      '"protocolVersion":"2025-06-18","capabilities":{},' +
+      '"clientInfo":{"name":"mcpserver_tests","version":"1"}}}', [], H);
+    Result := HeaderValue(H, 'Mcp-Session-Id');
+  finally
+    H.Free;
+  end;
 end;
 
 end.

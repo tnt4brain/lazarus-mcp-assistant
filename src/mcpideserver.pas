@@ -246,6 +246,25 @@ begin
   Allow := True;
 end;
 
+{ The "method" of a JSON-RPC request body, '' if there is none }
+function JsonRpcMethod(const Body: string): string;
+var
+  Data : TJSONData;
+begin
+  Result := '';
+  try
+    Data := GetJSON(Body);
+  except
+    Exit;
+  end;
+  try
+    if Data is TJSONObject then
+      Result := TJSONObject(Data).Get('method', '');
+  finally
+    Data.Free;
+  end;
+end;
+
 procedure TMcpServerThread.HandleRequest(Sender: TObject;
   var ARequest  : TFPHTTPConnectionRequest;
   var AResponse : TFPHTTPConnectionResponse);
@@ -289,6 +308,21 @@ begin
     cookie.  Without either the caller is 'anonymous'; offer it a cookie so
     cookie-aware clients (curl -b/-c) get an identity of their own. }
   ClientId := ARequest.GetCustomHeader('Mcp-Session-Id');
+  { A session id we never handed out, or handed out before the IDE last
+    restarted (ide_rebuild): 404, as the spec says, so the client starts a new
+    session with initialize and fetches tools/list again; a rebuild may have
+    changed the tools.  The cookie identity of simple clients stays as it is. }
+  if (ClientId <> '') and not McpSessionKnown(ClientId) and
+     ((ARequest.Method = 'DELETE') or
+      (JsonRpcMethod(ARequest.Content) <> 'initialize')) then
+  begin
+    AResponse.Code        := 404;
+    AResponse.ContentType := 'application/json';
+    AResponse.Content     :=
+      '{"jsonrpc":"2.0","id":null,"error":{"code":-32001,' +
+      '"message":"Session not found; send initialize to start a new one"}}';
+    Exit;
+  end;
   if ClientId = '' then
     ClientId := CookieValue(ARequest.Cookie, 'mcp_session');
 

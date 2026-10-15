@@ -258,8 +258,10 @@ program started by the IDE cannot keep a connection open.
 
 `initialize` returns an `Mcp-Session-Id` header (and the same id as an
 `mcp_session` cookie); clients send it back to identify themselves, and
-`DELETE /mcp` ends the session. Requests without either share one identity,
-`anonymous`; a client with a cookie jar (`curl -b jar -c jar`) gets its own.
+`DELETE /mcp` ends the session. A session id the server didn't hand out since it
+started (after `ide_rebuild`, say) gets HTTP 404, and the client starts a new session
+with `initialize`. Requests without either share one identity, `anonymous`; a client
+with a cookie jar (`curl -b jar -c jar`) gets its own.
 
 ---
 
@@ -322,7 +324,7 @@ This plugin was built using itself. The development loop:
 3. Claude calls `package_compile` with the `.lpk` path to catch compiler errors before touching the IDE.
 4. Claude calls `ide_rebuild`. The IDE exits and `startlazarus.exe` rebuilds it (~60 s).
 5. Claude runs the `poll_command` from the `ide_rebuild` response, which waits until the new IDE is up.
-6. The new IDE starts with the same bearer token and the same ephemeral port, so Claude Code's next call just works and keeps its session id (verified). Changed tool descriptions reach Claude Code only in a new session; `/mcp reconnect` didn't refresh the ones it had already loaded (seen with tool search on).
+6. The new IDE starts with the same bearer token and the same ephemeral port, so Claude Code's next call just works: its old session id gets a 404, and it starts a new session by itself (verified). Changed tool descriptions still reach Claude Code only in a new conversation: it keeps the ones it loaded earlier, even in the new session and after `/mcp reconnect` (seen with tool search on).
 
 **Why this works across a restart:** the bearer token is generated once and stored in `mcpassistantoptions.xml`; subsequent starts reuse it. The new IDE writes the same token back to the same config file at the same path. The port stays stable because `TProcess.InheritHandles := False` prevents Claude Code from holding a duplicate of the listening socket across the rebuild.
 
@@ -366,7 +368,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestProtocol` | 12 | MCP server reachable: JSON-RPC, `initialize` (version negotiation, instructions) |
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
-| `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
+| `TTestSession` | 8 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp`, 404 for unknown session ids |
 | `TTestToolSmoke` | 22 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
 | `TTestFormUndo` | 11 | MCP server reachable: `form_undo`/`form_redo` and what the `form_*` tools record, on a temp copy of the fixture form |

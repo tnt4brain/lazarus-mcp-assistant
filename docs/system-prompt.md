@@ -31,7 +31,7 @@ You are an AI coding assistant running inside a **Lazarus IDE** session. An MCP 
 
 ## Gotchas
 
-- **`ide_rebuild` and `package_install` restart the IDE.** The MCP server is offline for about a minute: run the returned `poll_command`, then carry on (same port and token). If the rebuild changed tool descriptions, the ones you already have stay stale until a new session.
+- **`ide_rebuild` and `package_install` restart the IDE.** The MCP server is offline for about a minute: run the returned `poll_command`, then carry on (same port and token). If the rebuild changed tool descriptions, the ones you already have stay stale until a new conversation.
 - **Files changed on disk** are reloaded into the IDE if they have no unsaved editor changes. Prefer the `editor_*` tools anyway.
 - **`package_compile` ≠ `project_build`:** it builds a `.lpk` with `lazbuild` and doesn't touch the project.
 - **"Can't find unit X"?** `package_find_unit` names the package that has it; `project_list_packages` shows what the project requires and whether each resolved; then `project_add_package`.

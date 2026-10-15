@@ -45,6 +45,9 @@ function  McpNewSessionId: string;
 procedure McpRegisterSession(const AId, AClientName: string);
 { DELETE /mcp: forget the session and release its lease. }
 procedure McpForgetSession(const AId: string);
+
+{ True if AId came from initialize since the IDE started }
+function McpSessionKnown(const AId: string): Boolean;
 function  McpClientLabel(const AId: string): string;
 
 { ── Tool gate, called on the request thread around every tools/call ──
@@ -146,6 +149,16 @@ begin
   GOwner      := '';
   GOwnerLabel := '';
   GInFlight   := 0;
+end;
+
+function McpSessionKnown(const AId: string): Boolean;
+begin
+  Lock.Enter;
+  try
+    Result := GSessions.IndexOfName(AId) >= 0;
+  finally
+    Lock.Leave;
+  end;
 end;
 
 procedure McpForgetSession(const AId: string);

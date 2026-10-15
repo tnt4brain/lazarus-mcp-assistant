@@ -166,8 +166,8 @@ procedure TDebuggeeSetup.OneTimeSetup;
 var
   T : string;
 begin
-  GSessA := Format('mcp-test-a-%d', [Random(1000000)]);
-  GSessB := Format('mcp-test-b-%d', [Random(1000000)]);
+  GSessA := McpNewSession;  { the server answers 404 to made-up ids }
+  GSessB := McpNewSession;
   GPrevProject := '';
   if DebuggeeIsActive then Exit;
   GPrevProject := ActiveProjectFile;

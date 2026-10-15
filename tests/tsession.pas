@@ -23,6 +23,7 @@ type
     procedure TestAnonymousIsOfferedCookie;
     procedure TestDeleteEndsSession;
     procedure TestDeleteNeedsToken;
+    procedure TestUnknownSessionNotFound;
   end;
 
 implementation
@@ -49,19 +50,6 @@ begin
   end;
 end;
 
-function NewSession: string;
-var
-  H : TStringList;
-begin
-  H := TStringList.Create;
-  try
-    McpRequest('POST', INIT_JSON, [], H);
-    Result := HeaderValue(H, 'Mcp-Session-Id');
-  finally
-    H.Free;
-  end;
-end;
-
 procedure TTestSession.TestInitializeHandsOutSessionId;
 var
   H  : TStringList;
@@ -77,7 +65,7 @@ begin
     CheckTrue(Pos('mcp_session=' + Id + ';', HeaderValue(H, 'Set-Cookie')) = 1,
       'and the same id as a cookie: ' + HeaderValue(H, 'Set-Cookie'));
     CheckTrue(Pos('HttpOnly', HeaderValue(H, 'Set-Cookie')) > 0, 'cookie is HttpOnly');
-    CheckNotEquals(Id, NewSession, 'each initialize gets a new id');
+    CheckNotEquals(Id, McpNewSession, 'each initialize gets a new id');
   finally
     H.Free;
   end;
@@ -87,7 +75,7 @@ procedure TTestSession.TestSessionHeaderIdentifiesCaller;
 var
   Id : string;
 begin
-  Id := NewSession;
+  Id := McpNewSession;
   CheckEquals(Id, PingClient(['Mcp-Session-Id: ' + Id]));
 end;
 
@@ -97,9 +85,12 @@ begin
 end;
 
 procedure TTestSession.TestHeaderWinsOverCookie;
+var
+  Id : string;
 begin
-  CheckEquals('header-client',
-    PingClient(['Mcp-Session-Id: header-client', 'Cookie: mcp_session=cookie-client']));
+  Id := McpNewSession;
+  CheckEquals(Id,
+    PingClient(['Mcp-Session-Id: ' + Id, 'Cookie: mcp_session=cookie-client']));
 end;
 
 procedure TTestSession.TestAnonymousIsOfferedCookie;
@@ -124,11 +115,38 @@ var
   Id : string;
   R  : THttpResult;
 begin
-  Id := NewSession;
+  Id := McpNewSession;
   R  := McpRequest('DELETE', '', ['Mcp-Session-Id: ' + Id], nil);
   CheckEquals(200, R.Code, 'DELETE /mcp ends the session');
-  { unknown ids are still accepted as they are (ADR-012: survives ide_rebuild) }
-  CheckEquals(Id, PingClient(['Mcp-Session-Id: ' + Id]));
+  { an ended session is unknown: the client has to initialize again }
+  CheckEquals(404, McpRequest('POST', '{"jsonrpc":"2.0","id":2,"method":"ping"}',
+    ['Mcp-Session-Id: ' + Id], nil).Code, 'ended session: 404');
+end;
+
+{ A session id the server didn't hand out since it started (as after
+  ide_rebuild): 404 for every request but initialize, which starts a new one }
+procedure TTestSession.TestUnknownSessionNotFound;
+var
+  H : TStringList;
+  R : THttpResult;
+begin
+  R := McpRequest('POST', '{"jsonrpc":"2.0","id":2,"method":"tools/list"}',
+    ['Mcp-Session-Id: stale-session-id'], nil);
+  CheckEquals(404, R.Code, 'unknown session: 404');
+  CheckTrue(Pos('initialize', R.Body) > 0, 'says what to do: ' + R.Body);
+  CheckEquals(404, McpRequest('DELETE', '', ['Mcp-Session-Id: stale-session-id'],
+    nil).Code, 'DELETE of an unknown session: 404');
+  H := TStringList.Create;
+  try
+    R := McpRequest('POST', INIT_JSON, ['Mcp-Session-Id: stale-session-id'], H);
+    CheckEquals(200, R.Code, 'initialize is accepted');
+    CheckNotEquals('stale-session-id', HeaderValue(H, 'Mcp-Session-Id'),
+      'and hands out a new id');
+  finally
+    H.Free;
+  end;
+  { the cookie identity of simple clients is not a session: kept as it is }
+  CheckEquals('cookie-client-2', PingClient(['Cookie: mcp_session=cookie-client-2']));
 end;
 
 procedure TTestSession.TestDeleteNeedsToken;

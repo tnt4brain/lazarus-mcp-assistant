@@ -1,6 +1,6 @@
 # ADR-012 — Multiple Clients: Session Identity, Debug Session Lease, Debugger Lock
 
-**Status:** Accepted (v0.8)  
+**Status:** Accepted (v0.8), amended 2026-10-15 (unknown session ids get 404)  
 **Date:** 2026-10-14
 
 ## Context
@@ -43,11 +43,13 @@ read-only tools. A "leaky bucket" would free the lock when its holder goes quiet
 - **Requests with neither.** These share the identity `anonymous` and are offered
   a fresh cookie. A cookie-aware client turns into a distinct identity on its next
   request, even without calling `initialize`.
-- **Unknown ids are accepted as they are.** The spec allows answering 404, but
-  `ide_rebuild` restarts the IDE and forgets every session. Clients would then
-  have to re-initialize, and a client that handles this badly would break the
-  self-hosted rebuild loop. The id string itself is the key, so there's nothing
-  to validate. An unknown id only loses its display name.
+- **Unknown ids get 404** (amended 2026-10-15, v1.0; first decided the other way,
+  see *Amendment* below). A request with an `Mcp-Session-Id` the server didn't hand
+  out since it started gets HTTP 404 and a JSON-RPC error that says to send
+  `initialize`; `initialize` itself is always accepted and hands out a new id. This
+  is the spec's rule. After `ide_rebuild` the restarted IDE knows no sessions, so a
+  client starts a new one and gets the current instructions and tool list. Cookie
+  identities (decision 1's fallback) are not sessions and stay accepted as they are.
 - **`DELETE /mcp` ends the session.** It is the spec's way to close a session,
   and before this change it got a 405. If that session owns the debug lease,
   the lease expires at the next watchdog tick. Clients that crash never send it,
@@ -142,7 +144,31 @@ All of this is enforced in one place, `McpGateEnter`/`McpGateLeave` around every
   Rejected in favour of the narrower list, for the reason under decision 3.
 - **Lazy expiry (checked only on the next request).** That leaves an abandoned
   debuggee paused in the IDE indefinitely, so a watchdog does the work.
-- **Rejecting unknown session ids (404).** Rejected for the reason under decision 1.
+- **Accepting unknown session ids as they are.** The original decision (v0.8): the
+  id string was the key and needed no validation, and a client that handled a 404
+  badly could have broken the self-hosted rebuild loop. Replaced by the 404; see
+  *Amendment*.
+
+## Amendment (2026-10-15): 404 for unknown session ids
+
+Decision 1 first accepted unknown ids, so that clients would keep working across
+`ide_rebuild` without re-initializing. Two things changed that:
+
+- **The client handles it.** Tried with Claude Code: after `ide_rebuild`, its
+  request with the old id got 404, it started a new session by itself, and the next
+  tool call succeeded with no `/mcp reconnect`. The rebuild loop survives.
+- **A new session is worth having.** The `initialize` reply now carries the
+  server's `instructions` (the system prompt), and a rebuild may change the tool
+  list. Accepting the old id kept the client on its first session forever.
+
+Not solved by this: Claude Code keeps the tool definitions it loaded earlier in a
+conversation, even in the new session, so changed tool descriptions still reach it
+only in a new conversation. `notifications/tools/list_changed` would need a
+server-to-client stream (SSE), which the server doesn't have; not tried.
+
+Also changed with it: `DELETE` of an unknown session gets 404, and a request after
+`DELETE` gets 404 instead of being accepted. The debugger tests start real sessions
+with `initialize` instead of making ids up.
 
 ## Consequences
 
