@@ -61,18 +61,19 @@ procedure TTestLauncher.TestScriptShape;
 var
   S : string;
 begin
-  S := McpBuildLaunchScript(Req('/home/me/my proj', ''), '/usr/bin/claude', '/tmp/prompt.md');
+  S := McpBuildLaunchScript(Req('/home/me/my proj', ''), '/usr/bin/claude');
   CheckEquals(1, Pos('#!/bin/sh'#10, S), 'shebang first');
   CheckTrue(Pos('cd ''/home/me/my proj'' || exit 1'#10, S) > 0, 'cd to the work dir: ' + S);
   CheckTrue(Pos('exec ''/usr/bin/claude'' --mcp-config ''/tmp/mcp config.json'' ' +
-    '--strict-mcp-config --append-system-prompt "$(cat ''/tmp/prompt.md'')"', S) > 0,
-    'claude command line: ' + S);
+    '--strict-mcp-config'#10, S) > 0, 'claude command line: ' + S);
+  { the prompt comes from the server's instructions now }
+  CheckEquals(0, Pos('--append-system-prompt', S), 'no prompt passed: ' + S);
   CheckEquals(#10, S[Length(S)], 'ends with a newline');
 end;
 
 procedure TTestLauncher.TestScriptWithoutWorkDir;
 begin
-  CheckEquals(0, Pos('cd ', McpBuildLaunchScript(Req('', ''), 'claude', '/tmp/p')),
+  CheckEquals(0, Pos('cd ', McpBuildLaunchScript(Req('', ''), 'claude')),
     'no cd without a work dir');
 end;
 
@@ -80,8 +81,8 @@ procedure TTestLauncher.TestScriptQuotesExtraArgs;
 var
   S : string;
 begin
-  S := McpBuildLaunchScript(Req('', '--model  opus --name it''s'), 'claude', '/tmp/p');
-  CheckTrue(Pos(')" ''--model'' ''opus'' ''--name'' ''it''\''''s''' + #10, S) > 0,
+  S := McpBuildLaunchScript(Req('', '--model  opus --name it''s'), 'claude');
+  CheckTrue(Pos('--strict-mcp-config ''--model'' ''opus'' ''--name'' ''it''\''''s''' + #10, S) > 0,
     'each extra argument quoted on its own: ' + S);
 end;
 

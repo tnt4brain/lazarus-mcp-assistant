@@ -121,7 +121,6 @@ begin
   end;
   Req.WorkDir       := WorkDir;
   Req.McpConfigPath := ConfigPath;
-  Req.SystemPrompt  := GetSystemPromptText;
   Err := McpLaunchClaude(Req);
   if Err = '' then
     DebugLn('[MCP Assistant] Launched claude with config: ' + ConfigPath)

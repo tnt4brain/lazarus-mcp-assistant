@@ -580,9 +580,8 @@ begin
   Res.Add('protocolVersion', ProtoVer);
   Res.Add('capabilities',   Caps);
   Res.Add('serverInfo',     SrvInfo);
-  { the system prompt for every client, not only for Claude started from the
-    IDE's launcher (--append-system-prompt): clients add it to the model's
-    context }
+  { the system prompt, for every client: clients add it to the model's
+    context (Claude Code to its system prompt); the launcher passes none }
   Res.Add('instructions',   GetSystemPromptText);
 
   Result := RPCResult(ID, Res); // RPCResult owns Res

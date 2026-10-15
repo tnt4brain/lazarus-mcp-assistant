@@ -698,7 +698,7 @@ initialization
   RegisterMcpResource(
     'lazarus-ide://system-prompt',
     'MCP Assistant System Prompt',
-    'Behavioral instructions injected into Claude when launched from the IDE. ' +
+    'Behavioral instructions sent to every client as the server''s instructions. ' +
     'Describes available tools, recommended workflows, and common gotchas.',
     'text/plain',
     @GetSystemPromptText);

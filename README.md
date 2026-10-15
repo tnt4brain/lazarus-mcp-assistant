@@ -244,7 +244,7 @@ its own repository.
 | URI | Content |
 |---|---|
 | `lazarus-ide://reference` | Lazarus/FPC component and IDE API reference (`docs/lazarus-knowledge.md`) |
-| `lazarus-ide://system-prompt` | The instructions injected into Claude at launch (`docs/system-prompt.md`) |
+| `lazarus-ide://system-prompt` | The server's instructions to every client (`docs/system-prompt.md`) |
 
 ### While a tool runs
 
@@ -338,7 +338,7 @@ Architecture details: [ADR-004](docs/adr/0004-self-hosted-development.md).
 
 ## Knowledge injection
 
-Every MCP client gets `docs/system-prompt.md` as the server's `instructions` in the `initialize` reply, which clients add to the model's context. When the plugin launches Claude, it also appends the text to Claude's system prompt (`--append-system-prompt`). This short text covers workflows, tool preferences and the rules Claude must follow (package-install consent, debugger exceptions, rebuild/reconnect). It leaves per-tool details to the tool descriptions.
+Every MCP client gets `docs/system-prompt.md` as the server's `instructions` in the `initialize` reply, which clients add to the model's context (Claude Code puts it into the system prompt), so Claude launched from the IDE needs no `--append-system-prompt`. This short text covers workflows, tool preferences and the rules Claude must follow (package-install consent, debugger exceptions, rebuild/reconnect). It leaves per-tool details to the tool descriptions.
 
 The Lazarus/FPC reference covers LCL component packages, installation patterns and common gotchas, so Claude doesn't hallucinate package names or import paths. It is served on demand as the `lazarus-ide://reference` MCP resource, and the system prompt tells Claude to read it before answering such questions.
 

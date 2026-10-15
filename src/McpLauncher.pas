@@ -6,9 +6,9 @@ unit McpLauncher;
   Windows: claude runs directly in a new console (poNewConsole).
   Linux/macOS: poNewConsole does nothing there, so a shell script is written
   that runs claude, and a terminal emulator is started to run the script
-  (`sh <script>`, so the script needs no exec bit).  The system prompt is
-  passed through a file because it is too long to put into a terminal's
-  command line comfortably.
+  (`sh <script>`, so the script needs no exec bit).  Claude gets the system
+  prompt from the server itself (initialize's instructions), so none is
+  passed here.
 
   Script and terminal command generation are plain RTL code that compiles on
   every platform; only McpLaunchClaude chooses the branch. }
@@ -25,7 +25,6 @@ type
     ClaudeExe       : string;   { '' = claude on PATH }
     WorkDir         : string;
     McpConfigPath   : string;
-    SystemPrompt    : string;
     ExtraArgs       : string;   { space-separated }
     TerminalCommand : string;   { Unix: '' = auto-detect; e.g. 'kitty -e' }
   end;
@@ -33,10 +32,9 @@ type
 { 'S' quoted for sh: every ' becomes '\'' }
 function McpShellQuote(const S: string): string;
 
-{ sh script that cds to AWorkDir and execs claude; the prompt is read from
-  APromptFile. }
+{ sh script that cds to AWorkDir and execs claude }
 function McpBuildLaunchScript(const AReq: TMcpLaunchRequest;
-  const AClaudeExe, APromptFile: string): string;
+  const AClaudeExe: string): string;
 
 { argv that opens a terminal running `sh AScript`.  ACommand is the user's
   terminal setting ('' = auto-detect via APath); AMac selects Terminal.app.
@@ -82,7 +80,7 @@ begin
 end;
 
 function McpBuildLaunchScript(const AReq: TMcpLaunchRequest;
-  const AClaudeExe, APromptFile: string): string;
+  const AClaudeExe: string): string;
 var
   Extra : TStringList;
   Cmd   : string;
@@ -90,8 +88,7 @@ var
 begin
   Cmd := 'exec ' + McpShellQuote(AClaudeExe) +
          ' --mcp-config ' + McpShellQuote(AReq.McpConfigPath) +
-         ' --strict-mcp-config' +
-         ' --append-system-prompt "$(cat ' + McpShellQuote(APromptFile) + ')"';
+         ' --strict-mcp-config';
   Extra := TStringList.Create;
   try
     SplitArgs(AReq.ExtraArgs, Extra);
@@ -177,7 +174,6 @@ var
   ClaudeExe : string;
   {$IFNDEF WINDOWS}
   Script    : string;
-  Prompt    : string;
   Argv      : TStringList;
   I         : Integer;
   {$ENDIF}
@@ -199,17 +195,13 @@ begin
     Proc.Parameters.Add('--mcp-config');
     Proc.Parameters.Add(AReq.McpConfigPath);
     Proc.Parameters.Add('--strict-mcp-config');
-    Proc.Parameters.Add('--append-system-prompt');
-    Proc.Parameters.Add(AReq.SystemPrompt);
     SplitArgs(AReq.ExtraArgs, Proc.Parameters);
     Proc.Options := [poNewConsole];
     if AReq.WorkDir <> '' then
       Proc.CurrentDirectory := AReq.WorkDir;
     {$ELSE}
     Script := IncludeTrailingPathDelimiter(GetTempDir) + 'lazarus-mcp-launch.sh';
-    Prompt := IncludeTrailingPathDelimiter(GetTempDir) + 'lazarus-mcp-prompt.md';
-    if not WriteTextFile(Prompt, AReq.SystemPrompt) or
-       not WriteTextFile(Script, McpBuildLaunchScript(AReq, ClaudeExe, Prompt)) then
+    if not WriteTextFile(Script, McpBuildLaunchScript(AReq, ClaudeExe)) then
       Exit('Could not write ' + Script);
     Argv := TStringList.Create;
     try
