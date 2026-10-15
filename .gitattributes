@@ -1,0 +1,4 @@
+# Lazarus writes its project and package files with the platform's line
+# endings (CRLF on Windows); stored with LF, whatever the IDE wrote.
+*.lpk text
+*.lpi text
