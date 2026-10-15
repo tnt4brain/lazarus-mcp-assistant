@@ -183,7 +183,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 |---|---|
 | `project_get_directory` | Root directory of the active project (contains the `.lpi`) |
 | `project_list_files` | Source files of the active project |
-| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options |
+| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does) |
 | `project_add_file` / `project_remove_file` | Project file list (files stay on disk). Adding a file already in the project reports `already_in_project`. Removing a file open in the editor is refused until it is closed |
 | `project_create_unit` | New unit on disk, added to the project and opened |
 | `project_list_packages` | Required packages as in Project Inspector: version limits, resolved `.lpk`, status (`ok`, `not_found`, ...); `recursive` adds the whole graph in compile order |

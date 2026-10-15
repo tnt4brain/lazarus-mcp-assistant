@@ -17,7 +17,8 @@ implementation
 uses
   Classes, SysUtils,
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil,
-  Controls, Forms, IDEDialogs,
+  MacroIntf, Controls, Forms, IDEDialogs, LCLPlatformDef, StrUtils,
+  Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   fpjson,
   McpToolContext;
 
@@ -44,7 +45,8 @@ const
     '"target_os":{"type":"string","description":"Target OS (e.g. win64, linux); empty string = host OS"},' +
     '"target_cpu":{"type":"string","description":"Target CPU (e.g. x86_64, aarch64); empty string = host CPU"},' +
     '"output_dir":{"type":"string","description":"Unit output directory; macros like $(TargetOS) are expanded at build time"},' +
-    '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read project_get_settings first to preserve existing flags)"}}}';
+    '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read project_get_settings first to preserve existing flags)"},' +
+    '"widgetset":{"type":"string","description":"LCL widgetset of the active build mode (win32, qt5, qt6, gtk2, gtk3, cocoa, ...); \"default\" or empty string = the platform''s default. Packages using the LCL are rebuilt for it at the next build"}}}';
 
   SCHEMA_ADD_FILE_TO_PROJECT =
     '{"type":"object","properties":{' +
@@ -175,6 +177,130 @@ begin
     if SourceEditorManagerIntf.SourceEditors[I].Modified then
       Exit('Unsaved changes in ' + SourceEditorManagerIntf.SourceEditors[I].FileName +
            '. Save them (editor_save) or ask the user before ' + AAction + '.');
+end;
+
+{ ── Widgetset ────────────────────────────────────────────────────────────── }
+
+{ A project chooses its widgetset per build mode with an IDE-macro option
+  LCLWidgetType:=<ws> in its build-mode matrix, as Project Options >
+  Compiler Options > Additions and Overrides > Set "LCLWidgetType" adds it.
+  Session options (.lps) are applied after the shared ones (.lpi). }
+
+type
+  TMatrixLists = array[0..1] of TBuildMatrixOptions;
+
+function MatrixLists(Proj: TProject): TMatrixLists;
+begin
+  Result[0] := Proj.BuildModes.SharedMatrixOptions;
+  Result[1] := Proj.BuildModes.SessionMatrixOptions;
+end;
+
+{ M without its option at AIndex.  Not M.Delete: an option's destructor
+  removes it from the list, which owns it and frees it a second time
+  (an access violation, Lazarus 4.6).  Assign rebuilds the list, as the
+  Project Options dialog does. }
+procedure DeleteMatrixOption(M: TBuildMatrixOptions; AIndex: Integer);
+var
+  Rest : TBuildMatrixOptions;
+  I    : Integer;
+begin
+  Rest := TBuildMatrixOptions.Create;
+  try
+    for I := 0 to M.Count - 1 do
+      if I <> AIndex then
+        TBuildMatrixOption.Create(Rest).Assign(M[I]);
+    M.Assign(Rest);
+  finally
+    Rest.Free;
+  end;
+end;
+
+function IsWidgetsetOption(Opt: TBuildMatrixOption; const ModeId: string): Boolean;
+begin
+  Result := (Opt.Typ = bmotIDEMacro) and SameText(Opt.MacroName, 'LCLWidgetType') and
+            Opt.FitsMode(ModeId);
+end;
+
+{ The active build mode's own widgetset, '' for the platform's default. }
+function WidgetsetOverride(Proj: TProject): string;
+var
+  M   : TBuildMatrixOptions;
+  I   : Integer;
+  Mode: string;
+begin
+  Result := '';
+  Mode := Proj.ActiveBuildMode.Identifier;
+  for M in MatrixLists(Proj) do
+    for I := 0 to M.Count - 1 do
+      if IsWidgetsetOption(M[I], Mode) then
+        Result := M[I].Value;
+end;
+
+{ The widgetset the next build uses. }
+function EffectiveWidgetset: string;
+begin
+  Result := '$(LCLWidgetType)';
+  if not Assigned(IDEMacros) or not IDEMacros.SubstituteMacros(Result) then
+    Result := '';
+end;
+
+{ Sets the active build mode's widgetset, '' or 'default' to drop it.  Other
+  build modes keep theirs.  Returns '' or why not. }
+function SetWidgetset(Proj: TProject; AValue: string): string;
+var
+  P    : TLCLPlatform;
+  M    : TBuildMatrixOptions;
+  Opt  : TBuildMatrixOption;
+  SL   : TStringList;
+  I, J : Integer;
+  Mode : string;
+  Known: string;
+  Found: Boolean;
+begin
+  Result := '';
+  AValue := LowerCase(Trim(AValue));
+  if AValue = 'default' then AValue := '';
+  if AValue <> '' then
+  begin
+    Known := '';
+    Found := False;
+    for P := Low(TLCLPlatform) to High(TLCLPlatform) do
+    begin
+      Found := Found or (LCLPlatformDirNames[P] = AValue);
+      Known := Known + IfThen(Known <> '', ', ') + LCLPlatformDirNames[P];
+    end;
+    if not Found then
+      Exit('Unknown widgetset "' + AValue + '"; one of: ' + Known + ', or "default"');
+  end;
+  Mode := Proj.ActiveBuildMode.Identifier;
+  { take this mode out of every option that sets it }
+  SL := TStringList.Create;
+  try
+    for M in MatrixLists(Proj) do
+      for I := M.Count - 1 downto 0 do
+        if IsWidgetsetOption(M[I], Mode) then
+        begin
+          SL.Text := M[I].Modes;
+          for J := SL.Count - 1 downto 0 do
+            if SameText(Trim(SL[J]), Mode) then SL.Delete(J);
+          if SL.Count = 0 then
+            DeleteMatrixOption(M, I)
+          else
+            M[I].Modes := TrimRight(SL.Text);
+        end;
+  finally
+    SL.Free;
+  end;
+  if AValue <> '' then
+  begin
+    Opt := Proj.BuildModes.SharedMatrixOptions.Add(bmotIDEMacro, '*');
+    Opt.MacroName := 'LCLWidgetType';
+    Opt.Value     := AValue;
+    Opt.Modes     := Mode;
+  end;
+  Proj.Modified := True;
+  IncreaseBuildMacroChangeStamp;
+  LazarusIDE.PrepareBuildTarget(True);
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
@@ -309,6 +435,8 @@ begin
           Obj.Add('output_dir',     Proj.LazCompilerOptions.UnitOutputDirectory);
           Obj.Add('target_os',      Proj.LazCompilerOptions.TargetOS);
         end;
+        Obj.Add('widgetset',          EffectiveWidgetset);
+        Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
       end
       else
         Obj.Add('error', 'No active project');
@@ -325,6 +453,15 @@ begin
     if not Assigned(Proj) or not Assigned(Proj.LazCompilerOptions) then
     begin
       Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+    end;
+    { first, so that an unknown widgetset changes nothing }
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('widgetset') <> nil) then
+    begin
+      Ctx.Result := SetWidgetset(TProject(Proj), Ctx.Params.Get('widgetset', ''));
+      if Ctx.Result <> '' then
+      begin
+        Ctx.Error := True; Exit;
+      end;
     end;
     if Assigned(Ctx.Params) then
     begin
@@ -345,6 +482,8 @@ begin
       Obj.Add('target_cpu',     Proj.LazCompilerOptions.TargetCPU);
       Obj.Add('output_dir',     Proj.LazCompilerOptions.UnitOutputDirectory);
       Obj.Add('custom_options', Proj.LazCompilerOptions.CustomOptions);
+      Obj.Add('widgetset',          EffectiveWidgetset);
+      Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -648,7 +787,8 @@ begin
     SCHEMA_GET_PROJECT_DIRECTORY, MCP_ANN_RO));
   Tools.Add(MakeTool('project_get_settings',
     'Return active project compiler options: target OS/CPU, output directory, ' +
-    'custom options, and project file path.',
+    'custom options, the widgetset the next build uses (widgetset_override: the ' +
+    'active build mode''s own choice, "" = the default), and project file path.',
     SCHEMA_GET_PROJECT_SETTINGS, MCP_ANN_RO));
   Tools.Add(MakeTool('project_set_settings',
     'Write compiler options to the active project. All parameters are optional; ' +
