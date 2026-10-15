@@ -16,6 +16,8 @@ type
   published
     procedure TestPingReturnsOk;
     procedure TestInitializeReturnsProtocolVersion;
+    procedure TestInitializeNegotiatesVersion;
+    procedure TestInitializeHasInstructions;
     procedure TestToolsListReturnsArray;
     procedure TestToolsListRequiredFields;
     procedure TestToolsListHasPackageTools;
@@ -84,6 +86,55 @@ begin
       'initialize result must contain protocolVersion');
     CheckTrue(Res.Find('serverInfo') <> nil,
       'initialize result must contain serverInfo');
+  finally
+    Obj.Free;
+  end;
+end;
+
+{ initialize's result for a client asking for AVersion }
+function InitializeResult(const AVersion: string): TJSONObject;
+var
+  R : THttpResult;
+begin
+  R := McpPost('{"jsonrpc":"2.0","id":2,"method":"initialize",' +
+               '"params":{"protocolVersion":"' + AVersion + '",' +
+               '"clientInfo":{"name":"test","version":"1.0"}}}');
+  Result := ParseJSON(R.Body);
+end;
+
+{ A revision we implement is kept; any other gets our latest, not an echo }
+procedure TTestProtocol.TestInitializeNegotiatesVersion;
+
+  function Negotiated(const AVersion: string): string;
+  var
+    Obj : TJSONObject;
+  begin
+    Obj := InitializeResult(AVersion);
+    try
+      Result := TJSONObject(Obj.Find('result')).Get('protocolVersion', '');
+    finally
+      Obj.Free;
+    end;
+  end;
+
+begin
+  CheckEquals('2024-11-05', Negotiated('2024-11-05'), 'oldest kept');
+  CheckEquals('2025-06-18', Negotiated('2025-06-18'), 'latest kept');
+  CheckEquals('2025-06-18', Negotiated('2099-01-01'), 'unknown: our latest');
+  CheckEquals('2025-06-18', Negotiated(''), 'none: our latest');
+end;
+
+{ The system prompt reaches every client as the server's instructions }
+procedure TTestProtocol.TestInitializeHasInstructions;
+var
+  Obj : TJSONObject;
+  S   : string;
+begin
+  Obj := InitializeResult('2025-06-18');
+  try
+    S := TJSONObject(Obj.Find('result')).Get('instructions', '');
+    CheckTrue(Pos('Lazarus IDE', S) > 0, 'instructions: ' + Copy(S, 1, 200));
+    CheckTrue(Pos('code_rename_identifier', S) > 0, 'the workflows are in it');
   finally
     Obj.Free;
   end;

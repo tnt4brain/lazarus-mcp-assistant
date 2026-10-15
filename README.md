@@ -338,7 +338,7 @@ Architecture details: [ADR-004](docs/adr/0004-self-hosted-development.md).
 
 ## Knowledge injection
 
-When the plugin launches Claude, it appends `docs/system-prompt.md` to Claude's system prompt (`--append-system-prompt`). This short text covers workflows, tool preferences and the rules Claude must follow (package-install consent, debugger exceptions, rebuild/reconnect). It leaves per-tool details to the tool descriptions.
+Every MCP client gets `docs/system-prompt.md` as the server's `instructions` in the `initialize` reply, which clients add to the model's context. When the plugin launches Claude, it also appends the text to Claude's system prompt (`--append-system-prompt`). This short text covers workflows, tool preferences and the rules Claude must follow (package-install consent, debugger exceptions, rebuild/reconnect). It leaves per-tool details to the tool descriptions.
 
 The Lazarus/FPC reference covers LCL component packages, installation patterns and common gotchas, so Claude doesn't hallucinate package names or import paths. It is served on demand as the `lazarus-ide://reference` MCP resource, and the system prompt tells Claude to read it before answering such questions.
 
@@ -363,7 +363,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestJUnitWriter` | 8 | Nothing (always runs) |
 | `TTestLauncher` | 10 | Nothing (always runs): sh quoting, launch script, terminal choice |
 | `TTestSettingsFile` | 3 | Nothing (always runs): settings save/load, obsolete keys removed |
-| `TTestProtocol` | 10 | MCP server reachable |
+| `TTestProtocol` | 12 | MCP server reachable: JSON-RPC, `initialize` (version negotiation, instructions) |
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |

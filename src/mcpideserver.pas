@@ -82,7 +82,14 @@ uses
   StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
-  McpExceptionLog;
+  McpExceptionLog, McpToolsProject;
+
+const
+  { MCP revisions this server implements, oldest first: the last is the one
+    offered to a client asking for any other (MCP lifecycle: version
+    negotiation).  2025-06-18 brought the tool titles we send. }
+  McpProtocolVersions : array[0..2] of string =
+    ('2024-11-05', '2025-03-26', '2025-06-18');
 
 
 
@@ -529,10 +536,13 @@ var
   ClientName : string;
   Call       : TMcpMainCall;
 begin
-  // Echo back client's protocolVersion; fall back to our minimum
-  ProtoVer := '2024-11-05';
-  if Assigned(Params) and Assigned(Params.Find('protocolVersion')) then
-    ProtoVer := Params.Strings['protocolVersion'];
+  { The client's revision if we implement it, else our latest: echoing any
+    revision claimed features of ones we don't implement }
+  ProtoVer := '';
+  if Assigned(Params) then
+    ProtoVer := Params.Get('protocolVersion', '');
+  if AnsiIndexStr(ProtoVer, McpProtocolVersions) < 0 then
+    ProtoVer := McpProtocolVersions[High(McpProtocolVersions)];
 
   { A new MCP session: its id identifies this client from now on (ADR-012) }
   ANewSession := McpNewSessionId;
@@ -570,6 +580,10 @@ begin
   Res.Add('protocolVersion', ProtoVer);
   Res.Add('capabilities',   Caps);
   Res.Add('serverInfo',     SrvInfo);
+  { the system prompt for every client, not only for Claude started from the
+    IDE's launcher (--append-system-prompt): clients add it to the model's
+    context }
+  Res.Add('instructions',   GetSystemPromptText);
 
   Result := RPCResult(ID, Res); // RPCResult owns Res
 end;
