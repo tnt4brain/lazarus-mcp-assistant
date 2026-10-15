@@ -32,6 +32,7 @@ type
     procedure TestNothingToComplete;
     procedure TestAutoSave;
     procedure TestUnsavedEdits;
+    procedure TestLargeUnit;
   end;
 
 implementation
@@ -172,6 +173,10 @@ begin
   CheckTrue(Pos('Nothing to complete at 1:1', T) > 0, 'nothing: ' + T);
   T := Complete(999, 1);
   CheckTrue(Pos('past the end', T) > 0, 'past the end: ' + T);
+  { an error, not the IDE's modal "File not found" }
+  T := CallToolText('code_complete', '{"file":' + JsonStr(FDir + 'missing.pas') +
+    ',"line":1,"col":1}', []);
+  CheckTrue(Pos('File not found', T) > 0, 'missing file: ' + T);
   CheckEquals(AdjustLineBreaks(Before), AdjustLineBreaks(Buffer), 'buffer unchanged');
 end;
 
@@ -198,6 +203,56 @@ begin
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('procedure TCompleteMe.Added;', Buffer) > 0, 'body of the unsaved declaration: ' + T);
   CheckEquals(0, Pos('Added', Disk), 'nothing saved');
+end;
+
+{ A class with 600 methods and one new declaration: the declaration's part
+  and the new body, 5000 lines apart, are two hunks, not one span. }
+procedure TTestCodeComplete.TestLargeUnit;
+var
+  SL : TStringList;
+  I  : Integer;
+  T  : string;
+  J  : TJSONData;
+begin
+  SL := TStringList.Create;
+  try
+    SL.Add('unit FixtureComplete;');
+    SL.Add('{$mode objfpc}{$H+}');
+    SL.Add('interface');
+    SL.Add('type');
+    SL.Add('  TBig = class');
+    SL.Add('  public');
+    for I := 1 to 600 do SL.Add(Format('    procedure M%d(A: Integer);', [I]));
+    SL.Add('    procedure Missing(const S: string);');
+    SL.Add('  end;');
+    SL.Add('implementation');
+    for I := 1 to 600 do
+    begin
+      SL.Add(Format('procedure TBig.M%d(A: Integer);', [I]));
+      SL.Add('var');
+      SL.Add('  X: Integer;');
+      SL.Add('begin');
+      SL.Add(Format('  X := A + %d;', [I]));
+      SL.Add('  if X > 0 then');
+      SL.Add('    X := 0;');
+      SL.Add('end;');
+      SL.Add('');
+    end;
+    SL.Add('end.');
+    SL.SaveToFile(FUnit);
+  finally
+    SL.Free;
+  end;
+  T := Complete(7, 5);
+  CheckFalse(IsError(T), T);
+  J := GetJSON(T);
+  try
+    CheckTrue(TJSONObject(J).Arrays['changes'].Count <= 2, 'separate hunks: ' + T);
+    CheckTrue(Pos('procedure TBig.Missing(const S: string);', T) > 0, 'body: ' + T);
+    CheckEquals(0, Pos('X := A + 300', T), 'unchanged lines not reported: ' + Copy(T, 1, 500));
+  finally
+    J.Free;
+  end;
 end;
 
 end.

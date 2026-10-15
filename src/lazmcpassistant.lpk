@@ -16,7 +16,7 @@
     <Description Value="A completely generic, brand-agnostic Model Context Protocol (MCP) IDE Assistant client for the Lazarus RAD IDE and Free Pascal ecosystem."/>
     <License Value="BSD-3-Clause"/>
     <Version Major="1"/>
-    <Files Count="23">
+    <Files Count="25">
       <Item1>
         <Filename Value="lazmcpassistant.pas"/>
         <UnitName Value="LazMcpAssistant"/>
@@ -110,24 +110,35 @@
         <Filename Value="McpExceptionLog.pas"/>
         <UnitName Value="McpExceptionLog"/>
       </Item23>
+      <Item24>
+        <Filename Value="McpLineDiff.pas"/>
+        <UnitName Value="McpLineDiff"/>
+      </Item24>
+      <Item25>
+        <Filename Value="McpToolsFormat.pas"/>
+        <UnitName Value="McpToolsFormat"/>
+      </Item25>
     </Files>
     <CompatibilityMode Value="True"/>
-    <RequiredPkgs Count="5">
+    <RequiredPkgs Count="6">
       <Item1>
-        <PackageName Value="SynEdit"/>
+        <PackageName Value="jcfbase"/>
       </Item1>
       <Item2>
-        <PackageName Value="IDEIntf"/>
+        <PackageName Value="SynEdit"/>
       </Item2>
       <Item3>
-        <PackageName Value="FCL"/>
+        <PackageName Value="IDEIntf"/>
       </Item3>
       <Item4>
-        <PackageName Value="CodeTools"/>
+        <PackageName Value="FCL"/>
       </Item4>
       <Item5>
-        <PackageName Value="IdeDebugger"/>
+        <PackageName Value="CodeTools"/>
       </Item5>
+      <Item6>
+        <PackageName Value="IdeDebugger"/>
+      </Item6>
     </RequiredPkgs>
     <UsageOptions>
       <UnitPath Value="$(PkgOutDir)"/>

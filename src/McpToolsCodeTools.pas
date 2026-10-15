@@ -29,7 +29,7 @@ uses
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger,
   Controls,
   fpjson, jsonparser,
-  McpToolContext, McpToolHelpers;
+  McpToolContext, McpToolHelpers, McpLineDiff;
 
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
 begin
@@ -291,141 +291,6 @@ begin
   end;
 end;
 
-{ The lines that differ between two versions of a source, as hunks of
-  line (1-based, in the new text), removed and added text.  Lines common to both are
-  matched by a longest common subsequence over the part between the common
-  head and tail, so edits far apart (a class declaration and a method body)
-  are separate hunks; a part too large for that is one hunk.  A hunk that only
-  adds or only removes lines is moved down as far as the unchanged lines
-  after it allow, as git does: an inserted method then starts at its comment
-  and ends with its own "end;", not with the one before it. }
-function LineHunks(const OldSrc, NewSrc: string): TJSONArray;
-const
-  MaxCells = 4000000;
-type
-  THunk = record
-    AStart, ACount, BStart, BCount: Integer;  { 0-based line indexes }
-  end;
-var
-  A, B           : TStringList;
-  Head, Tail     : Integer;
-  N, M, I, J, K  : Integer;
-  L              : array of Integer;
-  Hunks          : array of THunk;
-  StartA, StartB : Integer;
-  Limit          : Integer;
-  H              : TJSONObject;
-
-  function Cell(AI, AJ: Integer): Integer;
-  begin
-    Result := L[AI * (M + 1) + AJ];
-  end;
-
-  { The lines from StartA/StartB up to the absolute indexes AEnd/BEnd. }
-  procedure Flush(AEnd, BEnd: Integer);
-  begin
-    if (AEnd > StartA) or (BEnd > StartB) then
-    begin
-      SetLength(Hunks, Length(Hunks) + 1);
-      with Hunks[High(Hunks)] do
-      begin
-        AStart := StartA; ACount := AEnd - StartA;
-        BStart := StartB; BCount := BEnd - StartB;
-      end;
-    end;
-  end;
-
-  function Joined(SL: TStringList; From, Count: Integer): string;
-  var
-    X : Integer;
-  begin
-    Result := '';
-    for X := From to From + Count - 1 do
-      Result := Result + SL[X] + #10;
-  end;
-
-begin
-  Result := TJSONArray.Create;
-  A := TStringList.Create;
-  B := TStringList.Create;
-  try
-    A.Text := OldSrc;
-    B.Text := NewSrc;
-    Head := 0;
-    while (Head < A.Count) and (Head < B.Count) and (A[Head] = B[Head]) do
-      Inc(Head);
-    Tail := 0;
-    while (Tail < A.Count - Head) and (Tail < B.Count - Head) and
-          (A[A.Count - 1 - Tail] = B[B.Count - 1 - Tail]) do
-      Inc(Tail);
-    N := A.Count - Head - Tail;
-    M := B.Count - Head - Tail;
-    StartA := Head;
-    StartB := Head;
-    if Int64(N + 1) * (M + 1) > MaxCells then
-      Flush(Head + N, Head + M)
-    else
-    begin
-      { L[i,j]: length of the common subsequence of A[i..] and B[j..] }
-      SetLength(L, (N + 1) * (M + 1));
-      for I := N - 1 downto 0 do
-        for J := M - 1 downto 0 do
-          if A[Head + I] = B[Head + J] then
-            L[I * (M + 1) + J] := Cell(I + 1, J + 1) + 1
-          else if Cell(I + 1, J) >= Cell(I, J + 1) then
-            L[I * (M + 1) + J] := Cell(I + 1, J)
-          else
-            L[I * (M + 1) + J] := Cell(I, J + 1);
-      I := 0;
-      J := 0;
-      while (I < N) or (J < M) do
-        if (I < N) and (J < M) and (A[Head + I] = B[Head + J]) then
-        begin
-          Flush(Head + I, Head + J);
-          Inc(I);
-          Inc(J);
-          StartA := Head + I;
-          StartB := Head + J;
-        end
-        else if (J >= M) or ((I < N) and (Cell(I + 1, J) >= Cell(I, J + 1))) then
-          Inc(I)
-        else
-          Inc(J);
-      Flush(Head + N, Head + M);
-    end;
-    for K := 0 to High(Hunks) do
-      with Hunks[K] do
-        if ACount = 0 then
-        begin
-          if K < High(Hunks) then Limit := Hunks[K + 1].BStart else Limit := B.Count;
-          while (BStart + BCount < Limit) and (B[BStart] = B[BStart + BCount]) do
-          begin
-            Inc(AStart); Inc(BStart);
-          end;
-        end
-        else if BCount = 0 then
-        begin
-          if K < High(Hunks) then Limit := Hunks[K + 1].AStart else Limit := A.Count;
-          while (AStart + ACount < Limit) and (A[AStart] = A[AStart + ACount]) do
-          begin
-            Inc(AStart); Inc(BStart);
-          end;
-        end;
-    for K := 0 to High(Hunks) do
-      with Hunks[K] do
-      begin
-        H := TJSONObject.Create;
-        H.Add('line', BStart + 1);
-        if ACount > 0 then H.Add('removed', Joined(A, AStart, ACount));
-        if BCount > 0 then H.Add('added', Joined(B, BStart, BCount));
-        Result.Add(H);
-      end;
-  finally
-    A.Free;
-    B.Free;
-  end;
-end;
-
 { code_complete: the IDE's Ctrl+Shift+C at (line, col), without its dialogs.
   As in TMainIDE.DoCompleteCodeAtCursor: the editors are committed to the
   CodeTools buffers (not to disk), CodeTools changes the buffers, and the
@@ -459,11 +324,18 @@ begin
     Ctx.Error := True; Ctx.Result := 'file, line and col (1-based) required'; Exit;
   end;
   if SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath) = nil then
+  begin
+    { opening a missing file shows the IDE's modal "File not found" }
+    if not FileExists(FilePath) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
+    end;
     if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
          [ofOnlyIfExists, ofRegularFile, ofDoNotActivateSourceEditor]) <> mrOK then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
     end;
+  end;
   if not LazarusIDE.BeginCodeTools then
   begin
     Ctx.Error := True;
