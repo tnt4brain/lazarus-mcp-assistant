@@ -2,10 +2,11 @@
 
 An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 115 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
-> **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
-> the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
-> for launching Claude Code in a terminal, but that code has never been compiled
-> or run on those systems.
+> **Platform:** Windows and Linux. The whole test suite, the debugger tests
+> included, passes on Windows and on Debian 12 (Lazarus 4.6, FPC 3.2.2, GTK2).
+> macOS is not tested and not claimed: the plugin uses only LCL/IDE interfaces
+> (no Win32 API) and has macOS code for launching Claude Code in Terminal.app,
+> but it has never been compiled or run there.
 
 ---
 
@@ -26,9 +27,23 @@ Transport details: [ADR-001](docs/adr/0001-mcp-server-transport-and-lifecycle.md
 ## Tool reference
 
 Tools are named `<category>_<action>`; `tools/list` returns them sorted, each
-with a human-readable `title` ("Debugger: get call stack") and
-`readOnlyHint` / `destructiveHint` annotations. In Claude Code they appear as
-`mcp__lazarus-ide__<tool_name>`.
+with a human-readable `title` ("Debugger: get call stack") and annotations:
+- `readOnlyHint` for tools that change no file or project. Moving the cursor
+  or opening a tab counts as read-only.
+- `destructiveHint` only for changes that neither Ctrl+Z nor `form_undo` can
+  take back: closing or reverting an editor with unsaved changes,
+  `git_checkout`, `git_reset`, `code_rename_identifier`, rebuilds and
+  installs.
+- `idempotentHint` where repeating a call with the same arguments changes
+  nothing more.
+
+In Claude Code they appear as `mcp__lazarus-ide__<tool_name>`.
+
+A tool that works on one source file takes it as `file`, an absolute path;
+`D:/x/f.pas` and `D:\x\f.pas` name the same file. The names used before v1.0
+(`file_path`, `path`, `filename`) are still accepted. A file that doesn't exist
+is an error of the tool, never the IDE's "File not found" dialog. Files created
+or changed outside the IDE (by the assistant's shell, say) are seen at once.
 
 ### Editor — `editor_*`
 
@@ -64,6 +79,22 @@ with a human-readable `title` ("Debugger: get call stack") and
 | `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
 | `code_complete` | Code completion as Ctrl+Shift+C does it: method bodies, property fields and setters, forward procedures, local variables, event handlers. Returns the changed lines |
 | `code_format` | Format a file or a range of lines with JEDI Code Format, using the IDE's JCF settings; one undo step. Returns the changed lines |
+
+Changing `code_*` tools edit the editor buffer, as the IDE's own commands do:
+Ctrl+Z undoes them, and nothing is written to disk until `editor_save` (or
+`auto_save: true`). `code_rename_identifier` is the exception.
+
+`code_complete` is the IDE's Ctrl+Shift+C without its dialogs. `code_format`
+runs JEDI Code Format, as **Source → JEDI Code Format** does, on `.pas`, `.pp`,
+`.lpr`, `.dpr` and `.inc` files. Both return the changed lines as hunks (the
+lines removed and added) rather than the whole file.
+- `code_format` uses the settings of JCF's IDE plugin (**Tools → Options →
+  JEDI Code Format**). Without that plugin, it uses `jcfsettings.cfg` in the
+  IDE's config folder, created from JCF's defaults; the result says so.
+- After formatting, the editor is checked against JCF's output. If they
+  differ, the change is put back and an error returned.
+- JCF itself isn't idempotent on long wrapped lines: a second run can still
+  change a few of them.
 
 ### Form designer — `form_*`
 
@@ -154,7 +185,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_get_directory` | Root directory of the active project (contains the `.lpi`) |
 | `project_list_files` | Source files of the active project |
 | `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options |
-| `project_add_file` / `project_remove_file` | Project file list (files stay on disk) |
+| `project_add_file` / `project_remove_file` | Project file list (files stay on disk). Adding a file already in the project reports `already_in_project`. Removing a file open in the editor is refused until it is closed |
 | `project_create_unit` | New unit on disk, added to the project and opened |
 | `project_list_packages` | Required packages as in Project Inspector: version limits, resolved `.lpk`, status (`ok`, `not_found`, ...); `recursive` adds the whole graph in compile order |
 | `project_add_package` / `project_remove_package` | Package dependencies in the `.lpi` |
@@ -178,7 +209,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
 | `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS, or HTTP when the IDE has no OpenSSL) |
 | `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
-| `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE |
+| `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE, as `ide_rebuild` does |
 
 Installing a package that is not installed yet with `package_install` is off
 by default. Turn it on with
@@ -235,11 +266,14 @@ program started by the IDE cannot keep a connection open.
 
 ## Requirements
 
-- **Lazarus IDE** (tested on the stable series; v0.x targets Windows only)
+- **Lazarus IDE** (tested with 4.6 on Windows and Linux)
 - **Free Pascal Compiler** (bundled with Lazarus)
 - **Claude Code** (or any MCP client that supports Streamable HTTP transport)
 
-Package dependencies — all bundled with Lazarus: `SynEdit`, `IDEIntf`, `FCL`, `CodeTools`.
+Package dependencies — all bundled with Lazarus: `SynEdit`, `IDEIntf`, `FCL`,
+`CodeTools`, and `jcfbase` (JEDI Code Format, for `code_format`). JCF's IDE
+plugin, `jcfidelazarus`, is optional; when it is installed, `code_format` uses
+its settings.
 
 ---
 
@@ -326,7 +360,7 @@ tests/mcpserver_tests.exe --all --format=plain
 
 | Suite | Count | Requires |
 |---|---|---|
-| `TTestUtils` | 10 | Nothing (always runs) |
+| `TTestUtils` | 11 | Nothing (always runs) |
 | `TTestJUnitWriter` | 8 | Nothing (always runs) |
 | `TTestLauncher` | 10 | Nothing (always runs): sh quoting, launch script, terminal choice |
 | `TTestSettingsFile` | 3 | Nothing (always runs): settings save/load, obsolete keys removed |
@@ -334,10 +368,12 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
-| `TTestToolSmoke` | 15 | MCP server reachable: one read-only call per tool group, on `tests/fixtures/` |
+| `TTestToolSmoke` | 17 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
 | `TTestFormUndo` | 11 | MCP server reachable: `form_undo`/`form_redo` and what the `form_*` tools record, on a temp copy of the fixture form |
-| `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` and `ide_rebuild` with a new package are refused |
+| `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
+| `TTestCodeFormat` | 7 | MCP server reachable: `code_format` on temp files (whole file, line range, parse errors, include files, trailing lines) |
+| `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` of a new package is refused; `ide_rebuild` refuses `lpk_path` |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
 The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped. With `MCP_DEBUG_TESTS=1` the debugger suite opens the debuggee project itself and reopens yours afterwards; it stops with an error instead if your project or an editor has unsaved changes.
@@ -372,9 +408,9 @@ ADR-007 was never assigned; no document is missing.
 
 For v1.0:
 
-- **macOS builds.** Never compiled or run there yet. Linux (Debian 12, Lazarus
-  4.6, GTK2) builds and passes the whole test suite, the debugger tests
-  included.
+- **Undoable rename.** `code_rename_identifier` writes to disk today; a preview
+  of the changes and a rename that Ctrl+Z can undo are next.
+- **macOS builds.** Never compiled or run there yet.
 
 ---
 
