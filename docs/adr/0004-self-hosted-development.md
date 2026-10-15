@@ -74,6 +74,8 @@ Bash/PowerShell tool; success means the new IDE is up and tool calls can resume.
 `lpk_path` is optional on `rebuild_ide`.  Omitting it rebuilds Lazarus with its
 currently installed packages (the common case when only re-installing after a
 source edit).  Passing a path loads and installs a new package before rebuilding.
+Since v1.0 `ide_rebuild` (the renamed `rebuild_ide`) takes no `lpk_path`:
+installing is `package_install`'s job, which shares the same rebuild code.
 
 ### 5 — Port stability: subprocess socket isolation
 

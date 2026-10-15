@@ -1340,11 +1340,9 @@ end;
 function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   PkgName  : string;
-  LpkPath  : string;
   IDEPkg   : TIDEPackage;
   FPList   : TFPList;
   PkgList  : TObjectList;
-  PkgID    : TLazPackageID;
   PollCmd  : string;
   RefArr   : TJSONArray;
   Obj      : TJSONObject;
@@ -1493,52 +1491,7 @@ begin
     end;
   end
 
-  else if Name = 'package_install' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('lpk_path', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'lpk_path required'; Exit;
-    end;
-    LpkPath := Ctx.Params.Get('lpk_path', '');
-    { new code into the IDE needs the user's consent (ADR-013) }
-    if not McpConfirmPackageInstall(LpkPath, 'package_install', PkgName) then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgName; Exit;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('status',  'rebuilding');
-      Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
-                         'command in poll_command until it succeeds.');
-      PollCmd := McpPollCommand;
-      if PollCmd <> '' then
-        Obj.Add('poll_command', PollCmd);
-      Ctx.Result          := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-    while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
-      LazarusIDE.DoCloseEditorFile(
-        SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
-    if Assigned(Ctx.StopServer) then Ctx.StopServer();
-    PkgList := TObjectList.Create(True);
-    try
-      PackageEditingInterface.DoOpenPackageFile(LpkPath, [pofDoNotOpenEditor], False);
-      IDEPkg := PackageEditingInterface.FindPackageWithName(
-                  ExtractFileNameOnly(LpkPath));
-      if Assigned(IDEPkg) then
-      begin
-        PkgID := TLazPackageID.Create;
-        PkgID.AssignID(IDEPkg);
-        PkgList.Add(PkgID);
-      end;
-      PackageEditingInterface.InstallPackages(
-        PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
-    finally
-      PkgList.Free;
-    end;
-  end
+  { package_install: the rebuild in McpToolsBuild }
 
   else if Name = 'package_uninstall' then
   begin

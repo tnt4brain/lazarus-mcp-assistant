@@ -181,8 +181,8 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE |
 
-Installing a package that is not installed yet — via `package_install` or
-`ide_rebuild` with `lpk_path` — is off by default. Turn it on with
+Installing a package that is not installed yet with `package_install` is off
+by default. Turn it on with
 **Tools → MCP Assistant → Allow Assistants to Install Packages** (or the same
 checkbox in **Tools → Options → MCP Assistant**); each install is
 then shown to you in the IDE (package, author, license, dependencies) and
@@ -196,7 +196,7 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 | `ide_ping` | `{"status":"ok","version":"x.y","client":"<id>"}` — confirms the server is back after `ide_rebuild` and shows the caller's identity |
 | `ide_get_messages` | Everything in the Messages window, all urgency levels |
 | `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
-| `ide_rebuild` | Rebuild and restart the IDE (optionally installing `lpk_path` first); the server is gone for ~60 s |
+| `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s |
 | `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML |
 
 ### Git — `git_*`
@@ -288,7 +288,7 @@ This plugin was built using itself. The development loop:
 1. **Launch MCP Assistant** — starts the server and opens Claude Code.
 2. Claude edits source files in the plugin repository using `editor_edit_text`, `project_create_unit`, etc.
 3. Claude calls `package_compile` with the `.lpk` path to catch compiler errors before touching the IDE.
-4. Claude calls `ide_rebuild` (optionally passing `lpk_path`). The IDE exits and `startlazarus.exe` rebuilds it (~60 s).
+4. Claude calls `ide_rebuild`. The IDE exits and `startlazarus.exe` rebuilds it (~60 s).
 5. Claude runs the `poll_command` from the `ide_rebuild` response, which waits until the new IDE is up.
 6. The new IDE starts with the same bearer token and the same ephemeral port, so Claude Code's next call just works and keeps its session id (verified). Changed tool descriptions reach Claude Code only in a new session; `/mcp reconnect` didn't refresh the ones it had already loaded (seen with tool search on).
 

@@ -23,7 +23,8 @@ destructive edits.
 
 Installing a package that is **not already installed from that same `.lpk` file**
 requires the two steps below. Both `package_install` and `ide_rebuild` with
-`lpk_path` go through `McpConfirmPackageInstall` in `McpConsent.pas`.
+`lpk_path` go through `McpConfirmPackageInstall` in `McpConsent.pas`. (Since
+v1.0 only `package_install` installs; `ide_rebuild` refuses `lpk_path`.)
 
 1. **An opt-in setting, off by default.** Tools → MCP Assistant →
    *Allow Assistants to Install Packages* (a checkable menu item, stored as
@@ -50,7 +51,7 @@ requires the two steps below. Both `package_install` and `ide_rebuild` with
    - **A refusal or timeout tells the assistant** not to retry unless the user asks.
 
 **No consent is needed** to rebuild packages that are already installed from that
-file: `ide_rebuild` without `lpk_path`, and `ide_rebuild`/`package_install` of this
+file: `ide_rebuild`, and `package_install` of this
 plugin during its own development loop. That code is already in the IDE.
 
 `package_uninstall` removes code and needs no consent.

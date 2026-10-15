@@ -63,12 +63,14 @@ begin
     'tells the assistant not to change the setting: ' + T);
 end;
 
+{ ide_rebuild doesn't install: that is package_install's job }
 procedure TTestConsent.TestRebuildWithPackageRefused;
 var
   T : string;
 begin
   T := CallToolText('ide_rebuild', '{"lpk_path":' + JsonStr(ProbeLpk) + '}', []);
-  CheckEquals(1, Pos('TOOL ERROR: Refused', T), 'refused before any rebuild: ' + T);
+  CheckEquals(1, Pos('TOOL ERROR:', T), 'refused before any rebuild: ' + T);
+  CheckTrue(Pos('package_install', T) > 0, 'points to package_install: ' + T);
   CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
     'the IDE is still up');
 end;

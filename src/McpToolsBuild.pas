@@ -2,7 +2,8 @@
 unit McpToolsBuild;
 
 { Build / run tools: project_build, project_run, ide_rebuild, project_get_compiler_errors,
-  ide_get_messages, project_run.
+  ide_get_messages, project_run; the rebuild of package_install, whose schema
+  is in McpToolsPackages.
   Schema registration also covers package_compile and ide_run_tests, which run
   off the main thread and remain handled in HandleToolsCall. }
 
@@ -39,8 +40,7 @@ const
     '"required":["lpk_path"]}';
 
   SCHEMA_REBUILD_IDE =
-    '{"type":"object","properties":{"lpk_path":{"type":"string",' +
-    '"description":"Absolute path of a .lpk to install first; omit to just rebuild"}}}';
+    '{"type":"object","properties":{}}';
 
   SCHEMA_RUN_TESTS =
     '{"type":"object","properties":{' +
@@ -171,8 +171,9 @@ begin
 
 end;
 
-{ ── Blocking ide_rebuild ─────────────────────────────────────────────────── }
-{ ide_rebuild runs on the HTTP worker thread.  If an exception dialog is open,
+{ ── Blocking ide_rebuild / package_install ───────────────────────────────── }
+{ ide_rebuild and package_install (the same rebuild with a package listed
+  first) run on the HTTP worker thread.  If an exception dialog is open,
   it queues a non-blocking close request to the main thread (TThread.Queue),
   then polls for the dialog globals to clear before proceeding with the rebuild.
   All IDE API calls still happen via TThread.Synchronize. }
@@ -181,6 +182,7 @@ type
   TBuildSyncHelper = class
   public
     LpkPath    : string;
+    ToolName   : string;
     PollCmd    : string;
     StopServer : TMcpStopServerProc;
     ConsentOk  : Boolean;
@@ -218,7 +220,7 @@ end;
 { Main thread: may LpkPath be installed? (ADR-013) }
 procedure TBuildSyncHelper.CheckConsent;
 begin
-  ConsentOk := McpConfirmPackageInstall(LpkPath, 'ide_rebuild', ConsentMsg);
+  ConsentOk := McpConfirmPackageInstall(LpkPath, ToolName, ConsentMsg);
 end;
 
 procedure TBuildSyncHelper.ReadPollPaths;
@@ -280,26 +282,40 @@ end;
 
 function DispatchBuildBlockingTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
-  Obj    : TJSONObject;
-  Waited : Integer;
+  Obj     : TJSONObject;
+  Waited  : Integer;
+  LpkPath : string;
 begin
   Result := False;
-  if Name <> 'ide_rebuild' then Exit;
+  if (Name <> 'ide_rebuild') and (Name <> 'package_install') then Exit;
   Result := True;
+
+  LpkPath := '';
+  if Assigned(Ctx.Params) then
+    LpkPath := Ctx.Params.Get('lpk_path', '');
+  if (Name = 'package_install') and (LpkPath = '') then
+  begin
+    Ctx.Error := True; Ctx.Result := 'lpk_path required'; Exit;
+  end;
+  if (Name = 'ide_rebuild') and (LpkPath <> '') then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'ide_rebuild only rebuilds; install a package with package_install.';
+    Exit;
+  end;
 
   { In-flight guard: refuse a concurrent rebuild. }
   if InterlockedCompareExchange(GRebuildActive, 1, 0) <> 0 then
   begin
     Ctx.Error  := True;
-    Ctx.Result := 'ide_rebuild is already in progress.';
+    Ctx.Result := 'A rebuild of the IDE is already in progress.';
     Exit;
   end;
   try
 
-  GBuildHelper.LpkPath    := '';
+  GBuildHelper.LpkPath    := LpkPath;
+  GBuildHelper.ToolName   := Name;
   GBuildHelper.StopServer := Ctx.StopServer;
-  if Assigned(Ctx.Params) then
-    GBuildHelper.LpkPath := Ctx.Params.Get('lpk_path', '');
 
   { installing a package that is not installed yet needs the user's consent }
   if GBuildHelper.LpkPath <> '' then
@@ -329,7 +345,7 @@ begin
       begin
         Ctx.Error  := True;
         Ctx.Result := '{"error":"Exception dialog is still showing after 5 s. ' +
-                      'Click Break or Continue on the dialog, then call ide_rebuild again."}';
+                      'Click Break or Continue on the dialog, then call ' + Name + ' again."}';
         Exit;
       end;
     end;
@@ -390,9 +406,9 @@ begin
     'Does not restart the IDE.',
     SCHEMA_COMPILE_PLUGIN, MCP_ANN_WRITE));
   Tools.Add(MakeTool('ide_rebuild',
-    'Rebuild and restart the IDE, optionally installing a package first; the ' +
-    'server is down for about a minute (the result says how to wait). A package ' +
-    'not installed yet needs the user''s consent. Run package_compile first.',
+    'Rebuild and restart the IDE with its installed packages; the server is ' +
+    'down for about a minute (the result says how to wait). Run package_compile ' +
+    'first. To install a package, use package_install.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
   Tools.Add(MakeTool('ide_run_tests',
     'Compile and run an FPCUnit test project; returns pass/fail counts and ' +
