@@ -18,9 +18,10 @@ implementation
 
 uses
   Classes, SysUtils, Types,
-  LazIDEIntf, SrcEditorIntf, LazFileUtils, Controls,
+  LazIDEIntf, SrcEditorIntf, PackageIntf, MacroIntf, LazFileUtils, Controls,
   fpjson,
-  Converter, ConvertTypes, JcfRegistrySettings,
+  Converter, ConvertTypes, JcfRegistrySettings, JcfUiTools, ParseTreeNode,
+  System.UITypes,
   McpToolContext, McpLineDiff;
 
 const
@@ -44,6 +45,107 @@ type
     procedure OnIncludeFile(Sender: TObject; AIncludeFileName: string;
       var AFileContentOrErrorMessage: string; var AFileReaded: Boolean);
   end;
+
+{ JCF reaches its user interface through one global object, which only its
+  IDE plugin (jcfidelazarus) sets; without the plugin JCF raises on first use
+  and TConverter.Convert then fails with an access violation in its cleanup.
+  This one shows nothing: what JCF would show goes into the next result.
+  JcfUiTools is compiled without $H+, hence the ShortString parameters. }
+type
+  TMcpJcfUI = class(TJcfUIBase)
+  public
+    procedure UpdateGUI(aCounter: Integer = 0; aUpdateInterval: Integer = 512); override;
+    function MessageDlgUI(const aMessage: ShortString): TModalResult; override;
+    procedure ShowErrorMessageUI(const aMessage: ShortString); override;
+    procedure SetWaitCursorUI; override;
+    procedure RestoreCursorUI; override;
+    procedure ShowParseTreeUI(const pcRoot: TParseTreeNode); override;
+    function OpenDocumentUI(const aPath: ShortString): Boolean; override;
+  end;
+
+var
+  JcfUIMessages: string = '';  { what TMcpJcfUI was asked to show }
+
+procedure TMcpJcfUI.UpdateGUI(aCounter: Integer; aUpdateInterval: Integer);
+begin
+end;
+
+function TMcpJcfUI.MessageDlgUI(const aMessage: ShortString): TModalResult;
+begin
+  JcfUIMessages := JcfUIMessages + Trim(aMessage) + LineEnding;
+  Result := mrNo;
+end;
+
+procedure TMcpJcfUI.ShowErrorMessageUI(const aMessage: ShortString);
+begin
+  JcfUIMessages := JcfUIMessages + Trim(aMessage) + LineEnding;
+end;
+
+procedure TMcpJcfUI.SetWaitCursorUI;
+begin
+end;
+
+procedure TMcpJcfUI.RestoreCursorUI;
+begin
+end;
+
+procedure TMcpJcfUI.ShowParseTreeUI(const pcRoot: TParseTreeNode);
+begin
+end;
+
+function TMcpJcfUI.OpenDocumentUI(const aPath: ShortString): Boolean;
+begin
+  Result := False;
+end;
+
+const
+  JcfOptsFileName = 'jcfsettings.cfg';  { the plugin's DefaultJCFOptsFile }
+
+var
+  JcfOptsFile: string = '';
+
+function McpJcfSettingsFileName: string;
+begin
+  Result := JcfOptsFile;
+end;
+
+{ What JCF's IDE plugin does in its Register, done here when the plugin is
+  not installed (GetUI raises: no UI object is set, and there is no other
+  way to ask): our UI object, and the settings file in the IDE's config
+  folder, created like the plugin creates it, from Lazarus's default JCF
+  settings (the plugin has them as a resource made from that same file).
+  Without this JCF falls back to its raw defaults, which wrap single
+  statements in begin..end and add no spaces.  Main thread. }
+procedure EnsureJcfSetup;
+var
+  Src : string;
+  SL  : TStringList;
+begin
+  try
+    GetUI;
+    Exit;  { the plugin is there and has set everything up }
+  except
+    on Exception do
+      SetJcfUiClass(TMcpJcfUI.Create);
+  end;
+  JcfOptsFile := AppendPathDelim(LazarusIDE.GetPrimaryConfigPath) + JcfOptsFileName;
+  LazarusIDE.CopySecondaryConfigFile(JcfOptsFileName);
+  if not FileExists(JcfOptsFile) then
+  begin
+    Src := '$(LazarusDir)/components/jcf2/IdePlugin/lazarus/Default_JCFSETTINGS.cfg';
+    if Assigned(IDEMacros) and IDEMacros.SubstituteMacros(Src) and FileExists(SetDirSeparators(Src)) then
+    begin
+      SL := TStringList.Create;
+      try
+        SL.LoadFromFile(SetDirSeparators(Src));
+        SL.SaveToFile(JcfOptsFile);
+      finally
+        SL.Free;
+      end;
+    end;
+  end;
+  GetDefaultSettingsFileName := @McpJcfSettingsFileName;
+end;
 
 constructor TJcfSink.Create;
 begin
@@ -224,6 +326,8 @@ begin
   end;
 
   Src := Ed.GetText(False);
+  EnsureJcfSetup;
+  JcfUIMessages := '';
   Sink := TJcfSink.Create;
   Conv := TConverter.Create;
   A := TStringList.Create;
@@ -252,6 +356,8 @@ begin
     end
     else
       Conv.Convert;
+    if JcfUIMessages <> '' then
+      Sink.OnMessage(FilePath, JcfUIMessages, mtCodeWarning, -1, -1);
     if Conv.ConvertError then
     begin
       Ctx.Error := True;
@@ -310,6 +416,10 @@ begin
         Sink.Messages := nil;
       end;
       Obj.Add('saved', AutoSave and (Length(Hunks) > 0));
+      if PackageEditingInterface.IsPackageInstalled('jcfidelazarus') = nil then
+        Obj.Add('note', 'JEDI Code Format''s IDE plugin (jcfidelazarus) is not ' +
+          'installed, so there is no JCF options page: the settings come from ' +
+          JcfOptsFile + ' (Lazarus''s default JCF settings unless edited there)');
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
