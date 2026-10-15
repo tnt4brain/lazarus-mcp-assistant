@@ -26,6 +26,7 @@ type
     procedure TestPathSpellingsNameOneFile;
     procedure TestGitStatus;
     procedure TestGitBlameActiveEditor;
+    procedure TestEditorReadFileRange;
     procedure TestEditorReplaceRange;
     procedure TestEditorFileDeletedAndCreatedAgain;
     procedure TestProjectGetSettings;
@@ -267,6 +268,53 @@ begin
   finally
     Call('editor_revert', '{"file":' + JsonStr(FixtureUnit) + '}');
     Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
+  end;
+end;
+
+{ editor_read_file: a range of lines, and a large file cut after about
+  40,000 characters with where to go on. }
+procedure TTestToolSmoke.TestEditorReadFileRange;
+var
+  F, T : string;
+  SL   : TStringList;
+  J    : TJSONObject;
+  I    : Integer;
+begin
+  F  := GetTempDir(False) + 'mcpreadrange.pas';
+  SL := TStringList.Create;
+  try
+    for I := 1 to 3000 do
+      SL.Add(Format('// line %d of a large file, long enough to pass the cap', [I]));
+    SL.SaveToFile(F);
+  finally
+    SL.Free;
+  end;
+  try
+    T := Call('editor_read_file', '{"file":' + JsonStr(F) + ',"start_line":2,"end_line":3}');
+    CheckNoError(Self, 'editor_read_file', T);
+    J := TJSONObject(GetJSON(T));
+    try
+      CheckEquals('// line 2 of a large file, long enough to pass the cap'#10 +
+                  '// line 3 of a large file, long enough to pass the cap'#10,
+                  J.Get('content', ''), 'lines 2..3');
+      CheckEquals(3000, J.Get('total_lines', 0));
+      CheckNull(J.Find('truncated'), 'a small range is whole');
+    finally
+      J.Free;
+    end;
+    T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+    J := TJSONObject(GetJSON(T));
+    try
+      CheckTrue(J.Get('truncated', False), 'cut: ' + Copy(T, 1, 200));
+      CheckTrue(Length(J.Get('content', '')) <= 40000, 'within the cap');
+      CheckEquals(J.Get('end_line', 0) + 1, J.Get('next_line', 0), 'goes on after the last line');
+    finally
+      J.Free;
+    end;
+    T := Call('editor_read_file', '{"file":' + JsonStr(F) + ',"start_line":3001}');
+    CheckTrue(Pos('past the end', T) > 0, 'past the end: ' + T);
+  finally
+    DeleteFile(F);
   end;
 end;
 

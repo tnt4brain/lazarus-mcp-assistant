@@ -26,8 +26,14 @@ const
 
   SCHEMA_GET_FILE_CONTENT =
     '{"type":"object","properties":{"file":{"type":"string",' +
-    '"description":"Absolute path to the file"}},' +
+    '"description":"Absolute path to the file"},' +
+    '"start_line":{"type":"integer","description":"First line to return (1-based, default 1)"},' +
+    '"end_line":{"type":"integer","description":"Last line to return (default: the end)"}},' +
     '"required":["file"]}';
+
+  { characters of content per editor_read_file result; past it the result
+    says truncated and next_line }
+  READ_CAP = 40000;
 
   SCHEMA_GET_PROJECT_FILES =
     '{"type":"object","properties":{}}';
@@ -120,6 +126,7 @@ var
   AlreadyOpen  : Boolean;
   HasEnd       : Boolean;
   HasLen       : Boolean;
+  Truncated    : Boolean;
   I            : Integer;
   J            : Integer;
 begin
@@ -177,44 +184,80 @@ begin
       Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
     SyncFilePath := Ctx.Params.Get('file', '');
-    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
-    if Assigned(Ed) then
+    StartLine    := Ctx.Params.Get('start_line', 1);
+    EndLine      := Ctx.Params.Get('end_line',   0);   { 0: to the end }
+    if (StartLine < 1) or (EndLine < 0) or ((EndLine > 0) and (EndLine < StartLine)) then
     begin
+      Ctx.Error := True; Ctx.Result := 'start_line must be >= 1 and end_line >= start_line'; Exit;
+    end;
+    SyncFileNames := TStringList.Create;
+    try
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
+      if Assigned(Ed) then
+      begin
+        SyncFileNames.Text := Ed.Lines.Text;
+        SyncText := 'editor';
+      end
+      else
+      begin
+        if not FileExists(SyncFilePath) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'File not found: ' + SyncFilePath; Exit;
+        end;
+        try
+          SyncFileNames.LoadFromFile(SyncFilePath);
+        except
+          on E: Exception do
+          begin
+            Ctx.Error := True; Ctx.Result := 'Error reading file: ' + E.Message; Exit;
+          end;
+        end;
+        SyncText := 'disk';
+      end;
+      if (StartLine > SyncFileNames.Count) and (SyncFileNames.Count > 0) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := Format('start_line %d is past the end (%d lines)',
+                             [StartLine, SyncFileNames.Count]);
+        Exit;
+      end;
+      if (EndLine = 0) or (EndLine > SyncFileNames.Count) then
+        EndLine := SyncFileNames.Count;
+      { a whole large unit is more than a client takes in one result: stop
+        after READ_CAP characters and say where to go on }
+      SyncNewName := '';
+      Truncated   := False;
+      I := StartLine;
+      while I <= EndLine do
+      begin
+        if (I > StartLine) and
+           (Length(SyncNewName) + Length(SyncFileNames[I - 1]) + 1 > READ_CAP) then
+        begin
+          Truncated := True;
+          Break;
+        end;
+        SyncNewName := SyncNewName + SyncFileNames[I - 1] + #10;
+        Inc(I);
+      end;
       Obj := TJSONObject.Create;
       try
-        Obj.Add('path',    SyncFilePath);
-        Obj.Add('content', StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]));
-        Obj.Add('source',  'editor');
+        Obj.Add('file',        SyncFilePath);
+        Obj.Add('source',      SyncText);
+        Obj.Add('total_lines', SyncFileNames.Count);
+        Obj.Add('start_line',  StartLine);
+        Obj.Add('end_line',    I - 1);
+        if Truncated then
+        begin
+          Obj.Add('truncated', True);
+          Obj.Add('next_line', I);
+        end;
+        Obj.Add('content',     SyncNewName);
         Ctx.Result := Obj.AsJSON;
       finally
         Obj.Free;
       end;
-    end
-    else
-    begin
-      SyncFileNames := TStringList.Create;
-      try
-        try
-          SyncFileNames.LoadFromFile(SyncFilePath);
-          Obj := TJSONObject.Create;
-          try
-            Obj.Add('path',    SyncFilePath);
-            Obj.Add('content', StringReplace(SyncFileNames.Text, #13#10, #10, [rfReplaceAll]));
-            Obj.Add('source',  'disk');
-            Ctx.Result := Obj.AsJSON;
-          finally
-            Obj.Free;
-          end;
-        except
-          on E: Exception do
-          begin
-            Ctx.Error  := True;
-            Ctx.Result := 'Error reading file: ' + E.Message;
-          end;
-        end;
-      finally
-        SyncFileNames.Free;
-      end;
+    finally
+      SyncFileNames.Free;
     end;
   end
 
@@ -659,8 +702,10 @@ begin
     'Return the active editor file name and its current buffer content.',
     SCHEMA_GET_ACTIVE_FILE, MCP_ANN_RO));
   Tools.Add(MakeTool('editor_read_file',
-    'Read the content of any file by its absolute path. ' +
-    'Prefers the live editor buffer (shows unsaved changes) over disk.',
+    'Read a file by its absolute path, or the lines start_line..end_line of it. ' +
+    'Prefers the live editor buffer (shows unsaved changes) over disk. Returns ' +
+    'total_lines; a result stops after about 40,000 characters with truncated ' +
+    'and next_line to continue from.',
     SCHEMA_GET_FILE_CONTENT, MCP_ANN_RO));
   Tools.Add(MakeTool('project_list_files',
     'Return the list of source files in the active project.',
