@@ -2313,8 +2313,8 @@ begin
   Tools.Add(MakeTool('form_delete_component',
     'Delete a component (and its child controls) from a form, as the designer''s ' +
     'Delete command does; its field is removed from the source. Also deletes menu ' +
-    'items with their submenus. Save with editor_save.',
-    SCHEMA_FORM_DELETE_COMPONENT, MCP_ANN_DEST));
+    'items with their submenus. form_undo brings it back. Save with editor_save.',
+    SCHEMA_FORM_DELETE_COMPONENT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_arrange',
     'Arrange controls that share a parent: same_size, then distribute, then ' +
     'align. Returns the new bounds.',
@@ -2340,8 +2340,8 @@ begin
     SCHEMA_FORM_ADD_COLLECTION_ITEM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_delete_collection_item',
     'Delete the item at index from a collection property. Later items shift down ' +
-    'by one. Save with editor_save.',
-    SCHEMA_FORM_DELETE_COLLECTION_ITEM, MCP_ANN_DEST));
+    'by one. form_undo brings it back. Save with editor_save.',
+    SCHEMA_FORM_DELETE_COLLECTION_ITEM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_move_collection_item',
     'Move a collection item from index to new_index (e.g. reorder grid columns). ' +
     'Save with editor_save.',

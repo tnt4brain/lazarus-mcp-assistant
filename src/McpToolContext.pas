@@ -52,7 +52,9 @@ procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Han
 
 { MCP tool annotation presets — pass as AAnnotations to MakeTool.
   Everything works on the local IDE/project only, hence openWorldHint=false.
-  RO is also used for tools that only move the editor cursor or open a tab. }
+  RO is also used for tools that only move the editor cursor or open a tab.
+  DEST is for changes Ctrl+Z or form_undo can't take back: deletes that
+  form_undo restores are WRITE, as are deletes of editor text. }
 const
   MCP_ANN_RO    = '{"readOnlyHint":true,"openWorldHint":false}';
   MCP_ANN_WRITE = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}';
