@@ -22,7 +22,7 @@ uses
   fpjson,
   Converter, ConvertTypes, JcfRegistrySettings, JcfUiTools, ParseTreeNode,
   System.UITypes,
-  McpToolContext, McpLineDiff;
+  McpToolContext, McpToolHelpers, McpLineDiff;
 
 const
   SCHEMA_FORMAT =
@@ -249,6 +249,7 @@ const
   Allowed: array[0..4] of string = ('.pas', '.pp', '.lpr', '.dpr', '.inc');
 var
   FilePath, Ext, Src     : string;
+  ErrText                : string;
   StartLine, EndLine     : Integer;
   AutoSave, IsInc, Ok    : Boolean;
   Ed                     : TSourceEditorInterface;
@@ -302,9 +303,9 @@ begin
   if Ed = nil then
   begin
     { opening a missing file shows the IDE's modal "File not found" }
-    if not FileExists(FilePath) then
+    if not McpCheckFileToOpen(FilePath, ErrText) then
     begin
-      Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
+      Ctx.Error := True; Ctx.Result := ErrText; Exit;
     end;
     if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
          [ofOnlyIfExists, ofRegularFile, ofDoNotActivateSourceEditor]) <> mrOK then

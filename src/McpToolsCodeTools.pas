@@ -301,6 +301,7 @@ end;
 procedure DoCompleteCode(var Ctx: TMcpToolCall);
 var
   FilePath, OldSrc         : string;
+  ErrText                  : string;
   Line, Col                : Integer;
   AutoSave, OldOpen, Done  : Boolean;
   CodeBuf, NewCode, Buf    : TCodeBuffer;
@@ -326,9 +327,9 @@ begin
   if SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath) = nil then
   begin
     { opening a missing file shows the IDE's modal "File not found" }
-    if not FileExists(FilePath) then
+    if not McpCheckFileToOpen(FilePath, ErrText) then
     begin
-      Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
+      Ctx.Error := True; Ctx.Result := ErrText; Exit;
     end;
     if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
          [ofOnlyIfExists, ofRegularFile, ofDoNotActivateSourceEditor]) <> mrOK then
@@ -830,6 +831,11 @@ begin
       Exit;
     end;
     DeclPt := Point(NewX, NewY);
+    if (SourceEditorManagerIntf.SourceEditorIntfWithFilename(NewCode.Filename) = nil) and
+       not McpCheckFileToOpen(NewCode.Filename, Symbol) then
+    begin
+      Ctx.Error := True; Ctx.Result := Symbol; Exit;
+    end;
     if LazarusIDE.DoOpenFileAndJumpToPos(NewCode.Filename, DeclPt,
          NewTopLine, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
     begin
@@ -976,6 +982,10 @@ begin
     { Open editor if not already open }
     if not Assigned(Ed) then
     begin
+      if not McpCheckFileToOpen(FilePath, NewName) then
+      begin
+        Ctx.Error := True; Ctx.Result := NewName; Exit;
+      end;
       if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
            [ofOnlyIfExists, ofRegularFile]) <> mrOK then
       begin
@@ -1031,6 +1041,10 @@ begin
     end;
     if not Assigned(Ed) then
     begin
+      if not McpCheckFileToOpen(FilePath, NewName) then
+      begin
+        Ctx.Error := True; Ctx.Result := NewName; Exit;
+      end;
       if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
            [ofOnlyIfExists, ofRegularFile]) <> mrOK then
       begin
@@ -1088,6 +1102,10 @@ begin
     end;
     if not Assigned(Ed) then
     begin
+      if not McpCheckFileToOpen(FilePath, NewName) then
+      begin
+        Ctx.Error := True; Ctx.Result := NewName; Exit;
+      end;
       if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
            [ofOnlyIfExists, ofRegularFile]) <> mrOK then
       begin
@@ -1148,6 +1166,10 @@ begin
     end;
     if not Assigned(Ed) then
     begin
+      if not McpCheckFileToOpen(FilePath, NewName) then
+      begin
+        Ctx.Error := True; Ctx.Result := NewName; Exit;
+      end;
       if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
            [ofOnlyIfExists, ofRegularFile]) <> mrOK then
       begin

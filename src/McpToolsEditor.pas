@@ -316,6 +316,11 @@ begin
     if SyncFilePath <> '' then
     begin
       SyncDeclPt := Point(SyncNewX, SyncNewY);
+      if not Assigned(SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath)) and
+         not McpCheckFileToOpen(SyncFilePath, SyncText) then
+      begin
+        Ctx.Error := True; Ctx.Result := SyncText; Exit;
+      end;
       if LazarusIDE.DoOpenFileAndJumpToPos(SyncFilePath, SyncDeclPt,
            SyncNewY, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
       begin
@@ -379,6 +384,10 @@ begin
       Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
       if not Assigned(Ed) then
       begin
+        if not McpCheckFileToOpen(SyncFilePath, SyncText) then
+        begin
+          Ctx.Error := True; Ctx.Result := SyncText; Exit;
+        end;
         if LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1,
              [ofOnlyIfExists, ofRegularFile]) <> mrOK then
         begin
@@ -443,6 +452,10 @@ begin
       Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
       if not Assigned(Ed) then
       begin
+        if not McpCheckFileToOpen(SyncFilePath, SyncText) then
+        begin
+          Ctx.Error := True; Ctx.Result := SyncText; Exit;
+        end;
         if LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1,
              [ofOnlyIfExists, ofRegularFile]) <> mrOK then
         begin
@@ -617,7 +630,15 @@ begin
     SyncFilePath := Ctx.Params.Get('file', '');
     AlreadyOpen  := Assigned(
       SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath));
-    LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1, [ofOnlyIfExists, ofRegularFile]);
+    if not AlreadyOpen and not McpCheckFileToOpen(SyncFilePath, SyncText) then
+    begin
+      Ctx.Error := True; Ctx.Result := SyncText; Exit;
+    end;
+    if LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1,
+         [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not open: ' + SyncFilePath; Exit;
+    end;
     Obj := TJSONObject.Create;
     try
       Obj.Add('file',         SyncFilePath);

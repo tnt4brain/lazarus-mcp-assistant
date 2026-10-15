@@ -34,7 +34,7 @@ uses
   TypInfo, LResources,
   ComponentReg, PropEdits,
   fpjson,
-  McpToolContext;
+  McpToolContext, McpToolHelpers;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -762,9 +762,8 @@ begin
   if Ed = nil then
   begin
     { the IDE answers a missing file with a dialog }
-    if not FileExists(PasFile) then
+    if not McpCheckFileToOpen(PasFile, AErr) then
     begin
-      AErr := 'File not found: ' + PasFile;
       Exit;
     end;
     LazarusIDE.DoOpenEditorFile(PasFile, -1, -1, [ofOnlyIfExists]);

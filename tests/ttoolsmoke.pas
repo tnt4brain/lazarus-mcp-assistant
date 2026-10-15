@@ -27,6 +27,7 @@ type
     procedure TestGitStatus;
     procedure TestGitBlameActiveEditor;
     procedure TestEditorReplaceRange;
+    procedure TestEditorFileDeletedAndCreatedAgain;
     procedure TestProjectGetSettings;
     procedure TestProjectOpenAlreadyOpen;
     procedure TestPackageGetInfo;
@@ -314,6 +315,51 @@ begin
       ',"start_line":1,"start_col":1,"end_line":1,"end_col":2,"delete_len":1,"new_text":""}');
     CheckTrue(Pos('not both', T) > 0, 'both ends refused: ' + T);
     CheckEquals('ZaXf'#10'Y'#10, Buffer, 'unchanged after the refusal');
+  finally
+    Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    DeleteFile(F);
+  end;
+end;
+
+{ A file the IDE saw missing and the shell created again (the rerun of
+  TestEditorReplaceRange): the IDE's file cache still said missing, and
+  opening it showed the modal "File not found".  A missing file is an error
+  of the tool, without the dialog. }
+procedure TTestToolSmoke.TestEditorFileDeletedAndCreatedAgain;
+var
+  F, T : string;
+  SL   : TStringList;
+
+  procedure Write;
+  begin
+    SL := TStringList.Create;
+    try
+      SL.Text := 'unit mcprecreated;' + LineEnding + 'interface' + LineEnding +
+                 'implementation' + LineEnding + 'end.';
+      SL.SaveToFile(F);
+    finally
+      SL.Free;
+    end;
+  end;
+
+begin
+  F := GetTempDir(False) + 'mcprecreated.pas';
+  Write;
+  try
+    CheckNoError(Self, 'editor_open', Call('editor_open', '{"file":' + JsonStr(F) + '}'));
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    DeleteFile(F);
+    Call('code_get_outline', '{"file":' + JsonStr(F) + '}');   { the IDE looks for it }
+    T := Call('editor_replace_range', '{"file":' + JsonStr(F) +
+      ',"start_line":1,"start_col":1,"new_text":"// x\n"}');
+    CheckTrue(Pos('File not found', T) > 0, 'missing: ' + T);
+    T := Call('editor_open', '{"file":' + JsonStr(F) + '}');
+    CheckTrue(Pos('File not found', T) > 0, 'editor_open, missing: ' + T);
+    Write;
+    T := Call('editor_replace_range', '{"file":' + JsonStr(F) +
+      ',"start_line":1,"start_col":1,"new_text":"// x\n"}');
+    CheckNoError(Self, 'editor_replace_range on the new file', T);
   finally
     Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');

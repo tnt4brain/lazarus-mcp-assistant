@@ -33,7 +33,24 @@ function McpDoListTodos(const FileListJSON: string; AIncludeDone: Boolean): stri
 procedure McpOffsetToLineCol(const S: string; Offset: Integer;
                              out ALine, ACol: Integer);
 
+{ Call before LazarusIDE.DoOpenEditorFile.  The IDE answers a missing file
+  with a modal "File not found", and asks its file cache, which can still
+  say missing for a file created outside the IDE after it was deleted.
+  False (with AErr) when the file is not on disk; otherwise its cache entry
+  is renewed. }
+function McpCheckFileToOpen(const AFileName: string; out AErr: string): Boolean;
+
 implementation
+
+function McpCheckFileToOpen(const AFileName: string; out AErr: string): Boolean;
+begin
+  AErr   := '';
+  Result := FileExists(AFileName) and not DirectoryExists(AFileName);
+  if Result then
+    InvalidateFileStateCache(AFileName)
+  else
+    AErr := 'File not found: ' + AFileName;
+end;
 
 { ── Unit interface extractor ─────────────────────────────────────────────── }
 
