@@ -65,7 +65,7 @@ end;
 
 procedure TTestFormUndo.TearDown;
 begin
-  CallToolText('editor_revert', '{"file_path":' + JsonStr(FUnit) + '}', []);
+  CallToolText('editor_revert', '{"file":' + JsonStr(FUnit) + '}', []);
   CallToolText('editor_close', '{"file":' + JsonStr(FUnit) + '}', []);
   DeleteDirectory(FDir, False);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));

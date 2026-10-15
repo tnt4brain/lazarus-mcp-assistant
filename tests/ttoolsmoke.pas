@@ -174,7 +174,7 @@ begin
               (Pos('busy', T) > 0), 'says why: ' + T);
     CheckEquals(Before, Call('project_get_settings', '{}'), 'project unchanged');
   finally
-    Call('editor_revert', '{"file_path":' + JsonStr(F) + '}');
+    Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
     DeleteFile(F);
     RemoveDir(Dir);
