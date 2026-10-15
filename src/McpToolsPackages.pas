@@ -1145,6 +1145,28 @@ begin
   end;
 end;
 
+{ True if the package is compiled into the IDE: installed, or required by an
+  installed package (jcfbase by jcfidelazarus), which the IDE does not mark
+  as installed.  Passing the package manager itself as the owner lists all of
+  them. }
+function PackageIsInIDE(const AName: string): Boolean;
+var
+  List : TFPList;
+  I    : Integer;
+begin
+  Result := Assigned(PackageEditingInterface.IsPackageInstalled(AName));
+  if Result then Exit;
+  PackageEditingInterface.GetRequiredPackages(PackageEditingInterface, List);
+  if List = nil then Exit;
+  try
+    for I := 0 to List.Count - 1 do
+      if (TObject(List[I]) is TIDEPackage) and SameText(TIDEPackage(List[I]).Name, AName) then
+        Exit(True);
+  finally
+    List.Free;
+  end;
+end;
+
 function PackageAddDependency(AParams: TJSONObject; out AErr: string): string;
 var
   Pkg      : TLazPackage;
@@ -1169,8 +1191,7 @@ begin
   end;
   { ADR-013: a package in the IDE that starts requiring one that isn't would
     bring it in at the next rebuild, past the user's consent }
-  if Assigned(PackageEditingInterface.IsPackageInstalled(Pkg.Name)) and
-     not Assigned(PackageEditingInterface.IsPackageInstalled(ReqName)) then
+  if PackageIsInIDE(Pkg.Name) and not PackageIsInIDE(ReqName) then
   begin
     AErr := Pkg.Name + ' is installed in the IDE and ' + ReqName + ' is not: the next ' +
             'rebuild would bring ' + ReqName + ' into the IDE. Install it first ' +
