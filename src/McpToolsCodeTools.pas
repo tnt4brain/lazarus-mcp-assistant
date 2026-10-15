@@ -26,7 +26,7 @@ implementation
 uses
   Classes, SysUtils, StrUtils,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils,
-  CodeToolManager, CodeTree, AVL_Tree, SourceChanger,
+  CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   Controls,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpLineDiff;
@@ -425,7 +425,7 @@ end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
-function DispatchCodeToolsTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
+function DoDispatchCodeTools(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   FilePath   : string;
   Symbol     : string;
@@ -1434,6 +1434,44 @@ begin
     '(if, for, while, try, case, ...) with line ranges, for use with ' +
     'editor_edit_at_position.',
     SCHEMA_GET_AST_PARTIAL, MCP_ANN_RO));
+end;
+
+{ True if CodeTools last failed because it could not find a unit or an
+  include file.  Compared with the resource strings, so a translated IDE
+  matches too. }
+function CodeToolsMissedFile: Boolean;
+
+  function StartsWithStem(const Template: string): Boolean;
+  var
+    Stem : string;
+  begin
+    Stem := Copy(Template, 1, Pos('%', Template) - 1);
+    Result := (Stem <> '') and (Pos(Stem, CodeToolBoss.ErrorMessage) = 1);
+  end;
+
+begin
+  Result := StartsWithStem(ctsIncludeFileNotFound) or StartsWithStem(ctsUnitNotFound);
+end;
+
+{ A file created outside the IDE (by the assistant's shell, say) while the
+  IDE is in the background is missing from its file caches: the IDE renews
+  them when its window is activated, which never happens then.  So a tool
+  that failed for a missing unit or include file renews them as activation
+  does and runs once more.  A tool stops at the CodeTools error before it
+  edits anything, so running it again is safe. }
+function DispatchCodeToolsTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
+begin
+  CodeToolBoss.ClearError;
+  Result := DoDispatchCodeTools(Name, Ctx);
+  if Result and Ctx.Error and CodeToolsMissedFile then
+  begin
+    InvalidateFileStateCache;
+    CodeToolBoss.DirectoryCachePool.IncreaseFileTimeStamp;
+    CodeToolBoss.ClearError;
+    Ctx.Error := False;
+    Ctx.Result := '';
+    DoDispatchCodeTools(Name, Ctx);
+  end;
 end;
 
 initialization

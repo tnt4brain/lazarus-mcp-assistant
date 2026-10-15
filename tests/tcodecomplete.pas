@@ -33,6 +33,7 @@ type
     procedure TestAutoSave;
     procedure TestUnsavedEdits;
     procedure TestLargeUnit;
+    procedure TestIncludeCreatedLater;
   end;
 
 implementation
@@ -253,6 +254,33 @@ begin
   finally
     J.Free;
   end;
+end;
+
+{ An include file created after CodeTools looked at its folder, as the
+  assistant's shell creates them while the IDE is in the background: the
+  IDE's caches still say it is missing until the tool renews them. }
+procedure TTestCodeComplete.TestIncludeCreatedLater;
+var
+  SL : TStringList;
+  T  : string;
+begin
+  SL := TStringList.Create;
+  try
+    SL.Text := 'unit FixtureComplete;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+      'interface' + LineEnding + 'implementation' + LineEnding +
+      '{$I fixturelate.inc}' + LineEnding + 'procedure UsesALocal;' + LineEnding +
+      'begin' + LineEnding + '  Counter := 5;' + LineEnding + 'end;' + LineEnding + 'end.';
+    SL.SaveToFile(FUnit);
+    T := Complete(8, 4);
+    CheckTrue(Pos('include file not found', T) > 0, 'missing at first: ' + T);
+    SL.Text := '// created later';
+    SL.SaveToFile(FDir + 'fixturelate.inc');
+  finally
+    SL.Free;
+  end;
+  T := Complete(8, 4);
+  CheckFalse(IsError(T), 'found once created: ' + T);
+  CheckTrue(Pos('Counter: Integer;', T) > 0, 'completed: ' + T);
 end;
 
 end.
