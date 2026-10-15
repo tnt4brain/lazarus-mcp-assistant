@@ -4,7 +4,8 @@ unit McpToolsCodeTools;
 { Codetools / search tools: code_find_declaration, code_get_unit_interface,
   code_get_identifier_info, code_get_outline, code_find_references, code_rename_identifier,
   code_goto_declaration, project_search, project_create_unit, code_add_uses,
-  code_insert_in_procedure, code_replace_procedure_body, code_add_to_class, code_get_procedure_ast.
+  code_insert_in_procedure, code_replace_procedure_body, code_add_to_class, code_complete,
+  code_get_procedure_ast.
   All edit tools work through the editor buffer with an optional auto_save flag. }
 
 {$mode objfpc}{$H+}
@@ -25,7 +26,7 @@ implementation
 uses
   Classes, SysUtils, StrUtils,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils,
-  CodeToolManager, CodeTree, AVL_Tree,
+  CodeToolManager, CodeTree, AVL_Tree, SourceChanger,
   Controls,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers;
@@ -144,6 +145,14 @@ const
     '"line":{"type":"integer","description":"1-based line inside the procedure — alternative to proc_name; finds the enclosing scope"},' +
     '"col":{"type":"integer","description":"1-based column used together with line"}},' +
     '"required":["file"]}';
+
+  SCHEMA_COMPLETE_CODE =
+    '{"type":"object","properties":{' +
+    '"file":{"type":"string","description":"Absolute path"},' +
+    '"line":{"type":"integer","description":"1-based line of the code to complete"},' +
+    '"col":{"type":"integer","description":"1-based column on that line"},' +
+    '"auto_save":{"type":"boolean","description":"Also save the changed files to disk (default false)"}},' +
+    '"required":["file","line","col"]}';
 
 { ── Structural helpers ───────────────────────────────────────────────────── }
 
@@ -279,6 +288,266 @@ begin
       repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
       if Assigned(Node) then Node := Node.NextBrother;
     end;
+  end;
+end;
+
+{ The lines that differ between two versions of a source, as hunks of
+  line (1-based, in the new text), removed and added text.  Lines common to both are
+  matched by a longest common subsequence over the part between the common
+  head and tail, so edits far apart (a class declaration and a method body)
+  are separate hunks; a part too large for that is one hunk.  A hunk that only
+  adds or only removes lines is moved down as far as the unchanged lines
+  after it allow, as git does: an inserted method then starts at its comment
+  and ends with its own "end;", not with the one before it. }
+function LineHunks(const OldSrc, NewSrc: string): TJSONArray;
+const
+  MaxCells = 4000000;
+type
+  THunk = record
+    AStart, ACount, BStart, BCount: Integer;  { 0-based line indexes }
+  end;
+var
+  A, B           : TStringList;
+  Head, Tail     : Integer;
+  N, M, I, J, K  : Integer;
+  L              : array of Integer;
+  Hunks          : array of THunk;
+  StartA, StartB : Integer;
+  Limit          : Integer;
+  H              : TJSONObject;
+
+  function Cell(AI, AJ: Integer): Integer;
+  begin
+    Result := L[AI * (M + 1) + AJ];
+  end;
+
+  { The lines from StartA/StartB up to the absolute indexes AEnd/BEnd. }
+  procedure Flush(AEnd, BEnd: Integer);
+  begin
+    if (AEnd > StartA) or (BEnd > StartB) then
+    begin
+      SetLength(Hunks, Length(Hunks) + 1);
+      with Hunks[High(Hunks)] do
+      begin
+        AStart := StartA; ACount := AEnd - StartA;
+        BStart := StartB; BCount := BEnd - StartB;
+      end;
+    end;
+  end;
+
+  function Joined(SL: TStringList; From, Count: Integer): string;
+  var
+    X : Integer;
+  begin
+    Result := '';
+    for X := From to From + Count - 1 do
+      Result := Result + SL[X] + #10;
+  end;
+
+begin
+  Result := TJSONArray.Create;
+  A := TStringList.Create;
+  B := TStringList.Create;
+  try
+    A.Text := OldSrc;
+    B.Text := NewSrc;
+    Head := 0;
+    while (Head < A.Count) and (Head < B.Count) and (A[Head] = B[Head]) do
+      Inc(Head);
+    Tail := 0;
+    while (Tail < A.Count - Head) and (Tail < B.Count - Head) and
+          (A[A.Count - 1 - Tail] = B[B.Count - 1 - Tail]) do
+      Inc(Tail);
+    N := A.Count - Head - Tail;
+    M := B.Count - Head - Tail;
+    StartA := Head;
+    StartB := Head;
+    if Int64(N + 1) * (M + 1) > MaxCells then
+      Flush(Head + N, Head + M)
+    else
+    begin
+      { L[i,j]: length of the common subsequence of A[i..] and B[j..] }
+      SetLength(L, (N + 1) * (M + 1));
+      for I := N - 1 downto 0 do
+        for J := M - 1 downto 0 do
+          if A[Head + I] = B[Head + J] then
+            L[I * (M + 1) + J] := Cell(I + 1, J + 1) + 1
+          else if Cell(I + 1, J) >= Cell(I, J + 1) then
+            L[I * (M + 1) + J] := Cell(I + 1, J)
+          else
+            L[I * (M + 1) + J] := Cell(I, J + 1);
+      I := 0;
+      J := 0;
+      while (I < N) or (J < M) do
+        if (I < N) and (J < M) and (A[Head + I] = B[Head + J]) then
+        begin
+          Flush(Head + I, Head + J);
+          Inc(I);
+          Inc(J);
+          StartA := Head + I;
+          StartB := Head + J;
+        end
+        else if (J >= M) or ((I < N) and (Cell(I + 1, J) >= Cell(I, J + 1))) then
+          Inc(I)
+        else
+          Inc(J);
+      Flush(Head + N, Head + M);
+    end;
+    for K := 0 to High(Hunks) do
+      with Hunks[K] do
+        if ACount = 0 then
+        begin
+          if K < High(Hunks) then Limit := Hunks[K + 1].BStart else Limit := B.Count;
+          while (BStart + BCount < Limit) and (B[BStart] = B[BStart + BCount]) do
+          begin
+            Inc(AStart); Inc(BStart);
+          end;
+        end
+        else if BCount = 0 then
+        begin
+          if K < High(Hunks) then Limit := Hunks[K + 1].AStart else Limit := A.Count;
+          while (AStart + ACount < Limit) and (A[AStart] = A[AStart + ACount]) do
+          begin
+            Inc(AStart); Inc(BStart);
+          end;
+        end;
+    for K := 0 to High(Hunks) do
+      with Hunks[K] do
+      begin
+        H := TJSONObject.Create;
+        H.Add('line', BStart + 1);
+        if ACount > 0 then H.Add('removed', Joined(A, AStart, ACount));
+        if BCount > 0 then H.Add('added', Joined(B, BStart, BCount));
+        Result.Add(H);
+      end;
+  finally
+    A.Free;
+    B.Free;
+  end;
+end;
+
+{ code_complete: the IDE's Ctrl+Shift+C at (line, col), without its dialogs.
+  As in TMainIDE.DoCompleteCodeAtCursor: the editors are committed to the
+  CodeTools buffers (not to disk), CodeTools changes the buffers, and the
+  IDE's change hook mirrors each change into the open editor, so Ctrl+Z
+  undoes it.  The file is opened first for that hook to be there; other files
+  the completion changes are opened by the IDE (OpenEditorsOnCodeToolChange).
+  Main thread. }
+procedure DoCompleteCode(var Ctx: TMcpToolCall);
+var
+  FilePath, OldSrc         : string;
+  Line, Col                : Integer;
+  AutoSave, OldOpen, Done  : Boolean;
+  CodeBuf, NewCode, Buf    : TCodeBuffer;
+  NewX, NewY, NewTopLine   : Integer;
+  BlockTop, BlockBottom    : Integer;
+  I                        : Integer;
+  Obj, Jump                : TJSONObject;
+  Others                   : TJSONArray;
+  OtherFiles               : TStringList;
+begin
+  if not Assigned(Ctx.Params) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+  end;
+  FilePath := Ctx.Params.Get('file', '');
+  Line     := Ctx.Params.Get('line', 0);
+  Col      := Ctx.Params.Get('col', 0);
+  AutoSave := Ctx.Params.Get('auto_save', False);
+  if (FilePath = '') or (Line < 1) or (Col < 1) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'file, line and col (1-based) required'; Exit;
+  end;
+  if SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath) = nil then
+    if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
+         [ofOnlyIfExists, ofRegularFile, ofDoNotActivateSourceEditor]) <> mrOK then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
+    end;
+  if not LazarusIDE.BeginCodeTools then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+    Exit;
+  end;
+  CodeBuf := McpLoadCode(FilePath, False);
+  if not Assigned(CodeBuf) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+  end;
+  if Line > CodeBuf.LineCount then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := Format('line %d is past the end of the file (%d lines)',
+                         [Line, CodeBuf.LineCount]);
+    Exit;
+  end;
+  OldSrc := CodeBuf.Source;
+  OldOpen := LazarusIDE.OpenEditorsOnCodeToolChange;
+  LazarusIDE.OpenEditorsOnCodeToolChange := True;
+  OtherFiles := TStringList.Create;
+  try
+    try
+      Done := CodeToolBoss.CompleteCode(CodeBuf, Col, Line, 1, NewCode,
+                NewX, NewY, NewTopLine, BlockTop, BlockBottom, False);
+      for I := 0 to CodeToolBoss.SourceChangeCache.BuffersToModifyCount - 1 do
+      begin
+        Buf := CodeToolBoss.SourceChangeCache.BuffersToModify[I];
+        if (Buf <> CodeBuf) and (OtherFiles.IndexOf(Buf.Filename) < 0) then
+          OtherFiles.Add(Buf.Filename);
+      end;
+    finally
+      LazarusIDE.OpenEditorsOnCodeToolChange := OldOpen;
+      CodeToolBoss.SourceCache.ClearAllSourceLogEntries;
+    end;
+    if CodeToolBoss.ErrorMessage <> '' then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'Completion failed: ' + CodeToolBoss.ErrorMessage;
+      if Assigned(CodeToolBoss.ErrorCode) then
+        Ctx.Result := Ctx.Result + Format(' (%s %d:%d)',
+          [ExtractFileName(CodeToolBoss.ErrorCode.Filename),
+           CodeToolBoss.ErrorLine, CodeToolBoss.ErrorColumn]);
+      Exit;
+    end;
+    if (CodeBuf.Source = OldSrc) and (OtherFiles.Count = 0) then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := Format('Nothing to complete at %d:%d', [Line, Col]);
+      Exit;
+    end;
+    if AutoSave then
+    begin
+      LazarusIDE.DoSaveEditorFile(FilePath, []);
+      for I := 0 to OtherFiles.Count - 1 do
+        LazarusIDE.DoSaveEditorFile(OtherFiles[I], []);
+    end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('file', FilePath);
+      Obj.Add('completed', Done);
+      Obj.Add('changes', LineHunks(OldSrc, CodeBuf.Source));
+      if OtherFiles.Count > 0 then
+      begin
+        Others := TJSONArray.Create;
+        for I := 0 to OtherFiles.Count - 1 do Others.Add(OtherFiles[I]);
+        Obj.Add('other_files_changed', Others);
+      end;
+      if Assigned(NewCode) and (NewY > 0) then
+      begin
+        Jump := TJSONObject.Create;
+        Jump.Add('file', NewCode.Filename);
+        Jump.Add('line', NewY);
+        Jump.Add('col', NewX);
+        Obj.Add('new_position', Jump);
+      end;
+      Obj.Add('saved', AutoSave);
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  finally
+    OtherFiles.Free;
   end;
 end;
 
@@ -1031,6 +1300,12 @@ begin
     end;
   end
 
+  else if Name = 'code_complete' then
+  begin
+    Result := True;
+    DoCompleteCode(Ctx);
+  end
+
   else if Name = 'code_get_procedure_ast' then
   begin
     Result := True;
@@ -1266,6 +1541,22 @@ begin
     'protected, or published), located via CodeTools AST. No string matching. ' +
     'Uses the editor undo stack (Ctrl+Z works).',
     SCHEMA_ADD_TO_CLASS_SECTION, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('code_complete',
+    'Code completion as the IDE''s Ctrl+Shift+C does it, at (file, line, col), ' +
+    'without its dialogs. What it completes depends on where the position is: ' +
+    'inside a class declaration, everything missing in that class at once ' +
+    '(bodies for declared methods, a field and setter for a property such as ' +
+    '"property Size: Integer read FSize write SetSize;", declarations for ' +
+    'method bodies without one); on a forward procedure header, its body; on ' +
+    'an undeclared identifier in a body, a local variable for it ("x := 5", ' +
+    '"for x in List", or an argument of a call); on an event assignment ' +
+    '("OnClick := @Clicked"), the method; on a call to an undeclared ' +
+    'procedure, the procedure; inside a method body with no declaration, the ' +
+    'declaration. New methods go in the default class section. Returns the ' +
+    'changed lines as hunks (line numbers in the new text) and the position ' +
+    'the IDE would jump to. Edits land in the editor buffers (Ctrl+Z works); ' +
+    'use auto_save=true or editor_save to persist to disk.',
+    SCHEMA_COMPLETE_CODE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_get_procedure_ast',
     'Return a procedure''s local variables and its block-level control flow ' +
     '(if, for, while, try, case, ...) with line ranges, for use with ' +

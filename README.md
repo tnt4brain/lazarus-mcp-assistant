@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 114 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 115 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows (v0.x). Linux/macOS support is not tested and not claimed:
 > the plugin uses only LCL/IDE interfaces (no Win32 API) and has Linux/macOS code
@@ -63,6 +63,7 @@ with a human-readable `title` ("Debugger: get call stack") and
 | `code_insert_in_procedure` | Insert text right after a routine's `begin` |
 | `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end` |
 | `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
+| `code_complete` | Code completion as Ctrl+Shift+C does it: method bodies, property fields and setters, forward procedures, local variables, event handlers. Returns the changed lines |
 
 ### Form designer — `form_*`
 
