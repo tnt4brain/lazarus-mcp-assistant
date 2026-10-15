@@ -21,6 +21,7 @@ type
     Params          : TJSONObject;
     Result          : string;
     Error           : Boolean;
+    Images          : TStringArray; { base64 PNGs, sent as image content after Result }
     ClientId        : string;       { Mcp-Session-Id / cookie, or 'anonymous' (ADR-012) }
     StopServer      : TMcpStopServerProc;  { set by SyncCallTool before dispatch }
   end;

@@ -39,6 +39,9 @@ type
     { Run a tool on the IDE main thread; safe to call from any request thread. }
     function  CallOnMain(const AToolName: string; AParams: TJSONObject;
                          const AClientId: string; out AErr: Boolean): string;
+    function  CallOnMain(const AToolName: string; AParams: TJSONObject;
+                         const AClientId: string; out AErr: Boolean;
+                         out AImages: TStringArray): string;
     function  HandleResourcesList(ID: TJSONData): string;
     function  HandleResourcesRead(ID: TJSONData; Params: TJSONObject): string;
     function  HandleResourcesTemplatesList(ID: TJSONData): string;
@@ -539,6 +542,15 @@ end;
 function TMcpServerThread.CallOnMain(const AToolName: string;
   AParams: TJSONObject; const AClientId: string; out AErr: Boolean): string;
 var
+  Images : TStringArray;
+begin
+  Result := CallOnMain(AToolName, AParams, AClientId, AErr, Images);
+end;
+
+function TMcpServerThread.CallOnMain(const AToolName: string;
+  AParams: TJSONObject; const AClientId: string; out AErr: Boolean;
+  out AImages: TStringArray): string;
+var
   Call : TMcpMainCall;
 begin
   Call := TMcpMainCall.Create;
@@ -551,8 +563,9 @@ begin
     Call.Ctx.StopServer      := @Self.StopServer;
     Call.Server              := Self;
     TThread.Synchronize(nil, @Call.Run);
-    Result := Call.Ctx.Result;
-    AErr   := Call.Ctx.Error;
+    Result  := Call.Ctx.Result;
+    AErr    := Call.Ctx.Error;
+    AImages := Call.Ctx.Images;
   finally
     Call.Free;
   end;
@@ -901,6 +914,8 @@ var
   ProjDir     : string;
   BCtx        : TMcpToolCall;
   BHandled    : Boolean;
+  Images      : TStringArray;
+  I           : Integer;
 begin
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
@@ -913,6 +928,7 @@ begin
 
   Err  := False;
   Text := '';
+  Images := nil;
 
   { debug session lease and debugger lock (ADR-012) }
   if not McpGateEnter(ToolName, AClientId, Args, GateMsg) then
@@ -991,17 +1007,18 @@ begin
   end
   else
   begin
-    BCtx.Params := Args; BCtx.Result := ''; BCtx.Error := False;
+    BCtx.Params := Args; BCtx.Result := ''; BCtx.Error := False; BCtx.Images := nil;
     BCtx.ClientId := AClientId; BCtx.StopServer := @Self.StopServer;
     McpBlockingDispatch(ToolName, BCtx, BHandled);
     if BHandled then
     begin
       Text := BCtx.Result;
       Err  := BCtx.Error;
+      Images := BCtx.Images;
     end
     else
       // Default: IDE API — must run on main thread.
-      Text := CallOnMain(ToolName, Args, AClientId, Err);
+      Text := CallOnMain(ToolName, Args, AClientId, Err, Images);
   end;
   finally
     McpGateLeave(ToolName, AClientId);
@@ -1012,6 +1029,9 @@ begin
   TextNode.Add('text', Text);
   Content := TJSONArray.Create;
   Content.Add(TextNode);
+  for I := 0 to High(Images) do
+    Content.Add(TJSONObject.Create(['type', 'image', 'data', Images[I],
+                                    'mimeType', 'image/png']));
 
   Res := TJSONObject.Create;
   Res.Add('content', Content);

@@ -21,7 +21,7 @@ uses
   TUtils, TProtocol, TAuth, TTestInfra,
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TFormUndo, TCodeComplete, TCodeFormat,
-  TCodeRename;
+  TCodeRename, TWindows;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -198,6 +198,12 @@ begin
     else
       WriteLn('Debugger tests skipped (set MCP_DEBUG_TESTS=1, or open ',
               'tests/debuggee/mcpdebuggee.lpi in the IDE).');
+    {$IFDEF WINDOWS}
+    if GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1' then
+      GetTestRegistry.AddTest(TWindoweeSetup.Create(TTestWindows.Suite))
+    else
+      WriteLn('Window tests skipped (set MCP_DEBUG_TESTS=1).');
+    {$ENDIF}
   end
   else
     WriteLn('Server not running — protocol/auth tests skipped.');

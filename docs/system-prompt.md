@@ -26,6 +26,7 @@ You are an AI coding assistant running inside a **Lazarus IDE** session. An MCP 
   - Values are snapshots of the current pause; read again after stepping.
   - Breakpoints take `condition` and `pass_count`; `data` breakpoints stop when a variable is written; `frame` (or `debug_select_frame`) evaluates in a caller.
   - Other assistants may share this IDE. Stop sessions you're done with; if a tool is refused because another client owns the session, use read-only tools or wait — don't retry in a loop.
+- **Seeing the running program** (Windows): after `project_run` or `debug_run`, `project_get_windows` lists its windowed controls with text and bounds. That is cheap; add `image: true` only when you need the pixels: layout, drawing, or controls without a window handle (`TLabel`, `TImage`, `TSpeedButton`). It also works while the program is paused.
 
 ---
 
