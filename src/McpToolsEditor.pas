@@ -53,10 +53,13 @@ const
     '"file":{"type":"string","description":"Absolute path to the file; omit to edit the active editor"},' +
     '"start_line":{"type":"integer","description":"Start line (1-based, inclusive)"},' +
     '"start_col":{"type":"integer","description":"Start column (1-based, inclusive)"},' +
-    '"end_line":{"type":"integer","description":"End line (1-based, exclusive)"},' +
+    '"end_line":{"type":"integer","description":"End line (1-based); with end_col, the end of the range"},' +
     '"end_col":{"type":"integer","description":"End column (1-based, exclusive)"},' +
-    '"new_text":{"type":"string","description":"Replacement text; empty string to delete the range"}},' +
-    '"required":["start_line","start_col","end_line","end_col","new_text"]}';
+    '"delete_len":{"type":"integer","description":"Or the range as a number of characters ' +
+    'from the start, a line break counting as one"},' +
+    '"new_text":{"type":"string","description":"Replacement text; empty string to delete the range"},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
+    '"required":["start_line","start_col","new_text"]}';
 
   SCHEMA_EDIT_TEXT =
     '{"type":"object","properties":{' +
@@ -83,16 +86,6 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path to the file to open in the editor"}},' +
     '"required":["file"]}';
-
-  SCHEMA_EDIT_AT_POSITION =
-    '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path to the file; omit for active editor"},' +
-    '"line":{"type":"integer","description":"1-based line number of the edit point"},' +
-    '"col":{"type":"integer","description":"1-based column number of the edit point"},' +
-    '"delete_len":{"type":"integer","description":"Number of characters to delete forward from (line,col); 0 for pure insert"},' +
-    '"insert_text":{"type":"string","description":"Text to insert at (line,col) after deletion; empty string for pure delete"},' +
-    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
-    '"required":["line","col","delete_len","insert_text"]}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
@@ -125,6 +118,8 @@ var
   EndLine      : Integer;
   EndCol       : Integer;
   AlreadyOpen  : Boolean;
+  HasEnd       : Boolean;
+  HasLen       : Boolean;
   I            : Integer;
   J            : Integer;
 begin
@@ -353,15 +348,30 @@ begin
     Result := True;
     if not Assigned(Ctx.Params) then
     begin
-      Ctx.Error := True; Ctx.Result := 'start_line, start_col, end_line, end_col, new_text required'; Exit;
+      Ctx.Error := True; Ctx.Result := 'start_line, start_col and new_text required'; Exit;
     end;
-    StartLine := Ctx.Params.Get('start_line', 0);
-    StartCol  := Ctx.Params.Get('start_col',  0);
-    EndLine   := Ctx.Params.Get('end_line',   0);
-    EndCol    := Ctx.Params.Get('end_col',    0);
+    StartLine    := Ctx.Params.Get('start_line', 0);
+    StartCol     := Ctx.Params.Get('start_col',  0);
+    SyncAutoSave := Ctx.Params.Get('auto_save',  False);
+    { the end as a position, or as a length (the old editor_edit_at_position);
+      neither inserts }
+    HasEnd := (Ctx.Params.IndexOfName('end_line') >= 0) or
+              (Ctx.Params.IndexOfName('end_col') >= 0);
+    HasLen := Ctx.Params.IndexOfName('delete_len') >= 0;
+    if HasEnd and HasLen then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Give end_line/end_col or delete_len, not both'; Exit;
+    end;
+    EndLine := Ctx.Params.Get('end_line', StartLine);
+    EndCol  := Ctx.Params.Get('end_col',  StartCol);
+    SyncPos := Ctx.Params.Get('delete_len', 0);
     if (StartLine < 1) or (StartCol < 1) or (EndLine < 1) or (EndCol < 1) then
     begin
       Ctx.Error := True; Ctx.Result := 'start_line, start_col, end_line, end_col must be >= 1'; Exit;
+    end;
+    if SyncPos < 0 then
+    begin
+      Ctx.Error := True; Ctx.Result := 'delete_len must be >= 0'; Exit;
     end;
     SyncFilePath := Ctx.Params.Get('file', '');
     if SyncFilePath <> '' then
@@ -384,11 +394,28 @@ begin
       Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
     end;
     SyncNewName := Ctx.Params.Get('new_text', '');
+    if HasLen then
+    begin
+      { walk to the start's offset, advance delete_len characters, convert back }
+      SyncText := StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]);
+      I := 1;
+      J := 1; { current line during walk }
+      while (I <= Length(SyncText)) and (J < StartLine) do
+      begin
+        if SyncText[I] = #10 then Inc(J);
+        Inc(I);
+      end;
+      Inc(I, StartCol - 1);  { I is now the 1-based offset of (StartLine, StartCol) }
+      McpOffsetToLineCol(SyncText, I + SyncPos, EndLine, EndCol);
+    end;
     Ed.ReplaceText(Point(StartCol, StartLine), Point(EndCol, EndLine), SyncNewName);
+    if SyncAutoSave then
+      LazarusIDE.DoSaveEditorFile(Ed.FileName, []);
     Obj := TJSONObject.Create;
     try
       Obj.Add('file',     Ed.FileName);
       Obj.Add('replaced', True);
+      if SyncAutoSave then Obj.Add('saved', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -601,74 +628,6 @@ begin
     end;
   end
 
-  else if Name = 'editor_edit_at_position' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'line, col, delete_len, insert_text required'; Exit;
-    end;
-    StartLine    := Ctx.Params.Get('line',        0);
-    StartCol     := Ctx.Params.Get('col',         0);
-    SyncPos      := Ctx.Params.Get('delete_len',  0);  { reuse SyncPos for delete_len }
-    SyncNewName  := Ctx.Params.Get('insert_text', '');
-    SyncAutoSave := Ctx.Params.Get('auto_save',   False);
-    if (StartLine < 1) or (StartCol < 1) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'line and col must be >= 1'; Exit;
-    end;
-    if SyncPos < 0 then
-    begin
-      Ctx.Error := True; Ctx.Result := 'delete_len must be >= 0'; Exit;
-    end;
-    SyncFilePath := Ctx.Params.Get('file', '');
-    if SyncFilePath <> '' then
-    begin
-      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
-      if not Assigned(Ed) then
-      begin
-        if LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1,
-             [ofOnlyIfExists, ofRegularFile]) <> mrOK then
-        begin
-          Ctx.Error := True; Ctx.Result := 'Could not open: ' + SyncFilePath; Exit;
-        end;
-        Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
-      end;
-    end
-    else
-      Ed := SourceEditorManagerIntf.ActiveEditor;
-    if not Assigned(Ed) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
-    end;
-    { Compute end point: walk to start offset, advance delete_len chars, convert back }
-    SyncText := StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]);
-    I := 1;
-    J := 1; { current line during walk }
-    while (I <= Length(SyncText)) and (J < StartLine) do
-    begin
-      if SyncText[I] = #10 then Inc(J);
-      Inc(I);
-    end;
-    Inc(I, StartCol - 1);  { I is now the 1-based offset of (StartLine, StartCol) }
-    McpOffsetToLineCol(SyncText, I + SyncPos, SyncEndLine, SyncEndCol);
-    Ed.ReplaceText(Point(StartCol, StartLine),
-                   Point(SyncEndCol, SyncEndLine), SyncNewName);
-    if SyncAutoSave then
-      LazarusIDE.DoSaveEditorFile(Ed.FileName, []);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('file',     Ed.FileName);
-      Obj.Add('line',     StartLine);
-      Obj.Add('col',      StartCol);
-      Obj.Add('deleted',  SyncPos);
-      Obj.Add('inserted', Length(SyncNewName));
-      if SyncAutoSave then Obj.Add('saved', True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end;
 end;
 
 { ── Schema registration ──────────────────────────────────────────────────── }
@@ -700,11 +659,10 @@ begin
     'Omit file to move the cursor in the currently active editor.',
     SCHEMA_SET_CURSOR_POSITION, MCP_ANN_RO));
   Tools.Add(MakeTool('editor_replace_range',
-    'Replace a range of text in the editor buffer. ' +
-    'The edit is recorded in the editor''s undo history (Ctrl+Z works). ' +
-    'Use an empty range (start = end) to insert text. ' +
-    'Use empty new_text to delete the range. ' +
-    'Opens the file first if it is not already open.',
+    'Replace a range of text in the editor buffer, e.g. at coordinates from ' +
+    'code_get_outline, code_find_declaration or code_get_procedure_ast. The range ' +
+    'ends at end_line/end_col or after delete_len characters; with neither, ' +
+    'new_text is inserted. Empty new_text deletes. Opens the file if needed; Ctrl+Z works.',
     SCHEMA_REPLACE_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_edit_text',
     'Replace old_string with new_string in the editor buffer (opens the file if ' +
@@ -725,11 +683,6 @@ begin
     'Open a file in the IDE editor and make it the active tab, ' +
     'without moving the cursor. Returns {"file":..., "already_open":bool}.',
     SCHEMA_OPEN_FILE, MCP_ANN_RO));
-  Tools.Add(MakeTool('editor_edit_at_position',
-    'Replace delete_len characters at (line, col) with insert_text, using ' +
-    'coordinates from code_get_outline, code_find_declaration or ' +
-    'code_get_procedure_ast. Ctrl+Z works.',
-    SCHEMA_EDIT_AT_POSITION, MCP_ANN_WRITE));
 end;
 
 initialization

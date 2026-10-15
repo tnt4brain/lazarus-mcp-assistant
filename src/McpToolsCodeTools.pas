@@ -1432,7 +1432,7 @@ begin
   Tools.Add(MakeTool('code_get_procedure_ast',
     'Return a procedure''s local variables and its block-level control flow ' +
     '(if, for, while, try, case, ...) with line ranges, for use with ' +
-    'editor_edit_at_position.',
+    'editor_replace_range.',
     SCHEMA_GET_AST_PARTIAL, MCP_ANN_RO));
 end;
 

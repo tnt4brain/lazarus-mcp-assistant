@@ -26,6 +26,7 @@ type
     procedure TestPathSpellingsNameOneFile;
     procedure TestGitStatus;
     procedure TestGitBlameActiveEditor;
+    procedure TestEditorReplaceRange;
     procedure TestProjectGetSettings;
     procedure TestProjectOpenAlreadyOpen;
     procedure TestPackageGetInfo;
@@ -253,8 +254,8 @@ begin
       Ignore('git not usable here: ' + T);
     CheckTrue(Pos('"line" : 1, "commit" : "', T) > 0, 'cursor line blamed: ' + T);
     CheckEquals(0, Pos('uncommitted', T), 'saved fixture is committed: ' + T);
-    Call('editor_edit_at_position',
-      '{"line":1,"col":1,"delete_len":0,"insert_text":"// scratch\n"}');
+    Call('editor_replace_range',
+      '{"start_line":1,"start_col":1,"new_text":"// scratch\n"}');
     T := Call('git_blame', '{"start_line":1,"end_line":2}');
     CheckTrue(Pos('"editor_modified" : true', T) > 0, 'buffer blamed: ' + T);
     CheckTrue(Pos('"line" : 1, "commit" : "uncommitted"', T) > 0, 'new line: ' + T);
@@ -265,6 +266,58 @@ begin
   finally
     Call('editor_revert', '{"file":' + JsonStr(FixtureUnit) + '}');
     Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
+  end;
+end;
+
+{ editor_replace_range: the end as a position, as a length (the old
+  editor_edit_at_position), or neither for an insert. }
+procedure TTestToolSmoke.TestEditorReplaceRange;
+var
+  F, T : string;
+  SL   : TStringList;
+  J    : TJSONData;
+
+  function Buffer: string;
+  begin
+    J := GetJSON(Call('editor_read_file', '{"file":' + JsonStr(F) + '}'));
+    try
+      Result := AdjustLineBreaks(TJSONObject(J).Get('content', ''), tlbsLF);
+    finally
+      J.Free;
+    end;
+  end;
+
+begin
+  F  := GetTempDir(False) + 'mcpreplacerange.pas';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'abc' + LineEnding + 'def' + LineEnding + 'ghi';
+    SL.SaveToFile(F);
+  finally
+    SL.Free;
+  end;
+  try
+    { "bc", the line break and "de" }
+    T := Call('editor_replace_range', '{"file":' + JsonStr(F) +
+      ',"start_line":1,"start_col":2,"delete_len":5,"new_text":"X"}');
+    CheckNoError(Self, 'editor_replace_range', T);
+    CheckEquals('aXf'#10'ghi'#10, Buffer, 'delete_len');
+    T := Call('editor_replace_range', '{"file":' + JsonStr(F) +
+      ',"start_line":2,"start_col":1,"end_line":2,"end_col":4,"new_text":"Y"}');
+    CheckNoError(Self, 'editor_replace_range', T);
+    CheckEquals('aXf'#10'Y'#10, Buffer, 'end_line/end_col');
+    T := Call('editor_replace_range', '{"file":' + JsonStr(F) +
+      ',"start_line":1,"start_col":1,"new_text":"Z"}');
+    CheckNoError(Self, 'editor_replace_range', T);
+    CheckEquals('ZaXf'#10'Y'#10, Buffer, 'insert');
+    T := Call('editor_replace_range', '{"file":' + JsonStr(F) +
+      ',"start_line":1,"start_col":1,"end_line":1,"end_col":2,"delete_len":1,"new_text":""}');
+    CheckTrue(Pos('not both', T) > 0, 'both ends refused: ' + T);
+    CheckEquals('ZaXf'#10'Y'#10, Buffer, 'unchanged after the refusal');
+  finally
+    Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    DeleteFile(F);
   end;
 end;
 
