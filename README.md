@@ -370,7 +370,9 @@ ADR-007 was never assigned; no document is missing.
 
 For v1.0:
 
-- **Linux and macOS builds.** Never compiled or run there yet.
+- **macOS builds.** Never compiled or run there yet. Linux (Debian 12, Lazarus
+  4.6, GTK2) builds and passes the whole test suite, the debugger tests
+  included.
 
 ---
 

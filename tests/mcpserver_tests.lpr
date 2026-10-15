@@ -13,6 +13,7 @@ program mcpserver_tests;
 {$mode objfpc}{$H+}
 
 uses
+  {$IFDEF UNIX} cthreads, {$ENDIF}  { the debugger tests start threads }
   SysUtils, Classes, fphttpclient,
   fpcunit, testregistry, testutils,
   consoletestrunner, fpcunitreport, plaintestreport,

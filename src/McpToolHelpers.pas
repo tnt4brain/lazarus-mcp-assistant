@@ -401,8 +401,8 @@ end;
 
 { ── ToDo list scanner ────────────────────────────────────────────────────── }
 
-{ Same markers the IDE's ToDo List understands ({ TODO ...}, {#todo ...},
-  { DONE ...}, {#done ...}) plus // TODO and FIXME comments. }
+{ Same markers the IDE's ToDo List understands (TODO and #todo, DONE and
+  #done in brace comments) plus // TODO and FIXME comments. }
 function McpDoListTodos(const FileListJSON: string; AIncludeDone: Boolean): string;
 const
   Markers : array[0..9] of string = (

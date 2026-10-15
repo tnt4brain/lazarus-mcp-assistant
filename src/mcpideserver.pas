@@ -123,13 +123,15 @@ function SetHandleInformation(hObject: PtrUInt; dwMask, dwFlags: DWord): LongBoo
 procedure MakeSocketNonInheritable(ASocket: LongInt);
 const
   HANDLE_FLAG_INHERIT = 1;
+  FD_CLOEXEC_FLAG     = 1;  { FD_CLOEXEC; 1 on Linux and the BSDs, but only the
+                              BSD RTL declares it }
 begin
   if ASocket < 0 then Exit;
   {$IFDEF MSWINDOWS}
   SetHandleInformation(PtrUInt(ASocket), HANDLE_FLAG_INHERIT, 0);
   {$ENDIF}
   {$IFDEF UNIX}
-  FpFcntl(ASocket, F_SETFD, FD_CLOEXEC);
+  FpFcntl(ASocket, F_SETFD, FD_CLOEXEC_FLAG);
   {$ENDIF}
 end;
 
