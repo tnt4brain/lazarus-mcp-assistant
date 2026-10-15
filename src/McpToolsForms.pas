@@ -761,6 +761,12 @@ begin
   Ed := FindEditorFor(PasFile);
   if Ed = nil then
   begin
+    { the IDE answers a missing file with a dialog }
+    if not FileExists(PasFile) then
+    begin
+      AErr := 'File not found: ' + PasFile;
+      Exit;
+    end;
     LazarusIDE.DoOpenEditorFile(PasFile, -1, -1, [ofOnlyIfExists]);
     Ed := FindEditorFor(PasFile);
   end;
