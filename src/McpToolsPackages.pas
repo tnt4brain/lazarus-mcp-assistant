@@ -3,7 +3,7 @@ unit McpToolsPackages;
 
 { Package management tools: package_get_info, package_find_unit, package_search_online,
   package_add_file, package_remove_file, package_add_dependency,
-  package_remove_dependency, project_list_packages, project_add_package,
+  package_remove_dependency, package_set_info, project_list_packages, project_add_package,
   project_remove_package, package_install, package_uninstall. }
 
 {$mode objfpc}{$H+}
@@ -61,6 +61,13 @@ const
     '"min_version":{"type":"string","description":"e.g. 1.2"},' +
     '"max_version":{"type":"string"}},' +
     '"required":["required_package"]}';
+
+  SCHEMA_PKG_SET_INFO =
+    '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
+    '"version":{"type":"string","description":"major.minor[.release[.build]], e.g. 1.0"},' +
+    '"description":{"type":"string"},' +
+    '"author":{"type":"string"},' +
+    '"license":{"type":"string"}}}';
 
   SCHEMA_PKG_REMOVE_DEP =
     '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
@@ -1238,6 +1245,75 @@ begin
   end;
 end;
 
+{ package_set_info: version, description, author and license, as on the
+  package options' Package page.  Only the given fields change. }
+function PackageSetInfo(AParams: TJSONObject; out AErr: string): string;
+var
+  Pkg      : TLazPackage;
+  NewVer   : TPkgVersion;
+  S        : string;
+  WasMod   : Boolean;
+  Obj, Old, New : TJSONObject;
+begin
+  Result := '';
+  if not TargetPackage(AParams, Pkg, AErr) then Exit;
+  if (AParams.IndexOfName('version') < 0) and (AParams.IndexOfName('description') < 0) and
+     (AParams.IndexOfName('author') < 0) and (AParams.IndexOfName('license') < 0) then
+  begin
+    AErr := 'Give at least one of version, description, author, license'; Exit;
+  end;
+  NewVer := TPkgVersion.Create;
+  Obj    := TJSONObject.Create;
+  try
+    S := Trim(AParams.Get('version', ''));
+    if AParams.IndexOfName('version') >= 0 then
+      if not NewVer.ReadString(S) then
+      begin
+        AErr := 'Bad version (major.minor[.release[.build]]): ' + S; Exit;
+      end;
+    Old := TJSONObject.Create;
+    Obj.Add('old', Old);
+    New := TJSONObject.Create;
+    Obj.Add('new', New);
+    WasMod := Pkg.Modified;
+    if AParams.IndexOfName('version') >= 0 then
+    begin
+      Old.Add('version', Pkg.Version.AsString);
+      Pkg.Version.Assign(NewVer);
+      New.Add('version', Pkg.Version.AsString);
+    end;
+    if AParams.IndexOfName('description') >= 0 then
+    begin
+      Old.Add('description', Pkg.Description);
+      Pkg.Description := AParams.Get('description', '');
+      New.Add('description', Pkg.Description);
+    end;
+    if AParams.IndexOfName('author') >= 0 then
+    begin
+      Old.Add('author', Pkg.Author);
+      Pkg.Author := AParams.Get('author', '');
+      New.Add('author', Pkg.Author);
+    end;
+    if AParams.IndexOfName('license') >= 0 then
+    begin
+      Old.Add('license', Pkg.License);
+      Pkg.License := AParams.Get('license', '');
+      New.Add('license', Pkg.License);
+    end;
+    if Old.AsJSON = New.AsJSON then
+    begin
+      Obj.Add('package', Pkg.Name);
+      Obj.Add('unchanged', True);
+      Result := Obj.AsJSON;
+    end
+    else
+      Result := EditResult(Pkg, WasMod, Obj);
+  finally
+    Obj.Free;
+    NewVer.Free;
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -1257,7 +1333,8 @@ begin
   Result := False;
 
   if (Name = 'package_add_file') or (Name = 'package_remove_file') or
-     (Name = 'package_add_dependency') or (Name = 'package_remove_dependency') then
+     (Name = 'package_add_dependency') or (Name = 'package_remove_dependency') or
+     (Name = 'package_set_info') then
   begin
     Result := True;
     if not Assigned(Ctx.Params) then
@@ -1270,6 +1347,8 @@ begin
       Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
     else if Name = 'package_add_dependency' then
       Ctx.Result := PackageAddDependency(Ctx.Params, PkgName)
+    else if Name = 'package_set_info' then
+      Ctx.Result := PackageSetInfo(Ctx.Params, PkgName)
     else
       Ctx.Result := PackageRemoveDependency(Ctx.Params, PkgName);
     if PkgName <> '' then
@@ -1522,6 +1601,11 @@ begin
   Tools.Add(MakeTool('package_remove_dependency',
     'Remove a requirement from a package (.lpk).',
     SCHEMA_PKG_REMOVE_DEP, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('package_set_info',
+    'Set a package''s version, description, author and/or license, as on the ' +
+    'package options'' Package page; only the given fields change. Returns old and ' +
+    'new values. Saves the .lpk when nothing else is unsaved.',
+    SCHEMA_PKG_SET_INFO, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_add_package',
     'Add a package as a dependency to the active project (.lpi). ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +

@@ -22,6 +22,7 @@ type
   published
     procedure TestAddAndRemoveFile;
     procedure TestAddAndRemoveDependency;
+    procedure TestSetInfo;
     procedure TestRefusals;
     procedure TestConsentGuard;
     procedure TestDownloadUnknownPackage;
@@ -122,6 +123,29 @@ begin
   end;
   CheckSaved(Self, T);
   CheckEquals(0, Pos('LazUtils', LpkText), 'removed from the saved .lpk');
+end;
+
+procedure TTestPackageEdit.TestSetInfo;
+var
+  Before, T : string;
+begin
+  Before := LpkText;
+  T := Call('package_set_info', '{' + Lpk + ',"version":"2.3.4","author":"MCP test"}');
+  try
+    CheckSaved(Self, T);
+    CheckTrue(Pos('"version" : "1.0"', T) > 0, 'old value: ' + T);
+    CheckTrue(Pos('"version" : "2.3.4"', T) > 0, 'new value: ' + T);
+    CheckTrue(Pos('Major="2" Minor="3" Release="4"', LpkText) > 0, 'in the saved .lpk: ' + LpkText);
+    CheckTrue(Pos('MCP test', LpkText) > 0, 'author saved');
+    T := Call('package_set_info', '{' + Lpk + ',"license":"MIT"}');
+    CheckTrue(Pos('"unchanged" : true', T) > 0, 'same value: ' + T);
+    T := Call('package_set_info', '{' + Lpk + ',"version":"one"}');
+    CheckTrue(Pos('Bad version', T) > 0, 'refused: ' + T);
+  finally
+    T := Call('package_set_info', '{' + Lpk + ',"version":"1.0","author":""}');
+  end;
+  CheckSaved(Self, T);
+  CheckEquals(Before, LpkText, 'the .lpk is as before');
 end;
 
 procedure TTestPackageEdit.TestRefusals;
