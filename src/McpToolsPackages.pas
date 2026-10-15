@@ -1491,46 +1491,7 @@ begin
     end;
   end
 
-  { package_install: the rebuild in McpToolsBuild }
-
-  else if Name = 'package_uninstall' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
-    end;
-    PkgName := Ctx.Params.Get('package_name', '');
-    IDEPkg := PackageEditingInterface.FindPackageWithName(PkgName);
-    if not Assigned(IDEPkg) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Package not found: ' + PkgName; Exit;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('status',  'rebuilding');
-      Obj.Add('message', 'IDE is rebuilding and will restart. Poll with the ' +
-                         'command in poll_command until it succeeds.');
-      PollCmd := McpPollCommand;
-      if PollCmd <> '' then
-        Obj.Add('poll_command', PollCmd);
-      Ctx.Result          := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-    while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
-      LazarusIDE.DoCloseEditorFile(
-        SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
-    if Assigned(Ctx.StopServer) then Ctx.StopServer();
-    PackageEditingInterface.UninstallPackage(IDEPkg, False);
-    PkgList := TObjectList.Create(True);
-    try
-      PackageEditingInterface.InstallPackages(
-        PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
-    finally
-      PkgList.Free;
-    end;
-  end;
+  { package_install, package_uninstall: the rebuild in McpToolsBuild }
 end;
 
 { ── Schema registration ──────────────────────────────────────────────────── }

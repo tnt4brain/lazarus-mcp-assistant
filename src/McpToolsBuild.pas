@@ -2,8 +2,8 @@
 unit McpToolsBuild;
 
 { Build / run tools: project_build, project_run, ide_rebuild, project_get_compiler_errors,
-  ide_get_messages, project_run; the rebuild of package_install, whose schema
-  is in McpToolsPackages.
+  ide_get_messages, project_run; the rebuilds of package_install and
+  package_uninstall, whose schemas are in McpToolsPackages.
   Schema registration also covers package_compile and ide_run_tests, which run
   off the main thread and remain handled in HandleToolsCall. }
 
@@ -172,8 +172,9 @@ begin
 end;
 
 { ── Blocking ide_rebuild / package_install ───────────────────────────────── }
-{ ide_rebuild and package_install (the same rebuild with a package listed
-  first) run on the HTTP worker thread.  If an exception dialog is open,
+{ ide_rebuild, package_install (the same rebuild with a package listed
+  first) and package_uninstall (the package removed first) run on the HTTP
+  worker thread.  If an exception dialog is open,
   it queues a non-blocking close request to the main thread (TThread.Queue),
   then polls for the dialog globals to clear before proceeding with the rebuild.
   All IDE API calls still happen via TThread.Synchronize. }
@@ -182,12 +183,15 @@ type
   TBuildSyncHelper = class
   public
     LpkPath    : string;
+    UninstallName : string;  { package_uninstall: the package to remove }
     ToolName   : string;
     PollCmd    : string;
     StopServer : TMcpStopServerProc;
     ConsentOk  : Boolean;
     ConsentMsg : string;
+    PkgFound   : Boolean;
     procedure CheckConsent;
+    procedure FindUninstallPackage;
     procedure DismissExceptionDialog;
     procedure ReadPollPaths;
     procedure DoStopDebugger;
@@ -221,6 +225,12 @@ end;
 procedure TBuildSyncHelper.CheckConsent;
 begin
   ConsentOk := McpConfirmPackageInstall(LpkPath, ToolName, ConsentMsg);
+end;
+
+{ Main thread: does the package to uninstall exist? }
+procedure TBuildSyncHelper.FindUninstallPackage;
+begin
+  PkgFound := PackageEditingInterface.FindPackageWithName(UninstallName) <> nil;
 end;
 
 procedure TBuildSyncHelper.ReadPollPaths;
@@ -259,6 +269,12 @@ begin
   if Assigned(StopServer) then StopServer();
   PkgList := TObjectList.Create(True);
   try
+    if UninstallName <> '' then
+    begin
+      IDEPkg := PackageEditingInterface.FindPackageWithName(UninstallName);
+      if Assigned(IDEPkg) then
+        PackageEditingInterface.UninstallPackage(IDEPkg, False);
+    end;
     { A package already installed from this file is just rebuilt: listing it
       again made the IDE rebuild but not restart (2026-10-14). }
     if (LpkPath <> '') and McpPackageNeedsConsent(LpkPath) then
@@ -285,9 +301,11 @@ var
   Obj     : TJSONObject;
   Waited  : Integer;
   LpkPath : string;
+  UninstallName : string;
 begin
   Result := False;
-  if (Name <> 'ide_rebuild') and (Name <> 'package_install') then Exit;
+  if (Name <> 'ide_rebuild') and (Name <> 'package_install') and
+     (Name <> 'package_uninstall') then Exit;
   Result := True;
 
   LpkPath := '';
@@ -296,6 +314,13 @@ begin
   if (Name = 'package_install') and (LpkPath = '') then
   begin
     Ctx.Error := True; Ctx.Result := 'lpk_path required'; Exit;
+  end;
+  UninstallName := '';
+  if (Name = 'package_uninstall') and Assigned(Ctx.Params) then
+    UninstallName := Ctx.Params.Get('package_name', '');
+  if (Name = 'package_uninstall') and (UninstallName = '') then
+  begin
+    Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
   end;
   if (Name = 'ide_rebuild') and (LpkPath <> '') then
   begin
@@ -314,8 +339,18 @@ begin
   try
 
   GBuildHelper.LpkPath    := LpkPath;
+  GBuildHelper.UninstallName := UninstallName;
   GBuildHelper.ToolName   := Name;
   GBuildHelper.StopServer := Ctx.StopServer;
+
+  if UninstallName <> '' then
+  begin
+    TThread.Synchronize(nil, @GBuildHelper.FindUninstallPackage);
+    if not GBuildHelper.PkgFound then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Package not found: ' + UninstallName; Exit;
+    end;
+  end;
 
   { installing a package that is not installed yet needs the user's consent }
   if GBuildHelper.LpkPath <> '' then

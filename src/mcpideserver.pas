@@ -23,6 +23,7 @@ type
     FServer : TMcpHttpServer;
     FToken  : string;
     FPort   : Word;
+    FStopping : Boolean;  { StopServer was called }
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
                             var AResponse : TFPHTTPConnectionResponse);
@@ -58,6 +59,7 @@ type
     procedure StopServer;
     property Token : string read FToken;
     property Port  : Word   read FPort;
+    property Stopping : Boolean read FStopping;
   end;
 
 var
@@ -200,6 +202,7 @@ end;
 
 procedure TMcpServerThread.StopServer;
 begin
+  FStopping := True;
   if FServer.Active then
     FServer.Active := False; // calls StopAccepting(False)
   MakeDummyConnect(FPort);   // unblocks the blocking accept()
@@ -443,6 +446,7 @@ type
     ToolName : string;
     Ctx      : TMcpToolCall;
     LogMsg   : string;
+    Server   : TMcpServerThread;
     procedure Run;   { main thread }
     procedure Log;   { main thread }
   end;
@@ -471,7 +475,11 @@ begin
     to a form (PropHookPersistentAdded) it keeps the designer and completes
     the unit in TMainIDE.HandleApplicationIdle.  Closing that form first left
     a dangling designer there, and an access violation on every idle after.
-    So the IDE gets its idle now, as after a user's action. }
+    So the IDE gets its idle now, as after a user's action.
+    Not once the call stopped the server: a restart the IDE wants then runs
+    in that idle, and its close hook waits for this request's thread, which
+    waits for this call (package_uninstall deadlocked so, 2026-10-15). }
+  if Assigned(Server) and Server.Stopping then Exit;
   try
     Application.Idle(False);
   except
@@ -500,6 +508,7 @@ begin
     Call.Ctx.Error           := False;
     Call.Ctx.ClientId        := AClientId;
     Call.Ctx.StopServer      := @Self.StopServer;
+    Call.Server              := Self;
     TThread.Synchronize(nil, @Call.Run);
     Result := Call.Ctx.Result;
     AErr   := Call.Ctx.Error;

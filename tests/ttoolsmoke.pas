@@ -36,6 +36,7 @@ type
     procedure TestProjectOpenAlreadyOpen;
     procedure TestPackageGetInfo;
     procedure TestPackageFindUnit;
+    procedure TestPackageUninstallUnknown;
     procedure TestProjectListPackages;
     procedure TestDebugGetState;
   end;
@@ -610,6 +611,20 @@ begin
   CheckTrue(Pos('"package" : "SynEdit"', T) > 0, 'SynEdit unit is in package SynEdit: ' + T);
   T := Call('package_find_unit', '{"unit_name":"NoSuchUnitXyz"}');
   CheckTrue(Pos('"packages" : []', T) > 0, 'unknown unit: no packages: ' + T);
+end;
+
+{ package_uninstall runs on ide_rebuild's path now: an unknown package is
+  refused there, before anything is stopped or rebuilt }
+procedure TTestToolSmoke.TestPackageUninstallUnknown;
+var
+  T : string;
+begin
+  T := Call('package_uninstall', '{"package_name":"NoSuchPackageXyz"}');
+  CheckTrue(Pos('Package not found: NoSuchPackageXyz', T) > 0, 'refused: ' + T);
+  T := Call('package_uninstall', '{}');
+  CheckTrue(Pos('package_name required', T) > 0, 'no name: ' + T);
+  CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
+    'the IDE is still up');
 end;
 
 procedure TTestToolSmoke.TestProjectListPackages;

@@ -367,7 +367,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestAuth` | 7 | MCP server reachable |
 | `TTestProjectTools` | 6 | MCP server reachable |
 | `TTestSession` | 7 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp` |
-| `TTestToolSmoke` | 21 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
+| `TTestToolSmoke` | 22 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
 | `TTestFormUndo` | 11 | MCP server reachable: `form_undo`/`form_redo` and what the `form_*` tools record, on a temp copy of the fixture form |
 | `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
