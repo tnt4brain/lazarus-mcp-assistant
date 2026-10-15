@@ -21,6 +21,7 @@ type
     procedure TestCodeGetOutline;
     procedure TestCodeGetUnitInterface;
     procedure TestCodeNewFileInKnownFolder;
+    procedure TestProjectCreateRefusesUnsavedEditor;
     procedure TestFormListComponentsForwardSlashes;
     procedure TestPathSpellingsNameOneFile;
     procedure TestGitStatus;
@@ -135,6 +136,47 @@ begin
   finally
     DeleteFile(First);
     DeleteFile(Second);
+    RemoveDir(Dir);
+  end;
+end;
+
+procedure TTestToolSmoke.TestProjectCreateRefusesUnsavedEditor;
+{ Regression: project_create closed the current project without the checks
+  project_open makes, so the IDE asked "Save changes?" in a dialog and the
+  call waited for it.  Never creates a project: it must refuse. }
+var
+  Dir, F, T, Before : string;
+  SL : TStringList;
+begin
+  Dir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpprojcreate' +
+         IntToStr(GetTickCount64) + PathDelim;
+  F   := Dir + 'mcpunsaved.pas';
+  ForceDirectories(Dir);
+  SL := TStringList.Create;
+  try
+    SL.Text := 'unit McpUnsaved;' + LineEnding + 'interface' + LineEnding +
+               'implementation' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(F);
+  finally
+    SL.Free;
+  end;
+  Before := Call('project_get_settings', '{}');
+  try
+    T := Call('editor_open', '{"file_path":' + JsonStr(F) + '}');
+    CheckNoError(Self, 'editor_open', T);
+    T := Call('editor_edit_text', '{"file":' + JsonStr(F) +
+              ',"old_string":"interface","new_string":"interface\n// changed"}');
+    CheckNoError(Self, 'editor_edit_text', T);
+    T := Call('project_create', '{"project_dir":' + JsonStr(Dir + 'p') +
+              ',"project_name":"mcpnever"}');
+    CheckTrue(Pos('TOOL ERROR', T) = 1, 'refused: ' + T);
+    CheckTrue((Pos('Unsaved changes', T) > 0) or (Pos('unsaved changes', T) > 0) or
+              (Pos('busy', T) > 0), 'says why: ' + T);
+    CheckEquals(Before, Call('project_get_settings', '{}'), 'project unchanged');
+  finally
+    Call('editor_revert', '{"file_path":' + JsonStr(F) + '}');
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    DeleteFile(F);
     RemoveDir(Dir);
   end;
 end;

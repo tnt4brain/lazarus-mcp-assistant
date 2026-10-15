@@ -17,7 +17,7 @@ implementation
 uses
   Classes, SysUtils,
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil,
-  Controls, Forms,
+  Controls, Forms, IDEDialogs,
   fpjson,
   McpToolContext;
 
@@ -127,6 +127,56 @@ begin
   Result := SystemPromptText;
 end;
 
+{ A Save As dialog that shows nothing: it answers with a file in
+  GMcpSaveDir, under the name the IDE suggests (GMcpSaveProjectName for the
+  project file).  Installed as IDESaveDialogClass only while project_create
+  saves a new project. }
+type
+  TMcpSaveDialog = class(TIDESaveDialog)
+  protected
+    function DoExecute: boolean; override;
+  public
+    class function NeedOverwritePrompt: boolean; override;
+  end;
+
+var
+  GMcpSaveDir         : string = '';
+  GMcpSaveProjectName : string = '';
+
+function TMcpSaveDialog.DoExecute: boolean;
+begin
+  if SameText(ExtractFileExt(FileName), '.lpi') then
+    FileName := GMcpSaveDir + GMcpSaveProjectName + '.lpi'
+  else
+    FileName := GMcpSaveDir + ExtractFileName(FileName);
+  Result := True;
+end;
+
+class function TMcpSaveDialog.NeedOverwritePrompt: boolean;
+begin
+  Result := False;  { project_create only saves into an empty folder }
+end;
+
+{ Why the current project cannot be closed for AAction ('' when it can):
+  closing it would otherwise ask the user about unsaved changes in a dialog,
+  and the tool call would wait for it. }
+function ProjectCloseRefusal(const AAction: string): string;
+var
+  I : Integer;
+begin
+  Result := '';
+  if LazarusIDE.ToolStatus <> itNone then
+    Exit('The IDE is busy (debugging or building). Stop that first (debug_stop), ' +
+         'then try ' + AAction + ' again.');
+  if Assigned(LazarusIDE.ActiveProject) and LazarusIDE.ActiveProject.Modified then
+    Exit('The current project ' + LazarusIDE.ActiveProject.ProjectInfoFile +
+         ' has unsaved changes. Ask the user to save or discard them first.');
+  for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
+    if SourceEditorManagerIntf.SourceEditors[I].Modified then
+      Exit('Unsaved changes in ' + SourceEditorManagerIntf.SourceEditors[I].FileName +
+           '. Save them (editor_save) or ask the user before ' + AAction + '.');
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchProjectTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -145,6 +195,9 @@ var
   ProjType   : string;
   VisibleOnly: Boolean;
   I, J       : Integer;
+  OldSaveDialogClass : TIDESaveDialogClass;
+  SaveRes    : TModalResult;
+  Existing   : TStringList;
 begin
   Result := False;
 
@@ -183,28 +236,11 @@ begin
         Exit;
       end;
     end;
-    if LazarusIDE.ToolStatus <> itNone then
+    Ctx.Result := ProjectCloseRefusal('opening another project');
+    if Ctx.Result <> '' then
     begin
-      Ctx.Error := True;
-      Ctx.Result := 'The IDE is busy (debugging or building). Stop that first ' +
-                    '(debug_stop), then open the project.';
-      Exit;
+      Ctx.Error := True; Exit;
     end;
-    if Assigned(Proj) and Proj.Modified then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'The current project ' + NewName + ' has unsaved changes. ' +
-                    'Ask the user to save or discard them first.';
-      Exit;
-    end;
-    for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
-      if SourceEditorManagerIntf.SourceEditors[I].Modified then
-      begin
-        Ctx.Error := True;
-        Ctx.Result := 'Unsaved changes in ' + SourceEditorManagerIntf.SourceEditors[I].FileName +
-                      '. Save them (editor_save) or ask the user before opening another project.';
-        Exit;
-      end;
     if LazarusIDE.DoOpenProjectFile(FilePath, [ofAddToRecent, ofRevert]) <> mrOK then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not open ' + FilePath; Exit;
@@ -493,15 +529,69 @@ begin
         'Use a template where interactive=false in project_list_templates.';
       Exit;
     end;
+    if not IsValidIdent(NewName) then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'project_name must be a Pascal identifier: ' + NewName; Exit;
+    end;
+    { new files only: the IDE would ask before overwriting }
+    FilePath := IncludeTrailingPathDelimiter(CleanAndExpandDirectory(FilePath));
+    if DirectoryExists(FilePath) then
+    begin
+      Existing := FindAllFiles(FilePath, AllFilesMask, False);
+      try
+        if Existing.Count > 0 then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'project_dir is not empty: ' + FilePath; Exit;
+        end;
+      finally
+        Existing.Free;
+      end;
+    end;
+    { DoNewProject closes the current project first, asking about unsaved
+      changes in a dialog that would block this call }
+    Ctx.Result := ProjectCloseRefusal('creating a project');
+    if Ctx.Result <> '' then
+    begin
+      Ctx.Error := True; Exit;
+    end;
     ForceDirectories(FilePath);
     if LazarusIDE.DoNewProject(Descriptor) <> mrOK then
     begin
       Ctx.Error := True; Ctx.Result := 'DoNewProject failed or was cancelled'; Exit;
     end;
     Proj := LazarusIDE.ActiveProject;
-    Proj.ProjectInfoFile := IncludeTrailingPathDelimiter(FilePath) + NewName + '.lpi';
-    Proj.Title           := NewName;
-    LazarusIDE.DoSaveProject([]);
+    { A new project is unsaved (virtual).  If closing the old one was answered
+      otherwise, it can still be active here, and saving it would save the
+      user's project under the new name. }
+    if (Proj = nil) or not Proj.IsVirtual then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'No new project was created; the current project is unchanged.';
+      Exit;
+    end;
+    Proj.Title := NewName;
+    { A new project's files are unsaved: saving asks for each name in a Save
+      As dialog.  Answered here, through the IDE's dialog class, with
+      project_dir and the names the IDE suggests (project_name for the .lpi). }
+    GMcpSaveDir         := FilePath;
+    GMcpSaveProjectName := NewName;
+    OldSaveDialogClass  := IDESaveDialogClass;
+    IDESaveDialogClass  := TMcpSaveDialog;
+    try
+      SaveRes := LazarusIDE.DoSaveProject([]);
+    finally
+      IDESaveDialogClass := OldSaveDialogClass;
+    end;
+    Proj := LazarusIDE.ActiveProject;
+    if (SaveRes <> mrOK) or (Proj = nil) or Proj.IsVirtual then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'The project was created but not saved; it is open in the IDE as an ' +
+                    'unsaved project.';
+      Exit;
+    end;
     Obj := TJSONObject.Create;
     try
       Obj.Add('project_file', Proj.ProjectInfoFile);
