@@ -19,6 +19,7 @@ type
   published
     procedure TestEditorListOpen;
     procedure TestCodeGetOutline;
+    procedure TestCodeGetOutlineWholeUnit;
     procedure TestCodeGetUnitInterface;
     procedure TestCodeNewFileInKnownFolder;
     procedure TestProjectCreateRefusesUnsavedEditor;
@@ -88,6 +89,58 @@ begin
   CheckNoError(Self, 'code_get_outline', T);
   CheckTrue(Pos('"TFixtureForm"', T) > 0, 'outline lists the class: ' + T);
   CheckTrue(Pos('"FixtureFormInst"', T) > 0, 'outline lists the variable: ' + T);
+end;
+
+{ The outline covers the implementation and the members in class sections,
+  and follows unsaved edits in the editor (CodeTools' copy of the file used
+  to lag behind it). }
+procedure TTestToolSmoke.TestCodeGetOutlineWholeUnit;
+var
+  F, T : string;
+  SL   : TStringList;
+begin
+  F  := GetTempDir(False) + 'mcpoutline' + PathDelim + 'outlined.pas';
+  ForceDirectories(ExtractFileDir(F));
+  SL := TStringList.Create;
+  try
+    SL.Text :=
+      'unit outlined;' + LineEnding +                       { 1 }
+      '{$mode objfpc}{$H+}' + LineEnding +                  { 2 }
+      'interface' + LineEnding +                            { 3 }
+      'type' + LineEnding +                                 { 4 }
+      '  TShown = class' + LineEnding +                     { 5 }
+      '  private' + LineEnding +                            { 6 }
+      '    FCount: Integer;' + LineEnding +                 { 7 }
+      '  public' + LineEnding +                             { 8 }
+      '    procedure Bump;' + LineEnding +                  { 9 }
+      '    property Count: Integer read FCount;' + LineEnding + { 10 }
+      '  end;' + LineEnding +                               { 11 }
+      'implementation' + LineEnding +                       { 12 }
+      'procedure Helper;' + LineEnding +                    { 13 }
+      'begin' + LineEnding + 'end;' + LineEnding +
+      'procedure TShown.Bump;' + LineEnding +               { 16 }
+      'begin' + LineEnding + '  Inc(FCount);' + LineEnding + 'end;' + LineEnding +
+      'end.';
+    SL.SaveToFile(F);
+  finally
+    SL.Free;
+  end;
+  try
+    T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');
+    CheckNoError(Self, 'code_get_outline', T);
+    CheckTrue(Pos('"line" : 7, "name" : "FCount"', T) > 0, 'private field: ' + T);
+    CheckTrue(Pos('"line" : 10, "name" : "Count"', T) > 0, 'property: ' + T);
+    CheckTrue(Pos('"line" : 13, "name" : "Helper"', T) > 0, 'implementation routine: ' + T);
+    CheckTrue(Pos('"line" : 16, "name" : "TShown.Bump"', T) > 0, 'method body: ' + T);
+    Call('editor_replace_range', '{"file":' + JsonStr(F) +
+      ',"start_line":4,"start_col":1,"new_text":"// a\n// b\n"}');
+    T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');
+    CheckTrue(Pos('"line" : 18, "name" : "TShown.Bump"', T) > 0, 'unsaved edit followed: ' + T);
+  finally
+    Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    DeleteDirectory(ExtractFileDir(F), False);
+  end;
 end;
 
 procedure TTestToolSmoke.TestCodeGetUnitInterface;

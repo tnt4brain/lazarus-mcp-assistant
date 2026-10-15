@@ -632,7 +632,9 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
     end;
-    if not CodeToolBoss.Explore(CodeBuf, Tool, False, True) then
+    { the whole unit: OnlyInterface=True left out every routine of the
+      implementation }
+    if not CodeToolBoss.Explore(CodeBuf, Tool, False, False) then
     begin
       Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
     end;
@@ -641,16 +643,18 @@ begin
       TreeNode := Tool.Tree.Root;
       while Assigned(TreeNode) do
       begin
-        if TreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition,
-                              ctnProcedure, ctnUseUnit] then
+        if TreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition, ctnConstDefinition,
+                              ctnProcedure, ctnProperty, ctnUseUnit] then
         begin
           CodeBuf.AbsoluteToLineCol(TreeNode.StartPos, NewY, NewX);
           Entry := TJSONObject.Create;
           Entry.Add('kind', NodeDescriptionAsString(TreeNode.Desc));
           Entry.Add('line', NewY);
+          { procedure and property nodes start with their keyword }
           if TreeNode.Desc = ctnProcedure then
-            { a procedure node starts with its keyword }
             Entry.Add('name', Tool.ExtractProcName(TreeNode, []))
+          else if TreeNode.Desc = ctnProperty then
+            Entry.Add('name', Tool.ExtractPropName(TreeNode, False))
           else
             Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
           Outline.Add(Entry);
@@ -659,7 +663,8 @@ begin
            (TreeNode.Desc in [ctnUnit, ctnInterface, ctnImplementation,
                                ctnTypeSection, ctnVarSection, ctnConstSection,
                                ctnUsesSection, ctnTypeDefinition,
-                               ctnClass, ctnRecordType, ctnObject]) then
+                               ctnClass, ctnRecordType, ctnObject,
+                               ctnProgram, ctnLibrary, ctnPackage] + AllClassSections) then
           TreeNode := TreeNode.FirstChild
         else if Assigned(TreeNode.NextBrother) then
           TreeNode := TreeNode.NextBrother
@@ -1533,6 +1538,12 @@ end;
   edits anything, so running it again is safe. }
 function DispatchCodeToolsTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 begin
+  { CodeTools read their own copy of a file, which the IDE updates from the
+    editors only when one of its commands starts: without this, tools saw
+    the file as before unsaved edits (outline line numbers, declarations).
+    If the IDE is busy the copies stay; code_complete refuses on its own. }
+  if Assigned(LazarusIDE) and (Copy(Name, 1, 5) = 'code_') then
+    LazarusIDE.BeginCodeTools;
   CodeToolBoss.ClearError;
   Result := DoDispatchCodeTools(Name, Ctx);
   if Result and Ctx.Error and CodeToolsMissedFile then
