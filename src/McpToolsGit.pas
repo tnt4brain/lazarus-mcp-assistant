@@ -729,7 +729,7 @@ begin
     SCHEMA_GIT_LOG, MCP_ANN_RO));
   Tools.Add(MakeTool('git_add',
     'Stage files for the next commit. Pass an array of file or directory paths.',
-    SCHEMA_GIT_ADD, MCP_ANN_WRITE));
+    SCHEMA_GIT_ADD, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('git_commit',
     'Commit currently staged changes with the given message. ' +
     'Stage files first with git_add.',

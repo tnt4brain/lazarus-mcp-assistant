@@ -654,15 +654,15 @@ begin
     'Write compiler options to the active project. All parameters are optional; ' +
     'only supplied keys are changed. Returns the new settings in the same shape ' +
     'as project_get_settings. custom_options REPLACES the existing string.',
-    SCHEMA_SET_PROJECT_SETTINGS, MCP_ANN_WRITE));
+    SCHEMA_SET_PROJECT_SETTINGS, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_add_file',
     'Add an existing source file to the active project (.lpi). ' +
     'Saves the project afterwards.',
-    SCHEMA_ADD_FILE_TO_PROJECT, MCP_ANN_WRITE));
+    SCHEMA_ADD_FILE_TO_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_remove_file',
     'Remove a source file from the active project without deleting it from disk. ' +
     'Saves the project afterwards.',
-    SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE));
+    SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('form_create',
     'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +
     'both added to the active project and opened in the editor. The IDE names ' +
@@ -671,7 +671,7 @@ begin
   Tools.Add(MakeTool('project_open',
     'Open an existing project (.lpi), closing the current one. Refused while ' +
     'debugging or building, or with unsaved changes. Clears the Messages window.',
-    SCHEMA_OPEN_PROJECT, MCP_ANN_WRITE));
+    SCHEMA_OPEN_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_list_templates',
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
     'of {name, localized_name, description}. Pass the name to project_create as ' +

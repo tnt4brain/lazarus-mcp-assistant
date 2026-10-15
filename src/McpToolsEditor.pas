@@ -712,15 +712,15 @@ begin
     SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_save',
     'Save the editor buffer to disk. Omit file to save the active editor.',
-    SCHEMA_SAVE_FILE, MCP_ANN_WRITE));
+    SCHEMA_SAVE_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('editor_close',
     'Close an editor tab. Omit file to close the active editor. ' +
     'Unsaved changes are discarded quietly.',
-    SCHEMA_CLOSE_FILE, MCP_ANN_DEST));
+    SCHEMA_CLOSE_FILE, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('editor_revert',
     'Discard unsaved editor changes and reload the file from disk. ' +
     'Omit file to revert the active editor.',
-    SCHEMA_REVERT_FILE, MCP_ANN_DEST));
+    SCHEMA_REVERT_FILE, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('editor_open',
     'Open a file in the IDE editor and make it the active tab, ' +
     'without moving the cursor. Returns {"file":..., "already_open":bool}.',

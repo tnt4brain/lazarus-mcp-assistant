@@ -2238,10 +2238,10 @@ begin
     'Add a source, address or data breakpoint, or change one that exists at ' +
     'that location (condition, pass_count, enabled). No session needed, except ' +
     'to resolve a symbol.',
-    SCHEMA_SET_BREAKPOINT, MCP_ANN_WRITE));
+    SCHEMA_SET_BREAKPOINT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_remove_breakpoint',
     'Remove the breakpoint at a location, given as for debug_set_breakpoint.',
-    SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_WRITE));
+    SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_list_breakpoints',
     'List all breakpoints: kind and location, condition, pass count, hit count, ' +
     'enabled and valid.',
@@ -2265,7 +2265,7 @@ begin
   Tools.Add(MakeTool('debug_stop',
     'Stop the debug session unconditionally. Non-blocking; safe in any ' +
     'state including after a timed-out step.',
-    SCHEMA_NO_PARAMS, MCP_ANN_WRITE));
+    SCHEMA_NO_PARAMS, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_step_over',
     'Step over the current line (F8). Blocks until the debugger pauses at ' +
     'the next line.',
@@ -2295,7 +2295,7 @@ begin
   Tools.Add(MakeTool('debug_select_frame',
     'Select a thread and stack frame while paused, as the Threads and Call ' +
     'Stack windows do; later evaluations and watches use it.',
-    SCHEMA_SELECT_FRAME, MCP_ANN_WRITE));
+    SCHEMA_SELECT_FRAME, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_get_locals',
     'Return local variables and parameters in the current stack frame. ' +
     'Debugger must be paused.',
@@ -2311,14 +2311,14 @@ begin
   Tools.Add(MakeTool('debug_set_variable',
     'Modify a local variable or parameter in the current stack frame. ' +
     'Debugger must be paused. Call debug_get_locals afterwards to verify.',
-    SCHEMA_SET_LOCAL_VARIABLE, MCP_ANN_WRITE));
+    SCHEMA_SET_LOCAL_VARIABLE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_add_watch',
     'Add an expression to the IDE Watches window (kept across sessions). ' +
     'Values are read with debug_list_watches while paused.',
     SCHEMA_WATCH_EXPRESSION, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_remove_watch',
     'Remove a watch expression from the Watches window, or all with "*".',
-    SCHEMA_REMOVE_WATCH, MCP_ANN_WRITE));
+    SCHEMA_REMOVE_WATCH, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_list_watches',
     'List the Watches window entries. While paused, each comes with its value ' +
     'and type in the selected (or given) thread and stack frame.',

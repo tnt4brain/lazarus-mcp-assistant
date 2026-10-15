@@ -54,11 +54,17 @@ procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Han
   Everything works on the local IDE/project only, hence openWorldHint=false.
   RO is also used for tools that only move the editor cursor or open a tab.
   DEST is for changes Ctrl+Z or form_undo can't take back: deletes that
-  form_undo restores are WRITE, as are deletes of editor text. }
+  form_undo restores are WRITE, as are deletes of editor text.
+  _IDEM: a second call with the same arguments changes nothing more (it may
+  report "already" or "not found"); not for relative targets such as HEAD~1. }
 const
-  MCP_ANN_RO    = '{"readOnlyHint":true,"openWorldHint":false}';
-  MCP_ANN_WRITE = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}';
-  MCP_ANN_DEST  = '{"readOnlyHint":false,"destructiveHint":true,"openWorldHint":false}';
+  MCP_ANN_RO         = '{"readOnlyHint":true,"openWorldHint":false}';
+  MCP_ANN_WRITE      = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}';
+  MCP_ANN_WRITE_IDEM = '{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,' +
+                       '"openWorldHint":false}';
+  MCP_ANN_DEST       = '{"readOnlyHint":false,"destructiveHint":true,"openWorldHint":false}';
+  MCP_ANN_DEST_IDEM  = '{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,' +
+                       '"openWorldHint":false}';
 
 (* Build a tool descriptor object from a JSON string schema.
    AName and ADesc are plain Pascal strings (auto-escaped).

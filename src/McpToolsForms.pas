@@ -2304,7 +2304,7 @@ begin
     'Set component properties through the Object Inspector''s property editors. ' +
     'For layout prefer Align, Anchors, AnchorSide*, BorderSpacing.* and the ' +
     'container''s ChildSizing.* to pixel positions. Save with editor_save.',
-    SCHEMA_FORM_SET_PROPERTIES, MCP_ANN_WRITE));
+    SCHEMA_FORM_SET_PROPERTIES, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('form_add_component',
     'Add a component from the IDE palette to a form, optionally inside a container, ' +
     'with a given name and initial properties (same format as form_set_properties). ' +
@@ -2318,7 +2318,7 @@ begin
   Tools.Add(MakeTool('form_arrange',
     'Arrange controls that share a parent: same_size, then distribute, then ' +
     'align. Returns the new bounds.',
-    SCHEMA_FORM_ARRANGE, MCP_ANN_WRITE));
+    SCHEMA_FORM_ARRANGE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('form_get_lfm',
     'Return the form as LFM text from the live designer state (including unsaved ' +
     'changes) — the most compact view of the whole layout. Pass component_name ' +

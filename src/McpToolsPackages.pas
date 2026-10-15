@@ -1564,31 +1564,31 @@ begin
     'Add a file to a package (.lpk), as the package editor''s Add does: unit name ' +
     'and Register procedure are detected; the unit or include path is extended if ' +
     'needed. Saves the .lpk when nothing else is unsaved.',
-    SCHEMA_PKG_FILE, MCP_ANN_WRITE));
+    SCHEMA_PKG_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_remove_file',
     'Remove a file from a package (.lpk); the file stays on disk.',
-    SCHEMA_PKG_FILE, MCP_ANN_WRITE));
+    SCHEMA_PKG_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_add_dependency',
     'Make a package require another one, optionally with version limits. Refused for ' +
     'cycles, unknown packages, and when it would bring a new package into the IDE.',
-    SCHEMA_PKG_ADD_DEP, MCP_ANN_WRITE));
+    SCHEMA_PKG_ADD_DEP, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_remove_dependency',
     'Remove a requirement from a package (.lpk).',
-    SCHEMA_PKG_REMOVE_DEP, MCP_ANN_WRITE));
+    SCHEMA_PKG_REMOVE_DEP, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_set_info',
     'Set a package''s version, description, author and/or license, as on the ' +
     'package options'' Package page; only the given fields change. Returns old and ' +
     'new values. Saves the .lpk when nothing else is unsaved.',
-    SCHEMA_PKG_SET_INFO, MCP_ANN_WRITE));
+    SCHEMA_PKG_SET_INFO, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_add_package',
     'Add a package as a dependency to the active project (.lpi). ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +
     'Returns the updated list of project package dependencies.',
-    SCHEMA_ADD_PACKAGE_TO_PROJECT, MCP_ANN_WRITE));
+    SCHEMA_ADD_PACKAGE_TO_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_remove_package',
     'Remove a package dependency from the active project (.lpi). ' +
     'No rebuild required. Returns the updated list of project package dependencies.',
-    SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_WRITE));
+    SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_install',
     'Install a package into the IDE (design-time / palette); the IDE rebuilds and ' +
     'restarts. A package not installed yet needs the user''s consent. Run ' +

@@ -1397,7 +1397,7 @@ begin
     'Edit lands in the editor buffer (Ctrl+Z works); use auto_save=true or ' +
     'editor_save to persist to disk. ' +
     'Set in_interface=false to target the implementation uses clause.',
-    SCHEMA_ADD_UNIT_TO_USES, MCP_ANN_WRITE));
+    SCHEMA_ADD_UNIT_TO_USES, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('code_insert_in_procedure',
     'Insert text at the start of a named procedure or function body (immediately ' +
     'after begin), located via CodeTools AST. No string matching — robust to ' +
