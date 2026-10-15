@@ -34,6 +34,11 @@ function McpNormalizePath(const S: string): string;
   form_file, lpk_path, work_dir, ...), in place.  AArgs may be nil. }
 procedure McpNormalizePathArgs(AArgs: TJSONObject);
 
+{ Tools that named their one file argument file_path, path or filename take
+  "file" since v1.0, as all other tools do; the old name is still accepted
+  and renamed to "file" here, in place.  AArgs may be nil. }
+procedure McpRenameLegacyFileArg(const ATool: string; AArgs: TJSONObject);
+
 implementation
 
 uses
@@ -66,6 +71,27 @@ begin
     if Assigned(D) and (D.JSONType = jtString) then
       D.AsString := McpNormalizePath(D.AsString);
   end;
+end;
+
+procedure McpRenameLegacyFileArg(const ATool: string; AArgs: TJSONObject);
+var
+  Old : string;
+  I   : Integer;
+begin
+  if not Assigned(AArgs) or (AArgs.IndexOfName('file') >= 0) then Exit;
+  case ATool of
+    'debug_set_breakpoint', 'debug_remove_breakpoint', 'debug_run_to_line',
+    'editor_open', 'project_add_file', 'project_remove_file', 'project_open':
+      Old := 'file_path';
+    'editor_read_file':    Old := 'path';
+    'project_create_unit': Old := 'filename';
+  else
+    Exit;
+  end;
+  I := AArgs.IndexOfName(Old);
+  if I < 0 then Exit;
+  AArgs.Add('file', AArgs.Items[I].Clone);
+  AArgs.Delete(I);
 end;
 
 function Swap16(v: Word): Word;

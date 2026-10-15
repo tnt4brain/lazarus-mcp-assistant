@@ -853,6 +853,7 @@ begin
   Args     := TJSONObject(Params.Find('arguments'));
   { D:/x/f.pas and D:\x\f.pas must name the same file for every tool }
   McpNormalizePathArgs(Args);
+  McpRenameLegacyFileArg(ToolName, Args);
 
   Err  := False;
   Text := '';

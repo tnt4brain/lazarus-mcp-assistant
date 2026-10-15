@@ -48,13 +48,13 @@ const
 
   SCHEMA_ADD_FILE_TO_PROJECT =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path to the existing .pas (or other source) file to add"}},' +
-    '"required":["file_path"]}';
+    '"file":{"type":"string","description":"Absolute path to the existing .pas (or other source) file to add"}},' +
+    '"required":["file"]}';
 
   SCHEMA_REMOVE_FILE_FROM_PROJECT =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path to the file to remove from the project (file is NOT deleted from disk)"}},' +
-    '"required":["file_path"]}';
+    '"file":{"type":"string","description":"Absolute path to the file to remove from the project (file is NOT deleted from disk)"}},' +
+    '"required":["file"]}';
 
   SCHEMA_CREATE_FORM =
     '{"type":"object","properties":{' +
@@ -76,8 +76,8 @@ const
 
   SCHEMA_OPEN_PROJECT =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path of the project''s .lpi"}},' +
-    '"required":["file_path"]}';
+    '"file":{"type":"string","description":"Absolute path of the project''s .lpi"}},' +
+    '"required":["file"]}';
 
 { ── IsDescriptorInteractive helper ──────────────────────────────────────── }
 
@@ -211,10 +211,10 @@ begin
     Result := True;
     FilePath := '';
     if Assigned(Ctx.Params) then
-      FilePath := Ctx.Params.Get('file_path', '');
+      FilePath := Ctx.Params.Get('file', '');
     if FilePath = '' then
     begin
-      Ctx.Error := True; Ctx.Result := 'file_path required'; Exit;
+      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
     FilePath := CleanAndExpandFilename(FilePath);
     if not SameText(ExtractFileExt(FilePath), '.lpi') then
@@ -354,11 +354,11 @@ begin
   else if Name = 'project_add_file' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
     begin
-      Ctx.Error := True; Ctx.Result := 'file_path required'; Exit;
+      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
-    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
+    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
     if not FileExists(FilePath) then
     begin
       Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
@@ -404,11 +404,11 @@ begin
   else if Name = 'project_remove_file' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
     begin
-      Ctx.Error := True; Ctx.Result := 'file_path required'; Exit;
+      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
-    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
+    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
     Proj := LazarusIDE.ActiveProject;
     if not Assigned(Proj) then
     begin

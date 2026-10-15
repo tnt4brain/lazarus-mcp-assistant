@@ -370,7 +370,7 @@ end;
 
 { Fill GSyncHelper's InBp* fields from the arguments of debug_set_breakpoint
   / debug_remove_breakpoint / debug_run_to_line.  Exactly one location:
-  file_path + line, address, or data.  ASymbol receives an address that is
+  file + line, address, or data.  ASymbol receives an address that is
   not a number (a symbol, resolved by the caller while paused); '' else. }
 function ReadBreakpointArgs(P: TJSONObject; out ASymbol, AErr: string): Boolean;
 var
@@ -383,14 +383,14 @@ begin
   AErr    := '';
   if not Assigned(P) then
   begin
-    AErr := 'Give file_path and line, address, or data';
+    AErr := 'Give file and line, address, or data';
     Exit;
   end;
-  Forms := Ord(P.Get('file_path', '') <> '') + Ord(P.Get('address', '') <> '') +
+  Forms := Ord(P.Get('file', '') <> '') + Ord(P.Get('address', '') <> '') +
            Ord(P.Get('data', '') <> '');
   if Forms <> 1 then
   begin
-    AErr := 'Give exactly one location: file_path and line, address, or data';
+    AErr := 'Give exactly one location: file and line, address, or data';
     Exit;
   end;
   with GSyncHelper do
@@ -402,10 +402,10 @@ begin
     InBpSetPass    := Assigned(P.Find('pass_count'));
     InBpPass       := P.Get('pass_count', 0);
     InBpOnlyIfNew  := False;
-    if P.Get('file_path', '') <> '' then
+    if P.Get('file', '') <> '' then
     begin
       InBpKind := bpkSource;
-      InBpFile := CleanAndExpandFilename(P.Get('file_path', ''));
+      InBpFile := CleanAndExpandFilename(P.Get('file', ''));
       InBpLine := P.Get('line', 0);
       if InBpLine < 1 then
       begin
@@ -1763,15 +1763,15 @@ begin
   else if Name = 'debug_run_to_line' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
-    begin Ctx.Error := True; Ctx.Result := 'file_path required'; Exit; end;
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+    begin Ctx.Error := True; Ctx.Result := 'file required'; Exit; end;
     TimeoutMs := 30000;
     if Assigned(Ctx.Params) then
       TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
     { Temporary breakpoint, unless the line has one already: that one is the
       user's, with its condition and pass count, and is left exactly as it is }
     GSyncHelper.InBpKind       := bpkSource;
-    GSyncHelper.InBpFile       := CleanAndExpandFilename(Ctx.Params.Get('file_path', ''));
+    GSyncHelper.InBpFile       := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
     GSyncHelper.InBpLine       := Ctx.Params.Get('line', 0);
     GSyncHelper.InBpSetEnabled := False;
     GSyncHelper.InBpSetCond    := False;
@@ -2122,9 +2122,9 @@ end;
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
 const
-  { one location: file_path + line, address, or data (+ scope, watch) }
+  { one location: file + line, address, or data (+ scope, watch) }
   BP_LOCATION_PROPS =
-    '"file_path":{"type":"string","description":"Absolute path (source breakpoint)"},' +
+    '"file":{"type":"string","description":"Absolute path (source breakpoint)"},' +
     '"line":{"type":"integer","description":"1-based line number"},' +
     '"address":{"type":"string","description":"Code address ($401000, 0x401000), or ' +
       'Proc / Proc+12 from code with debug info (resolved while paused; valid ' +
@@ -2157,10 +2157,10 @@ const
 
   SCHEMA_RUN_TO_LINE =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path"},' +
+    '"file":{"type":"string","description":"Absolute path"},' +
     '"line":{"type":"integer","description":"1-based line number to run to"},' +
     '"timeout_s":{"type":"integer","description":"Default 30"}},' +
-    '"required":["file_path","line"]}';
+    '"required":["file","line"]}';
 
   THREAD_FRAME_PROPS =
     '"thread":{"type":"integer","description":"Thread id (debug_list_threads); default current"},' +
@@ -2279,7 +2279,7 @@ begin
     'pauses after returning.',
     SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_run_to_line',
-    'Run until (file_path, line) is reached, through a temporary breakpoint ' +
+    'Run until (file, line) is reached, through a temporary breakpoint ' +
     'removed on pause. A breakpoint already on that line is used and kept, ' +
     'with its condition.',
     SCHEMA_RUN_TO_LINE, MCP_ANN_WRITE));

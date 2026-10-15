@@ -117,6 +117,15 @@ New tools get this for free if they use one of these names for path arguments.
 Code that calls tools internally, bypassing `HandleToolsCall`, normalises for
 itself.
 
+**One name for one file (v1.0).** A tool's single source file is `file`. The
+tools that called it `file_path` (`editor_open`, `debug_set_breakpoint`,
+`debug_remove_breakpoint`, `debug_run_to_line`, `project_add_file`,
+`project_remove_file`, `project_open`), `path` (`editor_read_file`) or
+`filename` (`project_create_unit`) take `file` now. The old names still work:
+`McpRenameLegacyFileArg` renames them before dispatch. Other names stay where
+they say more: `form_file`, `lpk_path`, and `git_diff`'s `path`, which can be
+a directory.
+
 ## Alternatives considered
 
 - **Dotted namespaces (`debug.run`).** These read well, but some clients and LLM APIs

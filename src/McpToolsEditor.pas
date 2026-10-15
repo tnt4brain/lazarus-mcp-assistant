@@ -25,9 +25,9 @@ const
     '{"type":"object","properties":{}}';
 
   SCHEMA_GET_FILE_CONTENT =
-    '{"type":"object","properties":{"path":{"type":"string",' +
+    '{"type":"object","properties":{"file":{"type":"string",' +
     '"description":"Absolute path to the file"}},' +
-    '"required":["path"]}';
+    '"required":["file"]}';
 
   SCHEMA_GET_PROJECT_FILES =
     '{"type":"object","properties":{}}';
@@ -81,8 +81,8 @@ const
 
   SCHEMA_OPEN_FILE =
     '{"type":"object","properties":{' +
-    '"file_path":{"type":"string","description":"Absolute path to the file to open in the editor"}},' +
-    '"required":["file_path"]}';
+    '"file":{"type":"string","description":"Absolute path to the file to open in the editor"}},' +
+    '"required":["file"]}';
 
   SCHEMA_EDIT_AT_POSITION =
     '{"type":"object","properties":{' +
@@ -177,11 +177,11 @@ begin
   else if Name = 'editor_read_file' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('path', '') = '') then
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
     begin
-      Ctx.Error := True; Ctx.Result := 'path argument required'; Exit;
+      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
-    SyncFilePath := Ctx.Params.Get('path', '');
+    SyncFilePath := Ctx.Params.Get('file', '');
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
     if Assigned(Ed) then
     begin
@@ -583,11 +583,11 @@ begin
   else if Name = 'editor_open' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file_path', '') = '') then
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
     begin
-      Ctx.Error := True; Ctx.Result := 'file_path required'; Exit;
+      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
-    SyncFilePath := Ctx.Params.Get('file_path', '');
+    SyncFilePath := Ctx.Params.Get('file', '');
     AlreadyOpen  := Assigned(
       SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath));
     LazarusIDE.DoOpenEditorFile(SyncFilePath, -1, -1, [ofOnlyIfExists, ofRegularFile]);

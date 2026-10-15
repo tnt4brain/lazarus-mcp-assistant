@@ -24,6 +24,7 @@ type
     procedure TestNormalizePathAbsolute;
     procedure TestNormalizePathRelativeUnchanged;
     procedure TestNormalizePathArgs;
+    procedure TestRenameLegacyFileArg;
   end;
 
 implementation
@@ -146,6 +147,45 @@ begin
     Args.Free;
   end;
   McpNormalizePathArgs(nil);   { no arguments at all }
+end;
+
+procedure TTestUtils.TestRenameLegacyFileArg;
+var
+  Args : TJSONObject;
+begin
+  Args := TJSONObject(GetJSON('{"path":"a.pas"}'));
+  try
+    McpRenameLegacyFileArg('editor_read_file', Args);
+    CheckEquals('a.pas', Args.Get('file', ''), 'path is file');
+    CheckEquals(-1, Args.IndexOfName('path'), 'old name gone');
+  finally
+    Args.Free;
+  end;
+  Args := TJSONObject(GetJSON('{"file_path":"a.pas","line":3}'));
+  try
+    McpRenameLegacyFileArg('debug_set_breakpoint', Args);
+    CheckEquals('a.pas', Args.Get('file', ''), 'file_path is file');
+    CheckEquals(3, Args.Get('line', 0));
+  finally
+    Args.Free;
+  end;
+  Args := TJSONObject(GetJSON('{"file":"new.pas","filename":"old.pas"}'));
+  try
+    McpRenameLegacyFileArg('project_create_unit', Args);
+    CheckEquals('new.pas', Args.Get('file', ''), 'file wins');
+  finally
+    Args.Free;
+  end;
+  { git_diff's path may be a directory: not renamed }
+  Args := TJSONObject(GetJSON('{"path":"src"}'));
+  try
+    McpRenameLegacyFileArg('git_diff', Args);
+    CheckEquals('src', Args.Get('path', ''));
+    CheckEquals(-1, Args.IndexOfName('file'));
+  finally
+    Args.Free;
+  end;
+  McpRenameLegacyFileArg('editor_open', nil);
 end;
 
 initialization

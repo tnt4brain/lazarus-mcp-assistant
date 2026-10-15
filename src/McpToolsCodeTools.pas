@@ -98,9 +98,9 @@ const
 
   SCHEMA_CREATE_UNIT =
     '{"type":"object","properties":{' +
-    '"filename":{"type":"string","description":"Absolute path for the new .pas file"},' +
+    '"file":{"type":"string","description":"Absolute path for the new .pas file"},' +
     '"content":{"type":"string","description":"Full source content; omit for a blank unit skeleton"}},' +
-    '"required":["filename"]}';
+    '"required":["file"]}';
 
   SCHEMA_ADD_UNIT_TO_USES =
     '{"type":"object","properties":{' +
@@ -851,11 +851,11 @@ begin
   else if Name = 'project_create_unit' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('filename', '') = '') then
+    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
     begin
-      Ctx.Error := True; Ctx.Result := 'filename required'; Exit;
+      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
-    FilePath := Ctx.Params.Get('filename', '');
+    FilePath := Ctx.Params.Get('file', '');
     if not FilenameIsAbsolute(FilePath) then
     begin
       Proj := LazarusIDE.ActiveProject;
