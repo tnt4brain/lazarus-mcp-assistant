@@ -25,7 +25,7 @@ implementation
 
 uses
   Classes, SysUtils, StrUtils,
-  LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils,
+  LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   Controls,
   fpjson, jsonparser,
@@ -38,6 +38,36 @@ begin
   InvalidateFileStateCache(AFileName);
   CodeToolBoss.DirectoryCachePool.IncreaseFileTimeStamp;
   Result := CodeToolBoss.LoadFile(AFileName, AUpdateFromDisk, False);
+end;
+
+{ TMcpReadLines for project_search: an open file is searched in its editor }
+function EditorLines(const AFileName: string; ALines: TStrings): Boolean;
+var
+  Ed : TSourceEditorInterface;
+begin
+  Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(AFileName);
+  Result := Assigned(Ed);
+  if Result then ALines.Text := Ed.Lines.Text;
+end;
+
+{ Files under ADir matching AMask (FindAllFiles' ';'-separated masks), as
+  the JSON array McpDoSearchInProject takes. }
+function DirectoryFilesJSON(const ADir, AMask: string): string;
+var
+  Found : TStringList;
+  Arr   : TJSONArray;
+  I     : Integer;
+begin
+  Found := FindAllFiles(ADir, AMask, True);
+  Arr   := TJSONArray.Create;
+  try
+    for I := 0 to Found.Count - 1 do
+      Arr.Add(Found[I]);
+    Result := Arr.AsJSON;
+  finally
+    Arr.Free;
+    Found.Free;
+  end;
 end;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
@@ -89,7 +119,11 @@ const
 
   SCHEMA_SEARCH_IN_PROJECT =
     '{"type":"object","properties":{' +
-    '"query":{"type":"string","description":"Text or substring to search for (case-insensitive)"}},' +
+    '"query":{"type":"string","description":"Text or substring to search for (case-insensitive)"},' +
+    '"directory":{"type":"string","description":"Search this folder and its subfolders ' +
+    'instead of the project''s files, e.g. a package''s source folder"},' +
+    '"mask":{"type":"string","description":"With directory: file masks, default ' +
+    '*.pas;*.pp;*.inc;*.lpr;*.dpr;*.lfm"}},' +
     '"required":["query"]}';
 
   SCHEMA_LIST_TODOS =
@@ -479,15 +513,29 @@ begin
   else if Name = 'project_search' then
   begin
     Result := True;
-    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.StopServer := nil;
-    McpDispatch('project_list_files', TmpCtx, TmpHandled);
-    if TmpCtx.Error then
+    FilePath := '';
+    if Assigned(Ctx.Params) then FilePath := Ctx.Params.Get('directory', '');
+    if FilePath <> '' then
     begin
-      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+      if not DirectoryExists(FilePath) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Directory not found: ' + FilePath; Exit;
+      end;
+      TmpCtx.Result := DirectoryFilesJSON(FilePath,
+        Ctx.Params.Get('mask', '*.pas;*.pp;*.inc;*.lpr;*.dpr;*.lfm'));
+    end
+    else
+    begin
+      TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+      TmpCtx.StopServer := nil;
+      McpDispatch('project_list_files', TmpCtx, TmpHandled);
+      if TmpCtx.Error then
+      begin
+        Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+      end;
     end;
     Ctx.Result := McpDoSearchInProject(TmpCtx.Result,
-      IfThen(Assigned(Ctx.Params), Ctx.Params.Get('query', ''), ''));
+      IfThen(Assigned(Ctx.Params), Ctx.Params.Get('query', ''), ''), @EditorLines);
   end
 
   else if Name = 'project_list_todos' then
@@ -1402,8 +1450,10 @@ begin
     'Opens the declaration file if needed.',
     SCHEMA_GOTO_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('project_search',
-    'Search for a text substring across all project source files. ' +
-    'Returns matching file, line number, and line content.',
+    'Search for a text substring (case-insensitive) across the project''s source ' +
+    'files, or across a directory such as a package''s sources. Open files are ' +
+    'searched in the editor, unsaved changes included. Returns file, line and ' +
+    'line text, at most 500 matches.',
     SCHEMA_SEARCH_IN_PROJECT, MCP_ANN_RO));
   Tools.Add(MakeTool('project_list_todos',
     'List TODO / FIXME items in the project''s source files, as the IDE''s ToDo ' +

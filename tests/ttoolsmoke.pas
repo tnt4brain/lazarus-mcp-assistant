@@ -28,6 +28,7 @@ type
     procedure TestGitBlameActiveEditor;
     procedure TestGitCommitMessage;
     procedure TestEditorReadFileRange;
+    procedure TestProjectSearchDirectory;
     procedure TestEditorReplaceRange;
     procedure TestEditorFileDeletedAndCreatedAgain;
     procedure TestProjectGetSettings;
@@ -308,6 +309,46 @@ begin
     RunCommandInDir(Dir, 'git', ['log', '-1', '--format=%B'], O);
     CheckEquals(Msg, TrimRight(AdjustLineBreaks(O, tlbsLF)), 'message kept whole');
   finally
+    DeleteDirectory(Dir, False);
+  end;
+end;
+
+{ project_search in a directory instead of the project (a package's sources),
+  with an open file searched in its editor, unsaved edit included. }
+procedure TTestToolSmoke.TestProjectSearchDirectory;
+var
+  Dir, F, T : string;
+  SL        : TStringList;
+begin
+  Dir := GetTempDir(False) + 'mcpsearchdir';
+  ForceDirectories(Dir + PathDelim + 'sub');
+  F   := Dir + PathDelim + 'sub' + PathDelim + 'searched.pas';
+  SL  := TStringList.Create;
+  try
+    SL.Text := 'unit searched;' + LineEnding + '// alpha on disk' + LineEnding + 'end.';
+    SL.SaveToFile(F);
+    SL.Text := 'not pascal: alpha';
+    SL.SaveToFile(Dir + PathDelim + 'notes.txt');
+  finally
+    SL.Free;
+  end;
+  try
+    T := Call('project_search', '{"query":"ALPHA","directory":' + JsonStr(Dir) + '}');
+    CheckNoError(Self, 'project_search', T);
+    CheckTrue(Pos('searched.pas', T) > 0, 'subfolder searched, case-insensitive: ' + T);
+    CheckEquals(0, Pos('notes.txt', T), 'default mask is Pascal sources: ' + T);
+    T := Call('project_search', '{"query":"alpha","directory":' + JsonStr(Dir) +
+      ',"mask":"*.txt"}');
+    CheckTrue(Pos('notes.txt', T) > 0, 'mask: ' + T);
+    Call('editor_edit_text', '{"file":' + JsonStr(F) +
+      ',"old_string":"// alpha on disk","new_string":"// zeta only in the editor"}');
+    T := Call('project_search', '{"query":"zeta only","directory":' + JsonStr(Dir) + '}');
+    CheckTrue(Pos('"line" : 2', T) > 0, 'unsaved edit found: ' + T);
+    T := Call('project_search', '{"query":"x","directory":' + JsonStr(Dir + 'missing') + '}');
+    CheckTrue(Pos('Directory not found', T) > 0, 'missing directory: ' + T);
+  finally
+    Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
     DeleteDirectory(Dir, False);
   end;
 end;

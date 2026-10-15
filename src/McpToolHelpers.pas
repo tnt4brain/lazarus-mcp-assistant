@@ -23,8 +23,20 @@ function McpRunLazbuild(const LpkPath: string; out IsError: Boolean): string;
 function McpRunTests(const ResolvedLpi, JUnitOut: string;
   out IsError: Boolean): string;
 
-{ Search all files listed in FileListJSON (JSON array of paths) for Query. }
-function McpDoSearchInProject(const FileListJSON, Query: string): string;
+type
+  { Fills ALines with the text of an open editor and returns True; False
+    when the file isn't open, so it is read from disk. }
+  TMcpReadLines = function(const AFileName: string; ALines: TStrings): Boolean;
+
+const
+  MCP_SEARCH_MAX_MATCHES = 500;
+
+{ Search all files listed in FileListJSON (JSON array of paths) for Query,
+  case-insensitively.  A JSON array of objects with file, line and text;
+  past MCP_SEARCH_MAX_MATCHES it ends with one with truncated and
+  max_matches. }
+function McpDoSearchInProject(const FileListJSON, Query: string;
+  AReadLines: TMcpReadLines = nil): string;
 
 { TODO/FIXME/DONE comments in the given files, as a JSON array. }
 function McpDoListTodos(const FileListJSON: string; AIncludeDone: Boolean): string;
@@ -368,7 +380,8 @@ end;
 
 { ── Project-wide text search ─────────────────────────────────────────────── }
 
-function McpDoSearchInProject(const FileListJSON, Query: string): string;
+function McpDoSearchInProject(const FileListJSON, Query: string;
+  AReadLines: TMcpReadLines): string;
 var
   FileList : TJSONArray;
   Results  : TJSONArray;
@@ -390,12 +403,24 @@ begin
       for I := 0 to FileList.Count - 1 do
       begin
         FilePath := FileList.Strings[I];
-        if not FileExists(FilePath) then Continue;
         try
-          Lines.LoadFromFile(FilePath);
+          { an open editor's text, unsaved changes included }
+          if not (Assigned(AReadLines) and AReadLines(FilePath, Lines)) then
+          begin
+            if not FileExists(FilePath) then Continue;
+            Lines.LoadFromFile(FilePath);
+          end;
           for J := 0 to Lines.Count - 1 do
             if Pos(Q, LowerCase(Lines[J])) > 0 then
             begin
+              if Results.Count >= MCP_SEARCH_MAX_MATCHES then
+              begin
+                Match := TJSONObject.Create;
+                Match.Add('truncated',   True);
+                Match.Add('max_matches', MCP_SEARCH_MAX_MATCHES);
+                Results.Add(Match);
+                Break;
+              end;
               Match := TJSONObject.Create;
               Match.Add('file', FilePath);
               Match.Add('line', J + 1);
@@ -405,6 +430,7 @@ begin
         except
           // skip unreadable files
         end;
+        if Results.Count > MCP_SEARCH_MAX_MATCHES then Break;
       end;
     finally
       FileList.Free;
