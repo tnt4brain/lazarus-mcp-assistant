@@ -163,7 +163,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code` |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
 | `debug_step_over` / `debug_step_into` / `debug_step_out` | F8 / F7 / Shift+F8 |
-| `debug_pause` / `debug_stop` | Pause / stop the session |
+| `debug_pause` / `debug_stop` | Pause / stop the session; a pause makes the program's main thread current (not the debugger's break-in thread) |
 | `debug_get_state` | State and source location, in any state |
 | `debug_get_call_stack` | Frames with file, line, function and address (`max_frames`) |
 | `debug_get_locals` | Locals and parameters of a frame (`thread`, `frame`) |

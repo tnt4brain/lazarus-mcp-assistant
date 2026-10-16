@@ -28,6 +28,7 @@ type
     procedure TestExceptionWithoutDialog;
     procedure TestLeaseRefusesOtherClient;
     procedure TestLockSerialisesDebugCalls;
+    procedure TestPauseLeavesBreakInThread;
     procedure TestLeaseExpiresAndStopsSession;
     { v0.9: breakpoint kinds and frames }
     procedure TestConditionalBreakpoint;
@@ -354,6 +355,36 @@ begin
   finally
     Th.WaitFor;
     Th.Free;
+  end;
+end;
+
+{ debug_pause on Windows: the debugger's own break-in thread must not stay current;
+  the call stack is the program's (the main thread sleeping), down to its source. }
+procedure TTestDebugger.TestPauseLeavesBreakInThread;
+var
+  T  : string;
+begin
+  Call(GSessA, 'debug_set_breakpoint', BpArgs(MarkLine('work')));
+  T := Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  CheckEquals('paused', JPath(T, 'state'), 'paused at the breakpoint: ' + T);
+  Call(GSessA, 'debug_remove_breakpoint', BpArgs(MarkLine('work')));
+  { continue: the program sleeps 3 s, then raises; the run gives up after 1 s and
+    leaves it running, which is when a client pauses it }
+  T := Call(GSessA, 'debug_run', '{"timeout_s":1}');
+  CheckEquals('timeout', JPath(T, 'reason'), 'still running: ' + T);
+  try
+    T := Call(GSessA, 'debug_pause', '{}');
+    CheckEquals('paused', JPath(T, 'state'), 'pause: ' + T);
+    CheckEquals('paused', JPath(T, 'reason'), T);
+    {$IFDEF WINDOWS}
+    CheckTrue(Pos('"thread"', T) > 0, 'moved off the break-in thread: ' + T);
+    {$ENDIF}
+    T := Call(GSessA, 'debug_get_call_stack', '{}');
+    CheckFalse(IsError(T), T);
+    CheckTrue(Pos('mcpdebuggee.lpr', T) > 0, 'the program''s own stack, not the break-in thread''s: ' + T);
+    CheckEquals(0, Pos('RtlUserThreadStart', T), T);
+  finally
+    Call(GSessA, 'debug_stop', '{}');
   end;
 end;
 

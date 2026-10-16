@@ -116,6 +116,11 @@ type
     OutWatchJSON   : string;
     OutThrReady    : Boolean;
     OutThrJSON     : string;
+    { After Break: leave the debugger's own break-in thread (debug_pause) }
+    OutSwitchReady : Boolean;   { the thread list was loaded enough to decide }
+    OutSwitchFrom  : Integer;   { 0 = no switch }
+    OutSwitchTo    : Integer;
+    OutSwitchFn    : string;    { the chosen thread's top function }
     { Registers in/out }
     InRegThread    : Integer;   { 0 = the current thread }
     InRegFrame     : Integer;
@@ -150,6 +155,7 @@ type
     procedure ReadWatchNames;  { expressions only — not paused or timed out }
     procedure InitThreads;
     procedure ReadThreads;
+    procedure SelectRunningThread;
     procedure InitRegisters;
     procedure ReadRegisters;
     procedure PrepareDisasm;   { first call starts loading; later calls poll }
@@ -1129,6 +1135,51 @@ begin
   end;
 end;
 
+{ Break on Windows runs a thread inside the program that executes the break-in
+  (ntdll RtlUserThreadStart / DbgUiRemoteBreakin), and that thread is the one the
+  debugger reports as current: its stack is a few ntdll frames and says nothing about
+  what the program was doing.  The program's first thread (the main thread) is made
+  current instead.  Elsewhere the current thread is a program thread and is left. }
+procedure TDbgSyncHelper.SelectRunningThread;
+var
+  T   : TCurrentThreads;
+  E   : TIdeThreadEntry;
+  I   : Integer;
+  Fn  : string;
+begin
+  OutSwitchReady := False;
+  OutSwitchFrom  := 0;
+  OutSwitchTo    := 0;
+  OutSwitchFn    := '';
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.Threads) or
+     not Assigned(DebugBoss.Threads.CurrentThreads) then
+  begin
+    OutSwitchReady := True; Exit;
+  end;
+  T := DebugBoss.Threads.CurrentThreads;
+  if T.Count = 0 then Exit;   { loading; asked again }
+  for I := 0 to T.Count - 1 do
+    if T[I].ThreadId = T.CurrentThreadId then
+    begin
+      E := T[I];
+      if not Assigned(E.TopFrame) then Exit;   { not loaded yet }
+      Fn := LowerCase(E.TopFrame.FunctionName);
+      OutSwitchReady := True;
+      if ((Pos('ntdll:rtluserthreadstart', Fn) = 1) or
+          (Pos('ntdll:dbguiremotebreakin', Fn) = 1) or
+          (Pos('ntdll:dbgbreakpoint', Fn) = 1)) and
+         (T[0].ThreadId <> T.CurrentThreadId) then
+      begin
+        OutSwitchFrom := T.CurrentThreadId;
+        OutSwitchTo   := T[0].ThreadId;
+        if Assigned(T[0].TopFrame) then OutSwitchFn := T[0].TopFrame.FunctionName;
+        DebugBoss.Threads.ChangeCurrentThread(OutSwitchTo);
+      end;
+      Exit;
+    end;
+  OutSwitchReady := True;   { no current thread: nothing to do }
+end;
+
 { ── Internal helpers ─────────────────────────────────────────────────────── }
 
 function DbgStateStr(S: TDBGState): string;
@@ -1779,7 +1830,41 @@ begin
     TimeoutMs := 5000;
     DoIssueCmd(1);
     S := PollForPause(TimeoutMs, FinalFile, FinalLine);
+    { Break leaves the debugger's own break-in thread current (Windows): move to
+      the program's main thread, waiting for the thread list to load }
+    if S = dsPause then
+    begin
+      TThread.Synchronize(nil, @GSyncHelper.InitThreads);
+      Elapsed := 0;
+      repeat
+        TThread.Synchronize(nil, @GSyncHelper.SelectRunningThread);
+        if GSyncHelper.OutSwitchReady then Break;
+        Sleep(100);
+        Inc(Elapsed, 100);
+      until Elapsed >= 3000;
+      if GSyncHelper.OutSwitchFrom <> 0 then
+      begin
+        { the editor cursor the position came from is not where this thread is }
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        FinalFile := GSyncHelper.OutFileName;
+        FinalLine := GSyncHelper.OutLine;
+      end;
+    end;
     Finish('paused');
+    if (S = dsPause) and (GSyncHelper.OutSwitchFrom <> 0) then
+    begin
+      Obj := TJSONObject(GetJSON(Ctx.Result));
+      try
+        Obj.Add('thread', GSyncHelper.OutSwitchTo);
+        Obj.Add('thread_function', GSyncHelper.OutSwitchFn);
+        Obj.Add('note', 'Break ran a thread of its own (' + IntToStr(GSyncHelper.OutSwitchFrom) +
+          '); the main thread is current instead. debug_list_threads shows the others.');
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+        Obj := nil;
+      end;
+    end;
   end
 
   else if Name = 'debug_step_over' then
@@ -2320,7 +2405,10 @@ begin
     'debugger owns the session (see lease_idle_timeout).',
     SCHEMA_RUN_DEBUGGER, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_pause',
-    'Pause a running debug session. Blocks until the program pauses.',
+    'Pause a running debug session. Blocks until the program pauses. On Windows the ' +
+    'debugger runs a break-in thread of its own; the program''s main thread is made ' +
+    'current instead (the answer then has thread, thread_function and a note), so the ' +
+    'call stack and locals are the program''s. debug_list_threads shows the others.',
     SCHEMA_NO_PARAMS, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_stop',
     'Stop the debug session unconditionally. Non-blocking; safe in any ' +
