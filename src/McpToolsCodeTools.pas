@@ -694,6 +694,7 @@ var
   BeginNode            : TCodeTreeNode;
   Child                : TCodeTreeNode;
   AutoSave             : Boolean;
+  PF                   : TLazProjectFile;
   TmpCtx               : TMcpToolCall;
   TmpHandled           : Boolean;
 begin
@@ -1055,7 +1056,12 @@ begin
     end;
     Proj := LazarusIDE.ActiveProject;
     if Assigned(Proj) then
-      Proj.AddFile(Proj.CreateProjectFile(FilePath), False);
+    begin
+      { a file added this way stays out of the project until it is marked }
+      PF := Proj.CreateProjectFile(FilePath);
+      Proj.AddFile(PF, False);
+      PF.IsPartOfProject := True;
+    end;
     LazarusIDE.DoOpenEditorFile(FilePath, -1, -1, [ofRegularFile]);
     Obj := TJSONObject.Create;
     try
@@ -1082,8 +1088,13 @@ begin
       Ctx.Error := True; Ctx.Result := 'file and unit_name required'; Exit;
     end;
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    if Assigned(Ed) and Ed.Modified then
-      LazarusIDE.DoSaveEditorFile(FilePath, []);
+    { the editor's unsaved text goes to the code buffer without a disk write }
+    if not LazarusIDE.BeginCodeTools then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+      Exit;
+    end;
     CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
@@ -1177,7 +1188,13 @@ begin
       Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
     end;
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    if Assigned(Ed) and Ed.Modified then LazarusIDE.DoSaveEditorFile(FilePath, []);
+    { the editor's unsaved text goes to the code buffer without a disk write }
+    if not LazarusIDE.BeginCodeTools then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+      Exit;
+    end;
     CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
@@ -1238,7 +1255,13 @@ begin
       Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
     end;
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    if Assigned(Ed) and Ed.Modified then LazarusIDE.DoSaveEditorFile(FilePath, []);
+    { the editor's unsaved text goes to the code buffer without a disk write }
+    if not LazarusIDE.BeginCodeTools then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+      Exit;
+    end;
     CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
@@ -1300,7 +1323,13 @@ begin
       Ctx.Error := True; Ctx.Result := 'file and class_name required'; Exit;
     end;
     Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    if Assigned(Ed) and Ed.Modified then LazarusIDE.DoSaveEditorFile(FilePath, []);
+    { the editor's unsaved text goes to the code buffer without a disk write }
+    if not LazarusIDE.BeginCodeTools then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+      Exit;
+    end;
     CodeBuf := McpLoadCode(FilePath, False);
     if not Assigned(CodeBuf) then
     begin
@@ -1574,7 +1603,7 @@ begin
     SCHEMA_CREATE_UNIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_add_uses',
     'Add a unit to the uses clause of a Pascal file using Codetools. ' +
-    'Edit lands in the editor buffer (Ctrl+Z works); use auto_save=true or ' +
+    'Edit lands in the editor buffer, not on disk (Ctrl+Z works); use auto_save=true or ' +
     'editor_save to persist to disk. ' +
     'Set in_interface=false to target the implementation uses clause.',
     SCHEMA_ADD_UNIT_TO_USES, MCP_ANN_WRITE_IDEM));

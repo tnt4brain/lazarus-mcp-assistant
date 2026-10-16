@@ -345,7 +345,9 @@ begin
     FilePath := CleanAndExpandFilename(FilePath);
     if not SameText(ExtractFileExt(FilePath), '.lpi') then
     begin
-      Ctx.Error := True; Ctx.Result := 'Pass the project''s .lpi file: ' + FilePath; Exit;
+      Ctx.Error := True;
+      Ctx.Result := 'project_open takes the project''s .lpi file (parameter file); got: ' + FilePath;
+      Exit;
     end;
     if not FileExists(FilePath) then
     begin
@@ -409,10 +411,23 @@ begin
     Result := True;
     Obj := TJSONObject.Create;
     try
-      if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
-        Obj.Add('directory', ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile))
+      if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+         (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
+      begin
+        Obj.Add('project_open', True);
+        Obj.Add('directory', ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile));
+      end
+      else if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
+      begin
+        Obj.Add('project_open', True);
+        Obj.Add('error', 'The open project is not saved yet, so it has no directory; ' +
+          'save it in the IDE first (File > Save All)');
+      end
       else
-        Obj.Add('error', 'No active project');
+      begin
+        Obj.Add('project_open', False);
+        Obj.Add('error', 'No active project; project_open a .lpi first');
+      end;
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;

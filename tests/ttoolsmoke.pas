@@ -38,6 +38,8 @@ type
     procedure TestPackageFindUnit;
     procedure TestPackageUninstallUnknown;
     procedure TestArgsValidated;
+    procedure TestCodeToolsKeepDiskUntouched;
+    procedure TestAddUnknownPackageRefused;
     procedure TestProjectListPackages;
     procedure TestDebugGetState;
   end;
@@ -626,6 +628,66 @@ begin
   CheckTrue(Pos('Missing required parameter(s): package_name', T) > 0, 'no name: ' + T);
   CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
     'the IDE is still up');
+end;
+
+{ code_add_uses works on the editor's unsaved text and leaves the file on disk
+  as it was (it used to save the buffer first), so editor_revert gets back to
+  the file as saved }
+procedure TTestToolSmoke.TestCodeToolsKeepDiskUntouched;
+var
+  F, T, Orig : string;
+  SL         : TStringList;
+
+  function DiskText: string;
+  begin
+    SL.LoadFromFile(F);
+    Result := SL.Text;
+  end;
+
+begin
+  F  := GetTempDir(False) + 'mcpkeepdisk' + PathDelim + 'keepdisk.pas';
+  ForceDirectories(ExtractFileDir(F));
+  SL := TStringList.Create;
+  try
+    SL.Text := 'unit keepdisk;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+               'interface' + LineEnding + 'implementation' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(F);
+    Orig := DiskText;
+    try
+      Call('editor_open', '{"file":' + JsonStr(F) + '}');
+      Call('editor_edit_text', '{"file":' + JsonStr(F) +
+           ',"old_string":"interface","new_string":"// unsaved\ninterface"}');
+      T := Call('code_add_uses', '{"file":' + JsonStr(F) + ',"unit_name":"Classes"}');
+      CheckNoError(Self, 'code_add_uses', T);
+      CheckEquals(Orig, DiskText, 'file on disk unchanged');
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue((Pos('// unsaved', T) > 0) and (Pos('Classes', T) > 0),
+        'both edits are in the buffer: ' + T);
+      Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue((Pos('// unsaved', T) = 0) and (Pos('Classes', T) = 0),
+        'revert is the saved file: ' + T);
+    finally
+      Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+      Call('editor_close', '{"file":' + JsonStr(F) + '}');
+      DeleteFile(F);
+      RemoveDir(ExtractFileDir(F));
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
+{ a package the IDE can't resolve is refused: added, it leaves a modal
+  "Broken dependency" that fails every later build }
+procedure TTestToolSmoke.TestAddUnknownPackageRefused;
+var
+  T : string;
+begin
+  T := Call('project_add_package', '{"package_name":"NoSuchPackageXyz"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'refused: ' + T);
+  CheckTrue((Pos('Package not found: NoSuchPackageXyz', T) > 0) or
+            (Pos('No active project', T) > 0), 'says why: ' + T);
 end;
 
 { a missing required or a misspelt parameter is refused before the tool runs }

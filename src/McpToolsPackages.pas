@@ -19,6 +19,7 @@ uses
   PackageDependencyIntf,
   PackageDefs, Project,   { IdePackager/IdeProject, linked via IdeDebugger: TPkgDependency }
   PackageSystem,          { PackageGraph }
+  PackageLinks,           { LazPackageLinks }
   ParsedCompilerOpts, SearchPathProcs,  { IdeConfig: unit/include paths }
   CodeToolManager, CodeCache,
   Controls,               { mrOk }
@@ -1432,6 +1433,16 @@ begin
     if not Assigned(Proj) then
     begin
       Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+    end;
+    { a name the IDE can't resolve leaves a "Broken dependency" dialog that fails
+      every later build silently }
+    if (PackageGraph.FindPackageWithName(PkgName, nil) = nil) and
+       (LazPackageLinks.FindLinkWithPkgName(PkgName) = nil) then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'Package not found: ' + PkgName + '. It is neither loaded nor known ' +
+        'to the IDE''s package links (package_download and open its .lpk first)';
+      Exit;
     end;
     Proj.AddPackageDependency(PkgName);
     LazarusIDE.DoSaveProject([]);
