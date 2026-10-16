@@ -215,3 +215,25 @@ with `initialize` instead of making ids up.
 - The debugger lock trades parallelism for correctness. A read-only debugger call
   waits while another client's `debug_run` is blocked. That's acceptable, because
   every debugger call already goes through the single IDE main thread.
+
+## Amendment (2026-10-17): the lease and the lock stay; `initialize` never waits for the main thread
+
+The lease (one client mutates the debug session at a time), its idle timeout (so a
+client that hangs or is killed does not keep the debugger) and the debugger lock are
+unchanged and intended. They were not the cause of the failure seen on 2026-10-15/16,
+when Claude Code showed "session expired", reconnected and then dropped all
+`lazarus-ide` tools for the rest of the conversation. That 404 is the specified
+reaction to a session id the restarted IDE does not know; the client is expected to
+send `initialize` again.
+
+Found while looking at that failure: `initialize` wrote its "client connected" line to
+the Messages window with `TThread.Synchronize`. Right after a restart (or in a modal
+dialog) the main thread can be busy for seconds, so the re-`initialize` after the 404
+waited, and a client with a connect timeout gave up. It is queued now
+(`TThread.Queue`), so `initialize` answers without the main thread. Whether that was the
+whole story is not proven: the client's side is not visible.
+
+`mcp-sessions.log` in the IDE's config folder records what the server saw: server
+start, `initialize` (client, protocol, new session id), requests refused with 404
+(session, method, user agent), `DELETE`. After the next time a client drops the server,
+the log shows whether it re-initialized, and when.

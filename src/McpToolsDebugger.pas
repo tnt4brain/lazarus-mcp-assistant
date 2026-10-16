@@ -25,7 +25,7 @@ implementation
 
 uses
   Classes, SysUtils, Math, Forms, Controls, LazLogger,
-  LazIDEIntf, LazFileUtils, SrcEditorIntf,
+  LazIDEIntf, LazFileUtils, SrcEditorIntf, ProjectIntf, CompOptsIntf,
   BaseDebugManager,
   LazDebuggerIntfBaseTypes,  { TDBGState }
   LazDebuggerIntf,           { TDebuggerDataState (ddsValid, ddsRequested, …) }
@@ -62,6 +62,7 @@ type
     OutFeedback : string;   { suppressed debugger messages, accumulated; worker resets }
     { IssueCmd input }
     InCmd       : Integer;  { 0=run 1=pause 2=stop 3=stepover 4=stepinto 5=stepout }
+    OutPreflight: string;   { Preflight: why a run would open a dialog, else '' }
     { Breakpoint in/out: the location (one kind), then the properties to set;
       a property is changed only when its InBpSet* flag is True }
     InBpKind       : TDBGBreakPointKind;
@@ -131,6 +132,7 @@ type
     OutAsmErr      : string;
     { Methods }
     procedure ReadState;
+    procedure Preflight;
     procedure IssueCmd;
     function FindBreakpoint: TIDEBreakPoint;
     procedure AddBreakpoint;     { find or create, then apply the InBpSet* properties }
@@ -235,6 +237,37 @@ begin
   Result.Add('line',     GMcpLastExc.Line);
   Result.Add('function', GMcpLastExc.FuncName);
   Result.Add('address',  Format('$%x', [GMcpLastExc.Address]));
+end;
+
+{ The IDE asks in a modal before it runs a project whose debug info the
+  debugger can't use (TMainIDE.DoInitProjectRun); ask first, here, and say what
+  to change.  Main thread. }
+procedure TDbgSyncHelper.Preflight;
+var
+  P   : TLazProject;
+  Req : TDebugCompilerRequirements;
+  Opt : TLazCompilerOptions;
+begin
+  OutPreflight := '';
+  if not Assigned(DebugBoss) or (DebugBoss.State in [dsInit, dsRun, dsPause, dsInternalPause]) then Exit;
+  P := LazarusIDE.ActiveProject;
+  if not Assigned(P) or not Assigned(P.LazCompilerOptions) then Exit;
+  Opt := P.LazCompilerOptions;
+  Req := DebugBoss.RequiredCompilerOpts(Opt.TargetCPU, Opt.TargetOS);
+  if (dcrDwarfOnly in Req) and
+     (not Opt.GenerateDebugInfo or
+      not (Opt.DebugInfoType in [dsDwarf2, dsDwarf2Set, dsDwarf3])) then
+    OutPreflight := 'The project is not compiled with DWARF debug info, which the selected ' +
+      'debugger needs (without it breakpoints do not work, and the IDE may ask in a dialog). Set debug_info (dwarf3) with ' +
+      'project_set_settings, rebuild with project_build, then run again.'
+  else if (dcrNoExternalDbgInfo in Req) and Opt.UseExternalDbgSyms then
+    OutPreflight := 'The project writes its debug symbols to an external file, which the ' +
+      'selected debugger does not support; the IDE would ask in a dialog. Turn off ' +
+      'external debug symbols (project options > Debugging, -Xg).'
+  else if (dcrExternalDbgInfoOnly in Req) and not Opt.UseExternalDbgSyms then
+    OutPreflight := 'The selected debugger needs the project''s debug symbols in an external ' +
+      'file; the IDE would ask in a dialog. Turn on external debug symbols (project ' +
+      'options > Debugging, -Xg).';
 end;
 
 procedure TDbgSyncHelper.ReadState;
@@ -1691,16 +1724,32 @@ var
   OldFrame  : Integer;
   FrameJSON : string;
   FrameData : TJSONData;
+  EndsBefore : Integer;
 
   procedure Finish(const AReason: string);
   var
-    R : string;
+    R    : string;
+    J    : TJSONData;
   begin
     if S = dsRun then R := 'timeout' else R := AReason;
     Ctx.Result := MakeStateJSON(S, FinalFile, FinalLine, R, GCmdExcSeq);
+    { the program ended during this command: say so, with its exit code }
+    if (S in [dsNone, dsIdle, dsStop]) and (GMcpSessionEnds <> EndsBefore) then
+    begin
+      J := GetJSON(Ctx.Result);
+      try
+        if TJSONObject(J).Get('reason', '') <> 'exception' then
+          TJSONObject(J).Strings['reason'] := 'exited';
+        TJSONObject(J).Add('exit_code', GMcpExitCode);
+        Ctx.Result := J.AsJSON;
+      finally
+        J.Free;
+      end;
+    end;
   end;
 
 begin
+  EndsBefore := GMcpSessionEnds;
   Result    := False;
   Elapsed   := 0;
   FinalFile := '';
@@ -1713,6 +1762,12 @@ begin
     TimeoutMs := 30000;
     if Assigned(Ctx.Params) then
       TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
+    TThread.Synchronize(nil, @GSyncHelper.Preflight);
+    if GSyncHelper.OutPreflight <> '' then
+    begin
+      Ctx.Error := True; Ctx.Result := GSyncHelper.OutPreflight; Exit;
+    end;
+    EndsBefore := GMcpSessionEnds;
     DoIssueCmd(0);
     S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
     Finish('run');
@@ -1768,6 +1823,11 @@ begin
     TimeoutMs := 30000;
     if Assigned(Ctx.Params) then
       TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
+    TThread.Synchronize(nil, @GSyncHelper.Preflight);
+    if GSyncHelper.OutPreflight <> '' then
+    begin
+      Ctx.Error := True; Ctx.Result := GSyncHelper.OutPreflight; Exit;
+    end;
     { Temporary breakpoint, unless the line has one already: that one is the
       user's, with its condition and pass count, and is left exactly as it is }
     GSyncHelper.InBpKind       := bpkSource;

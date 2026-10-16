@@ -36,6 +36,7 @@ type
     procedure TestImage;
     procedure TestPaused;
     procedure TestOpenProgramWithoutProject;
+    procedure TestDebugPreflightAndExit;
   end;
 
 function WindoweeLpi: string;
@@ -340,6 +341,58 @@ begin
     T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
     CheckTrue(Pos('"already_open":true', T) > 0, 'second open: ' + T);
   finally
+    Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+    DeleteDirectory(Dir, False);
+  end;
+end;
+
+
+{ debug_run on a project without DWARF info is refused before the IDE asks in a
+  dialog; once it has, a program that ends at once says so, with its exit code }
+procedure TTestWindows.TestDebugPreflightAndExit;
+var
+  Dir, Lpr, T : string;
+  SL          : TStringList;
+  I           : Integer;
+begin
+  Dir := GetTempDir(False) + 'mcpexitprog' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr := Dir + 'quits.lpr';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'program quits;' + LineEnding + 'begin' + LineEnding +
+               '  Halt(3);' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');
+  try
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+    CheckFalse(IsError(T), T);
+    T := Call('project_set_settings', '{"debug_info":"none"}');
+    CheckEquals('none', JPath(T, 'debug_info'), T);
+    T := Call('debug_run', '{}');
+    CheckTrue(IsError(T), 'refused, no dialog: ' + T);
+    CheckTrue(Pos('debug_info', T) > 0, 'names the setting: ' + T);
+    T := Call('project_set_settings', '{"debug_info":"bogus"}');
+    CheckTrue(Pos('debug_info must be', T) > 0, T);
+    T := Call('project_set_settings', '{"debug_info":"dwarf3"}');
+    CheckEquals('dwarf3', JPath(T, 'debug_info'), T);
+    T := Call('project_build', '{}');
+    CheckTrue(Pos('"success" : true', T) > 0, 'builds: ' + T);
+    T := Call('debug_run', '{"timeout_s":30}');
+    CheckFalse(IsError(T), T);
+    CheckEquals('exited', JPath(T, 'reason'), T);
+    CheckEquals('3', JPath(T, 'exit_code'), T);
+  finally
+    Call('debug_stop', '{}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
     DeleteDirectory(Dir, False);
   end;

@@ -160,7 +160,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | Tool | Description |
 |---|---|
 | `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`data` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
-| `debug_run` | Start, or continue from a pause (F9) |
+| `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code` |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
 | `debug_step_over` / `debug_step_into` / `debug_step_out` | F8 / F7 / Shift+F8 |
 | `debug_pause` / `debug_stop` | Pause / stop the session |
@@ -183,7 +183,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 |---|---|
 | `project_get_directory` | Root directory of the active project (contains the `.lpi`) |
 | `project_list_files` | Source files of the active project |
-| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does) |
+| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, debug info (`debug_info`: none, dwarf3, ...; the debugger needs DWARF), compiler and FPC version, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does) |
 | `project_add_file` / `project_remove_file` | Project file list (files stay on disk). Adding a file already in the project reports `already_in_project`. Removing a file open in the editor is refused until it is closed |
 | `project_create_unit` | New unit on disk, added to the project and opened |
 | `project_list_packages` | Required packages as in Project Inspector: version limits, resolved `.lpk`, status (`ok`, `not_found`, ...); `recursive` adds the whole graph in compile order |

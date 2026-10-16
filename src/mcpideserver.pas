@@ -6,7 +6,7 @@ unit McpIdeServer;
 interface
 
 uses
-  Classes, SysUtils, fphttpserver, httpdefs, fpjson, jsonparser,
+  Classes, SysUtils, SyncObjs, fphttpserver, httpdefs, fpjson, jsonparser,
   Process,
   LazIDEIntf, LazLogger, PackageIntf,
   McpIdeListeners, McpIdeState;
@@ -85,7 +85,7 @@ uses
   StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
-  McpExceptionLog, McpToolsProject;
+  McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog;
 
 const
   { MCP revisions this server implements, oldest first: the last is the one
@@ -319,6 +319,9 @@ begin
      ((ARequest.Method = 'DELETE') or
       (JsonRpcMethod(ARequest.Content) <> 'initialize')) then
   begin
+    McpLogSession(Format('404 %s with unknown session %s (method %s, agent "%s")',
+      [ARequest.Method, McpShortId(ClientId), JsonRpcMethod(ARequest.Content),
+       ARequest.UserAgent]));
     AResponse.Code        := 404;
     AResponse.ContentType := 'application/json';
     AResponse.Content     :=
@@ -331,6 +334,7 @@ begin
 
   if ARequest.Method = 'DELETE' then
   begin
+    McpLogSession('DELETE session ' + McpShortId(ClientId));
     McpForgetSession(ClientId);
     AResponse.Code := 200;
     Exit;
@@ -491,9 +495,50 @@ type
     Ctx      : TMcpToolCall;
     LogMsg   : string;
     Server   : TMcpServerThread;
+    Done     : TEvent;      { set when Run finished; only for queued calls }
+    Finished : Boolean;     { guarded by GCallLock }
+    Abandoned: Boolean;     { the waiting thread gave up: Run frees the call }
+    destructor Destroy; override;
+    procedure RunQueued;    { main thread: Run, then hand over or free }
+    procedure LogAndFree;   { main thread, queued: Log, then free this call }
     procedure Run;   { main thread }
     procedure Log;   { main thread }
   end;
+
+var
+  GCallLock : TCriticalSection;
+
+destructor TMcpMainCall.Destroy;
+begin
+  Done.Free;
+  inherited Destroy;
+end;
+
+procedure TMcpMainCall.LogAndFree;
+begin
+  try
+    Log;
+  finally
+    Free;
+  end;
+end;
+
+procedure TMcpMainCall.RunQueued;
+var
+  Release : Boolean;
+begin
+  McpEnsureDialogWatch;
+  Run;
+  GCallLock.Enter;
+  try
+    Finished := True;
+    Release  := Abandoned;
+    if not Abandoned then Done.SetEvent;
+  finally
+    GCallLock.Leave;
+  end;
+  if Release then Free;   { nobody waits for this result any more }
+end;
 
 procedure TMcpMainCall.Run;
 var
@@ -539,6 +584,12 @@ begin
     IDEMessagesWindow.AddCustomMessage(mluProgress, LogMsg, '', 0, 0, 'MCP Server');
 end;
 
+const
+  { tools that start a build, a run or a project switch }
+  DialogSensitiveTools : array[0..4] of string =
+    ('project_build', 'project_run', 'project_create', 'project_open', 'package_compile_ide');
+  DialogGraceMs = 2000;   { a dialog open this long while a call waits is a block }
+
 function TMcpServerThread.CallOnMain(const AToolName: string;
   AParams: TJSONObject; const AClientId: string; out AErr: Boolean): string;
 var
@@ -547,11 +598,26 @@ begin
   Result := CallOnMain(AToolName, AParams, AClientId, AErr, Images);
 end;
 
+function DialogMessage(ADialogs: TJSONArray; const ATool: string;
+  AStarted: Boolean): string;
+begin
+  Result := 'The IDE is waiting for an answer in a dialog: ' + McpDescribeDialogs(ADialogs) +
+    '. Ask the user to close or answer it; nothing can be done from here';
+  if AStarted then
+    Result := Result + ' (' + ATool + ' is pending and may complete when it is closed)'
+  else
+    Result := 'Not started: ' + Result + ' (' + ATool + ' was not run)';
+  Result := Result + '.';
+end;
+
 function TMcpServerThread.CallOnMain(const AToolName: string;
   AParams: TJSONObject; const AClientId: string; out AErr: Boolean;
   out AImages: TStringArray): string;
 var
   Call : TMcpMainCall;
+  Dialogs : TJSONArray;
+  DialogMs: Integer;
+  Abandon : Boolean;
 begin
   Call := TMcpMainCall.Create;
   try
@@ -562,7 +628,54 @@ begin
     Call.Ctx.ClientId        := AClientId;
     Call.Ctx.StopServer      := @Self.StopServer;
     Call.Server              := Self;
-    TThread.Synchronize(nil, @Call.Run);
+    AErr := False;
+    AImages := nil;
+    { a call that starts long work waits behind a dialog nobody can answer }
+    if AnsiIndexStr(AToolName, DialogSensitiveTools) >= 0 then
+    begin
+      Dialogs := McpOpenDialogs;
+      try
+        if Dialogs.Count > 0 then
+        begin
+          AErr := True;
+          Result := DialogMessage(Dialogs, AToolName, False);
+          Exit;
+        end;
+      finally
+        Dialogs.Free;
+      end;
+    end;
+    Call.Done := TEvent.Create(nil, True, False, '');
+    TThread.Queue(nil, @Call.RunQueued);
+    DialogMs := 0;
+    while Call.Done.WaitFor(250) <> wrSignaled do
+    begin
+      { the main thread is stuck in a modal dialog? }
+      Dialogs := McpOpenDialogs;
+      try
+        if Dialogs.Count > 0 then Inc(DialogMs, 250) else DialogMs := 0;
+        if DialogMs < DialogGraceMs then Continue;
+        GCallLock.Enter;
+        try
+          if not Call.Finished then
+          begin
+            Call.Abandoned := True;
+            Abandon := True;
+          end;
+        finally
+          GCallLock.Leave;
+        end;
+        if Abandon then
+        begin
+          AErr   := True;
+          Result := DialogMessage(Dialogs, AToolName, True);
+          Call   := nil;   { Run frees it when the dialog is closed }
+          Exit;
+        end;
+      finally
+        Dialogs.Free;
+      end;
+    end;
     Result  := Call.Ctx.Result;
     AErr    := Call.Ctx.Error;
     AImages := Call.Ctx.Images;
@@ -604,13 +717,19 @@ begin
       try
         Call.LogMsg := Format('Client "%s" connected (protocol %s, session %s).',
           [Trim(ClientName), ProtoVer, Copy(ANewSession, 1, 8)]);
-        TThread.Synchronize(nil, @Call.Log);
+        { queued, not synchronized: initialize must not wait for a busy main
+          thread (right after a restart, or in a modal), or a client that
+          re-initializes after the 404 times out and gives up }
+        TThread.Queue(nil, @Call.LogAndFree);
+        Call := nil;
       finally
         Call.Free;
       end;
     end;
   end;
   McpRegisterSession(ANewSession, Trim(ClientName));
+  McpLogSession(Format('initialize: client "%s", protocol %s, new session %s',
+    [Trim(ClientName), ProtoVer, McpShortId(ANewSession)]));
 
   ToolsCap := TJSONObject.Create;  // empty tools capability object
   Caps := TJSONObject.Create;
@@ -1186,6 +1305,9 @@ begin
     Exit;
   end;
 
+  if Assigned(LazarusIDE) then
+    McpSetSessionLogDir(LazarusIDE.GetPrimaryConfigPath);
+  McpLogSession(Format('server starting on port %d (server version %s)', [Port, McpServerVersion]));
   McpServerThread := TMcpServerThread.Create(Token, Port);
   McpServerThread.Start;
 
@@ -1310,7 +1432,10 @@ begin
 end;
 
 initialization
+  GCallLock := TCriticalSection.Create;
 finalization
   FinalizeMcpServer; // safety net — normally called by the IDE-close hook
   FreeAndNil(IDEHook);
+  McpRemoveDialogWatch;
+  GCallLock.Free;
 end.

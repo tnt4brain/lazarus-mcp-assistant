@@ -127,3 +127,32 @@ The fallback is matched on class name. Unknown dialogs aren't answered: guessing
   change options?" or "Stop the running session?" when `project_build` runs during
   a session. The second one is one reason for the debug session lease (ADR-012),
   which keeps other clients from building while a session is live.
+
+## Amendment (2026-10-17): dialogs we can't prevent are reported, not answered
+
+Decision 3 answers a few known dialogs and leaves the rest blocking. A tool call
+waiting behind such a dialog hung with nobody told why (a "Broken dependency" box
+made every later build return `success: false, errors: []`; "project has no debug
+info" made `debug_run` return `idle`). Answering unknown dialogs is still ruled out.
+What changed is that they are now **seen and reported**:
+
+- **`McpDialogWatch`** wraps `LazMessageWorker`/`LazQuestionWorker`, the two hooks all
+  `IDEMessageDialog`/`IDEQuestionDialog`/`MessageDlg` calls pass through (cross-platform).
+  While such a dialog is up it is listed with caption, text and buttons. On Windows it
+  also lists `#32770` dialog windows of the main thread that the hooks did not see
+  (a `TTaskDialog`, a plain `MessageBox`), with their title and readable control text.
+  It reads from any thread, because the main thread is the one that is stuck.
+- **Main-thread tool calls are queued and waited for**, not synchronized. If a dialog
+  stays open for 2 s while a call is pending, the call returns an error that names
+  the dialog and says it may still complete once the dialog is closed. `project_build`,
+  `project_run`, `project_create`, `project_open` and the IDE side of `package_compile`
+  are refused up front when a dialog is already open ("Not started").
+- **`debug_run`/`debug_run_to_line` check first** what the IDE would ask about
+  (the debugger needs DWARF debug info, or an external/internal symbol file) and refuse
+  with the setting to change (`project_set_settings` `debug_info`).
+- **A session that ends during a debugger command** is reported as `reason: "exited"`
+  with `exit_code` instead of `idle`.
+
+Not done: reading a `TTaskDialog`'s text (it lives in DirectUI controls that
+`GetWindowText` can't read; the dialog's own Ctrl+C copies it). Its title and buttons
+are reported.

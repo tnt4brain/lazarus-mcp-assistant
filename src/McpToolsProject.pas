@@ -16,7 +16,7 @@ implementation
 
 uses
   Classes, SysUtils,
-  LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil,
+  LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil, CompOptsIntf,
   MacroIntf, Controls, Forms, IDEDialogs, LCLPlatformDef, StrUtils,
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   fpjson,
@@ -46,6 +46,7 @@ const
     '"target_cpu":{"type":"string","description":"Target CPU (e.g. x86_64, aarch64); empty string = host CPU"},' +
     '"output_dir":{"type":"string","description":"Unit output directory; macros like $(TargetOS) are expanded at build time"},' +
     '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read project_get_settings first to preserve existing flags)"},' +
+    '"debug_info":{"type":"string","description":"Debug information (-g): none, dwarf3, dwarf2, dwarf2set, stabs or auto. The FpDebug debugger (debug_run) needs a dwarf format; rebuild afterwards"},' +
     '"widgetset":{"type":"string","description":"LCL widgetset of the active build mode (win32, qt5, qt6, gtk2, gtk3, cocoa, ...); \"default\" or empty string = the platform''s default. Packages using the LCL are rebuilt for it at the next build"}}}';
 
   SCHEMA_ADD_FILE_TO_PROJECT =
@@ -304,6 +305,37 @@ begin
   LazarusIDE.PrepareBuildTarget(True);
 end;
 
+{ debug_info of project_get/set_settings: none, or the -g format }
+function DebugInfoName(AOpts: TLazCompilerOptions): string;
+begin
+  if not AOpts.GenerateDebugInfo then Exit('none');
+  case AOpts.DebugInfoType of
+    dsStabs     : Result := 'stabs';
+    dsDwarf2    : Result := 'dwarf2';
+    dsDwarf2Set : Result := 'dwarf2set';
+    dsDwarf3    : Result := 'dwarf3';
+  else            Result := 'auto';
+  end;
+end;
+
+function ParseDebugInfo(const S: string; out AGen: Boolean;
+  out AType: TCompilerDbgSymbolType): Boolean;
+begin
+  Result := True;
+  AGen   := True;
+  AType  := dsAuto;
+  case LowerCase(Trim(S)) of
+    'none'      : AGen := False;
+    'auto'      : AType := dsAuto;
+    'stabs'     : AType := dsStabs;
+    'dwarf2'    : AType := dsDwarf2;
+    'dwarf2set' : AType := dsDwarf2Set;
+    'dwarf3'    : AType := dsDwarf3;
+  else
+    Result := False;
+  end;
+end;
+
 const
   MacroNames : array[0..3] of string = ('CompPath', 'FPCVer', 'TargetOS', 'TargetCPU');
   MacroKeys  : array[0..3] of string =
@@ -432,6 +464,8 @@ var
   LprPath    : string;
   CreatedLpi : Boolean;
   MacroText  : string;
+  DbgGen     : Boolean;
+  DbgType    : TCompilerDbgSymbolType;
 begin
   Result := False;
 
@@ -579,6 +613,8 @@ begin
         end;
         Obj.Add('widgetset',          EffectiveWidgetset);
         Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
+        if Assigned(Proj.LazCompilerOptions) then
+          Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
       end
       else
         Obj.Add('error', 'No active project');
@@ -603,6 +639,13 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
     end;
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('debug_info') <> nil) and
+       not ParseDebugInfo(Ctx.Params.Get('debug_info', ''), DbgGen, DbgType) then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'debug_info must be none, dwarf3, dwarf2, dwarf2set, stabs or auto';
+      Exit;
+    end;
     { first, so that an unknown widgetset changes nothing }
     if Assigned(Ctx.Params) and (Ctx.Params.Find('widgetset') <> nil) then
     begin
@@ -622,6 +665,11 @@ begin
         Proj.LazCompilerOptions.UnitOutputDirectory := Ctx.Params.Get('output_dir',     '');
       if Ctx.Params.Find('custom_options') <> nil then
         Proj.LazCompilerOptions.CustomOptions       := Ctx.Params.Get('custom_options', '');
+      if Ctx.Params.Find('debug_info') <> nil then
+      begin
+        Proj.LazCompilerOptions.GenerateDebugInfo := DbgGen;
+        if DbgGen then Proj.LazCompilerOptions.DebugInfoType := DbgType;
+      end;
     end;
     LazarusIDE.DoSaveProject([]);
     Obj := TJSONObject.Create;
@@ -633,6 +681,7 @@ begin
       Obj.Add('custom_options', Proj.LazCompilerOptions.CustomOptions);
       Obj.Add('widgetset',          EffectiveWidgetset);
       Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
+      Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;

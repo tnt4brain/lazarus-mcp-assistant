@@ -48,6 +48,8 @@ var
   GMcpDriven       : Boolean = False;
   GMcpLastExc      : TMcpExceptionRec;
   GMcpLastFeedback : string = '';     { last suppressed feedback text }
+  GMcpSessionEnds  : Integer = 0;     { sessions that have ended since the IDE started }
+  GMcpExitCode     : Integer = 0;     { exit code of the one that ended last }
 
 { Call on the main thread before an MCP tool issues a debugger command. }
 procedure McpMarkDebugDriven;
@@ -188,6 +190,11 @@ begin
   GMcpSessionLive := ADebugger.State in [dsInit, dsRun, dsPause, dsInternalPause];
   if not GMcpSessionLive and (AOldState in [dsInit, dsRun, dsPause, dsInternalPause]) then
     McpLeaseSessionEnded;
+  if not GMcpSessionLive and (AOldState in [dsInit, dsRun, dsPause, dsInternalPause]) then
+  begin
+    Inc(GMcpSessionEnds);
+    GMcpExitCode := ADebugger.ExitCode;
+  end;
 
   case ADebugger.State of
     dsInit:
