@@ -37,6 +37,7 @@ type
     procedure TestPackageGetInfo;
     procedure TestPackageFindUnit;
     procedure TestPackageUninstallUnknown;
+    procedure TestArgsValidated;
     procedure TestProjectListPackages;
     procedure TestDebugGetState;
   end;
@@ -622,9 +623,21 @@ begin
   T := Call('package_uninstall', '{"package_name":"NoSuchPackageXyz"}');
   CheckTrue(Pos('Package not found: NoSuchPackageXyz', T) > 0, 'refused: ' + T);
   T := Call('package_uninstall', '{}');
-  CheckTrue(Pos('package_name required', T) > 0, 'no name: ' + T);
+  CheckTrue(Pos('Missing required parameter(s): package_name', T) > 0, 'no name: ' + T);
   CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
     'the IDE is still up');
+end;
+
+{ a missing required or a misspelt parameter is refused before the tool runs }
+procedure TTestToolSmoke.TestArgsValidated;
+var
+  T : string;
+begin
+  T := Call('code_replace_procedure_body', '{"file":"x.pas","proc_name":"P"}');
+  CheckTrue(Pos('Missing required parameter(s): new_body', T) > 0, 'missing: ' + T);
+  T := Call('editor_replace_range', '{"file":"x.pas","text":"y"}');
+  CheckTrue(Pos('Unknown parameter(s): text', T) > 0, 'unknown: ' + T);
+  CheckTrue(Pos('Accepted by editor_replace_range', T) > 0, 'accepted listed: ' + T);
 end;
 
 procedure TTestToolSmoke.TestProjectListPackages;

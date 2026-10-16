@@ -10,7 +10,7 @@ unit McpToolContext;
 interface
 
 uses
-  SysUtils, fpjson, jsonparser;
+  SysUtils, SyncObjs, fpjson, jsonparser;
 
 type
   { Context record passed into every tool dispatch function.
@@ -46,6 +46,12 @@ procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
 { Called by SyncCallTool and HandleToolsList respectively. }
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 procedure McpRegisterSchemas(Tools: TJSONArray);
+
+{ Check a tools/call's arguments against the tool's inputSchema: every name in
+  "required" present, no name outside "properties".  False with a message that
+  lists the accepted names.  Unknown tools pass (the dispatcher reports them). }
+function McpValidateArgs(const ToolName: string; Args: TJSONObject;
+  out Msg: string): Boolean;
 
 { Blocking group registry — dispatchers run on the MCP worker thread. }
 procedure RegisterMcpBlockingGroup(Fn: TMcpGroupDispatch);
@@ -143,6 +149,79 @@ begin
       Handled := True;
       Exit;
     end;
+end;
+
+var
+  GSchemaLock  : TCriticalSection;
+  GSchemaCache : TJSONArray;
+
+function McpValidateArgs(const ToolName: string; Args: TJSONObject;
+  out Msg: string): Boolean;
+var
+  I, J     : Integer;
+  Schema   : TJSONObject;
+  Props    : TJSONObject;
+  Req      : TJSONArray;
+  Missing  : string;
+  Unknown  : string;
+  Accepted : string;
+begin
+  Result := True;
+  Msg := '';
+  GSchemaLock.Enter;
+  try
+    if GSchemaCache = nil then
+    begin
+      GSchemaCache := TJSONArray.Create;
+      for I := 0 to High(GSchemaGroups) do
+        GSchemaGroups[I](GSchemaCache);
+    end;
+    Schema := nil;
+    for I := 0 to GSchemaCache.Count - 1 do
+      if TJSONObject(GSchemaCache[I]).Get('name', '') = ToolName then
+      begin
+        Schema := TJSONObject(GSchemaCache[I]).Find('inputSchema') as TJSONObject;
+        Break;
+      end;
+    if Schema = nil then Exit;
+    Props := Schema.Find('properties') as TJSONObject;
+    Req   := Schema.Find('required') as TJSONArray;
+    Missing := '';
+    if Assigned(Req) then
+      for J := 0 to Req.Count - 1 do
+        if (Args = nil) or (Args.IndexOfName(Req.Strings[J]) < 0) then
+        begin
+          if Missing <> '' then Missing := Missing + ', ';
+          Missing := Missing + Req.Strings[J];
+        end;
+    Unknown := '';
+    if Assigned(Args) then
+      for J := 0 to Args.Count - 1 do
+        if (Props = nil) or (Props.IndexOfName(Args.Names[J]) < 0) then
+        begin
+          if Unknown <> '' then Unknown := Unknown + ', ';
+          Unknown := Unknown + Args.Names[J];
+        end;
+    if (Missing = '') and (Unknown = '') then Exit;
+    Accepted := '';
+    if Assigned(Props) then
+      for J := 0 to Props.Count - 1 do
+      begin
+        if Accepted <> '' then Accepted := Accepted + ', ';
+        Accepted := Accepted + Props.Names[J];
+        if Assigned(Req) then
+          for I := 0 to Req.Count - 1 do
+            if Req.Strings[I] = Props.Names[J] then
+              Accepted := Accepted + ' (required)';
+      end;
+    if Accepted = '' then Accepted := 'none';
+    Result := False;
+    if Missing <> '' then Msg := 'Missing required parameter(s): ' + Missing + '. ';
+    if Unknown <> '' then Msg := Msg + 'Unknown parameter(s): ' + Unknown + '. ';
+    Msg := Msg + 'Accepted by ' + ToolName + ': ' + Accepted + '.';
+  finally
+    GSchemaLock.Leave;
+  end;
 end;
 
 function ToolTitle(const AName: string): string;
@@ -252,5 +331,12 @@ begin
       Exit;
     end;
 end;
+
+initialization
+  GSchemaLock := TCriticalSection.Create;
+
+finalization
+  GSchemaCache.Free;
+  GSchemaLock.Free;
 
 end.

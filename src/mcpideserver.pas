@@ -930,8 +930,13 @@ begin
   Text := '';
   Images := nil;
 
+  if not McpValidateArgs(ToolName, Args, GateMsg) then
+  begin
+    Text := GateMsg;
+    Err  := True;
+  end
   { debug session lease and debugger lock (ADR-012) }
-  if not McpGateEnter(ToolName, AClientId, Args, GateMsg) then
+  else if not McpGateEnter(ToolName, AClientId, Args, GateMsg) then
   begin
     Text := GateMsg;
     Err  := True;
