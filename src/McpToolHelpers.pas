@@ -358,6 +358,7 @@ begin
 
   Obj := TJSONObject.Create;
   try
+    Obj.Add('test_project', ResolvedLpi);
     Obj.Add('compiled', True);
     Obj.Add('run',      True);
     if Parsed then

@@ -35,6 +35,7 @@ type
     procedure TestTree;
     procedure TestImage;
     procedure TestPaused;
+    procedure TestOpenProgramWithoutProject;
   end;
 
 function WindoweeLpi: string;
@@ -42,7 +43,7 @@ function WindoweeLpi: string;
 implementation
 
 uses
-  SysUtils, DateUtils, Math, base64, fpjson, jsonparser;
+  SysUtils, DateUtils, Math, base64, fpjson, jsonparser, FileUtil, LazFileUtils;
 
 var
   GSess        : string;
@@ -294,6 +295,47 @@ begin
   CheckTrue(Pos('not answering', T) > 0, T);
   CheckTrue(Pos('Button "Push me"', T) > 0, 'tree still read: ' + T);
   CheckTrue(Pos('copied from the screen', T) > 0, T);
+end;
+
+
+{ A program with only a .lpr: project_open writes the .lpi next to it, and the
+  project builds with the IDE; project_get_settings names the compiler }
+procedure TTestWindows.TestOpenProgramWithoutProject;
+var
+  Dir, Lpr, Lpi, T : string;
+  SL               : TStringList;
+begin
+  Dir := GetTempDir(False) + 'mcpbareprog' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr := Dir + 'bare.lpr';
+  Lpi := Dir + 'bare.lpi';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'program bare;' + LineEnding + 'begin' + LineEnding +
+               '  WriteLn(1);' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');  { saves a project the breakpoints modified }
+  try
+    T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+    CheckFalse(IsError(T), T);
+    CheckTrue(Pos('"created_project_file" : true', T) > 0, 'wrote the .lpi: ' + T);
+    CheckTrue(FileExists(Lpi), '.lpi next to the .lpr');
+    T := Call('project_get_settings', '{}');
+    CheckTrue(SameFileName(Lpi, JPath(T, 'project_file')), 'it is the active project: ' + T);
+    CheckTrue(JPath(T, 'compiler') <> '', 'compiler named: ' + T);
+    CheckTrue(JPath(T, 'fpc_version') <> '', 'FPC version named: ' + T);
+    T := Call('project_build', '{}');
+    CheckTrue(Pos('"success" : true', T) > 0, 'builds: ' + T);
+    T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+    CheckTrue(Pos('"already_open":true', T) > 0, 'second open: ' + T);
+  finally
+    Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+    DeleteDirectory(Dir, False);
+  end;
 end;
 
 end.

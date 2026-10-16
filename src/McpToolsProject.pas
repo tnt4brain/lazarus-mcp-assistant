@@ -78,7 +78,8 @@ const
 
   SCHEMA_OPEN_PROJECT =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path of the project''s .lpi"}},' +
+    '"file":{"type":"string","description":"Absolute path of the project''s .lpi, or of a program''s .lpr: without an .lpi next to it one is written (debug info on; LCL required when it uses Forms or Interfaces)"},' +
+    '"unit_paths":{"type":"string","description":"Only when an .lpi is written from an .lpr: other unit search paths, '';''-separated, relative to the .lpr"}},' +
     '"required":["file"]}';
 
 { ── IsDescriptorInteractive helper ──────────────────────────────────────── }
@@ -303,6 +304,108 @@ begin
   LazarusIDE.PrepareBuildTarget(True);
 end;
 
+const
+  MacroNames : array[0..3] of string = ('CompPath', 'FPCVer', 'TargetOS', 'TargetCPU');
+  MacroKeys  : array[0..3] of string =
+    ('compiler', 'fpc_version', 'default_target_os', 'default_target_cpu');
+
+function XmlAttr(const S: string): string;
+begin
+  Result := StringReplace(StringReplace(StringReplace(StringReplace(S,
+    '&', '&amp;', [rfReplaceAll]), '<', '&lt;', [rfReplaceAll]),
+    '>', '&gt;', [rfReplaceAll]), '"', '&quot;', [rfReplaceAll]);
+end;
+
+{ The .lpi the IDE's "create project for program" would write next to a
+  program's .lpr (its own function needs a dialog and lives in the IDE
+  executable, out of reach of a package).  Debug info on (DWARF 3), as
+  project_create gives; LCL is required when the program uses Forms or
+  Interfaces.  AUnitPaths: ';'-separated, relative to the .lpr. }
+function WriteProgramProject(const ALpr, AUnitPaths: string): string;
+var
+  Src    : TStringList;
+  Name   : string;
+  Text   : string;
+  NeedLcl: Boolean;
+begin
+  Result := ChangeFileExt(ALpr, '.lpi');
+  Name   := ExtractFileNameOnly(ALpr);
+  Src := TStringList.Create;
+  try
+    Src.LoadFromFile(ALpr);
+    Text := LowerCase(Src.Text);
+  finally
+    Src.Free;
+  end;
+  NeedLcl := (Pos('interfaces', Text) > 0) or (Pos(' forms', Text) > 0) or
+             (Pos(',forms', Text) > 0) or (Pos(', forms', Text) > 0);
+  Text :=
+    '<?xml version="1.0" encoding="UTF-8"?>' + LineEnding +
+    '<CONFIG>' + LineEnding +
+    '  <ProjectOptions>' + LineEnding +
+    '    <Version Value="12"/>' + LineEnding +
+    '    <General>' + LineEnding +
+    '      <Flags>' + LineEnding +
+    '        <MainUnitHasCreateFormStatements Value="False"/>' + LineEnding +
+    '        <MainUnitHasTitleStatement Value="False"/>' + LineEnding +
+    '        <MainUnitHasScaledStatement Value="False"/>' + LineEnding +
+    '      </Flags>' + LineEnding +
+    '      <SessionStorage Value="InIDEConfig"/>' + LineEnding +
+    '      <Title Value="' + Name + '"/>' + LineEnding +
+    '      <UseAppBundle Value="False"/>' + LineEnding +
+    '    </General>' + LineEnding +
+    '    <BuildModes>' + LineEnding +
+    '      <Item Name="Default" Default="True"/>' + LineEnding +
+    '    </BuildModes>' + LineEnding +
+    '    <PublishOptions>' + LineEnding +
+    '      <Version Value="2"/>' + LineEnding +
+    '    </PublishOptions>' + LineEnding +
+    '    <RunParams>' + LineEnding +
+    '      <FormatVersion Value="2"/>' + LineEnding +
+    '    </RunParams>' + LineEnding;
+  if NeedLcl then
+    Text := Text +
+      '    <RequiredPackages>' + LineEnding +
+      '      <Item>' + LineEnding +
+      '        <PackageName Value="LCL"/>' + LineEnding +
+      '      </Item>' + LineEnding +
+      '    </RequiredPackages>' + LineEnding;
+  Text := Text +
+    '    <Units>' + LineEnding +
+    '      <Unit>' + LineEnding +
+    '        <Filename Value="' + ExtractFileName(ALpr) + '"/>' + LineEnding +
+    '        <IsPartOfProject Value="True"/>' + LineEnding +
+    '      </Unit>' + LineEnding +
+    '    </Units>' + LineEnding +
+    '  </ProjectOptions>' + LineEnding +
+    '  <CompilerOptions>' + LineEnding +
+    '    <Version Value="11"/>' + LineEnding +
+    '    <Target>' + LineEnding +
+    '      <Filename Value="' + Name + '"/>' + LineEnding +
+    '    </Target>' + LineEnding +
+    '    <SearchPaths>' + LineEnding;
+  if AUnitPaths <> '' then
+    Text := Text +
+      '      <OtherUnitFiles Value="' + XmlAttr(AUnitPaths) + '"/>' + LineEnding;
+  Text := Text +
+    '      <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>' + LineEnding +
+    '    </SearchPaths>' + LineEnding +
+    '    <Linking>' + LineEnding +
+    '      <Debugging>' + LineEnding +
+    '        <DebugInfoType Value="dsDwarf3"/>' + LineEnding +
+    '      </Debugging>' + LineEnding +
+    '    </Linking>' + LineEnding +
+    '  </CompilerOptions>' + LineEnding +
+    '</CONFIG>' + LineEnding;
+  Src := TStringList.Create;
+  try
+    Src.Text := Text;
+    Src.SaveToFile(Result);
+  finally
+    Src.Free;
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchProjectTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -325,6 +428,10 @@ var
   OldSaveDialogClass : TIDESaveDialogClass;
   SaveRes    : TModalResult;
   Existing   : TStringList;
+  MacroIdx   : Integer;
+  LprPath    : string;
+  CreatedLpi : Boolean;
+  MacroText  : string;
 begin
   Result := False;
 
@@ -343,13 +450,26 @@ begin
       Ctx.Error := True; Ctx.Result := 'file required'; Exit;
     end;
     FilePath := CleanAndExpandFilename(FilePath);
-    if not SameText(ExtractFileExt(FilePath), '.lpi') then
+    LprPath := '';
+    if SameText(ExtractFileExt(FilePath), '.lpr') then
+    begin
+      { a program without a project: the .lpi is written next to it, as the
+        IDE does when it is asked to open one }
+      if not FileExists(FilePath) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
+      end;
+      LprPath  := FilePath;
+      FilePath := ChangeFileExt(LprPath, '.lpi');
+    end
+    else if not SameText(ExtractFileExt(FilePath), '.lpi') then
     begin
       Ctx.Error := True;
-      Ctx.Result := 'project_open takes the project''s .lpi file (parameter file); got: ' + FilePath;
+      Ctx.Result := 'project_open takes a project .lpi (or a program .lpr, for which it ' +
+        'writes the .lpi); parameter file; got: ' + FilePath;
       Exit;
     end;
-    if not FileExists(FilePath) then
+    if (LprPath = '') and not FileExists(FilePath) then
     begin
       Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
     end;
@@ -370,6 +490,12 @@ begin
     begin
       Ctx.Error := True; Exit;
     end;
+    CreatedLpi := False;
+    if (LprPath <> '') and not FileExists(FilePath) then
+    begin
+      WriteProgramProject(LprPath, Ctx.Params.Get('unit_paths', ''));
+      CreatedLpi := True;
+    end;
     if LazarusIDE.DoOpenProjectFile(FilePath, [ofAddToRecent, ofRevert]) <> mrOK then
     begin
       Ctx.Error := True; Ctx.Result := 'Could not open ' + FilePath; Exit;
@@ -381,6 +507,7 @@ begin
       else
         Obj.Add('project_file', FilePath);
       Obj.Add('previous_project', NewName);
+      if CreatedLpi then Obj.Add('created_project_file', True);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -455,6 +582,13 @@ begin
       end
       else
         Obj.Add('error', 'No active project');
+      { the compiler the IDE builds with, whether or not a project is saved }
+      for MacroIdx := 0 to 3 do
+      begin
+        MacroText := '$(' + MacroNames[MacroIdx] + ')';
+        if IDEMacros.SubstituteMacros(MacroText) then
+          Obj.Add(MacroKeys[MacroIdx], MacroText);
+      end;
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -824,7 +958,9 @@ begin
     'it (Form2, DataModule1, Frame1); rename it with form_set_properties Name.',
     SCHEMA_CREATE_FORM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_open',
-    'Open an existing project (.lpi), closing the current one. Refused while ' +
+    'Open a project (.lpi), closing the current one. Given a program''s .lpr ' +
+    'with no .lpi, writes one next to it first (the IDE otherwise has only an unsaved ' +
+    'default project open), so build, run and debug work on it. Refused while ' +
     'debugging or building, or with unsaved changes. Clears the Messages window.',
     SCHEMA_OPEN_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_list_templates',

@@ -23,7 +23,7 @@ uses
 const
   SCHEMA_GIT_STATUS =
     '{"type":"object","properties":{' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_DIFF =
@@ -31,7 +31,7 @@ const
     '"staged":{"type":"boolean","description":"Diff staged (index) changes instead of working-tree (default false)"},' +
     '"path":{"type":"string","description":"Limit diff to this file or directory"},' +
     '"active_file":{"type":"boolean","description":"Diff the active editor''s file, in its own repository (saved content only)"},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_BLAME =
@@ -44,49 +44,49 @@ const
     '{"type":"object","properties":{' +
     '"max_count":{"type":"integer","description":"Maximum number of commits to show (default 20)"},' +
     '"branch":{"type":"string","description":"Branch or ref to log; defaults to HEAD"},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_ADD =
     '{"type":"object","properties":{' +
     '"paths":{"type":"array","items":{"type":"string"},"description":"Files or directories to stage"},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["paths"]}';
 
   SCHEMA_GIT_COMMIT =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Commit message"},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["message"]}';
 
   SCHEMA_GIT_CHECKOUT =
     '{"type":"object","properties":{' +
     '"target":{"type":"string","description":"Branch name, tag, commit hash, or file path to restore"},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["target"]}';
 
   SCHEMA_GIT_BRANCHES =
     '{"type":"object","properties":{' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_STASH =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Optional stash description"},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_STASH_POP =
     '{"type":"object","properties":{' +
     '"index":{"type":"integer","description":"Stash index to pop (default 0 = most recent)"},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
   SCHEMA_GIT_RESET =
     '{"type":"object","properties":{' +
     '"target":{"type":"string","description":"Ref or file to reset: e.g. HEAD, HEAD~1, a commit hash, or a file path"},' +
     '"mode":{"type":"string","enum":["mixed","soft"],"description":"mixed (default): unstage changes, keep working tree. soft: keep changes staged."},' +
-    '"work_dir":{"type":"string","description":"Default: project directory"}},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["target"]}';
 
 { ── Helpers ──────────────────────────────────────────────────────────────── }
@@ -138,6 +138,9 @@ begin
     until (BytesRead = 0) and not Proc.Running;
     Proc.WaitOnExit;
     Result := Proc.ExitCode = 0;
+    if not Result and (Pos('not a git repository', Output) > 0) then
+      Output := Trim(Output) + LineEnding + '(pass work_dir: a directory inside the repository; ' +
+        'without it the saved project''s directory, then the active editor''s file directory is used)';
   finally
     Proc.Free;
   end;
@@ -152,6 +155,10 @@ begin
   if (Result = '') and Assigned(LazarusIDE.ActiveProject) and
      (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
     Result := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile);
+  if (Result = '') and Assigned(SourceEditorManagerIntf) and
+     Assigned(SourceEditorManagerIntf.ActiveEditor) and
+     FilenameIsAbsolute(SourceEditorManagerIntf.ActiveEditor.FileName) then
+    Result := ExtractFilePath(SourceEditorManagerIntf.ActiveEditor.FileName);
 end;
 
 const

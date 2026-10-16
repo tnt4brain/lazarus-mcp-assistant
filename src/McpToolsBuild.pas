@@ -45,7 +45,7 @@ const
   SCHEMA_RUN_TESTS =
     '{"type":"object","properties":{' +
     '"test_project":{"type":"string","description":"Test project .lpi, absolute or ' +
-    'relative to the project directory. Default: the plugin''s own tests"},' +
+    'relative to the project directory. Default: the MCP Assistant plugin''s own tests, NOT the open project''s"},' +
     '"junit_out":{"type":"string","description":"Absolute path to also write JUnit XML to"}}}';
 
   SCHEMA_GET_COMPILER_ERRORS =
@@ -446,8 +446,10 @@ begin
     'first. To install a package, use package_install.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
   Tools.Add(MakeTool('ide_run_tests',
-    'Compile and run an FPCUnit test project; returns pass/fail counts and ' +
-    'per-test output, optionally also JUnit XML.',
+    'Compile and run an FPCUnit test project; returns pass/fail counts, per-test ' +
+    'output and the test_project that ran, optionally also JUnit XML. Without ' +
+    'test_project it runs the MCP Assistant plugin''s OWN suite, not the open ' +
+    'project''s: pass test_project (your tests'' .lpi) to test your code.',
     SCHEMA_RUN_TESTS, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_get_compiler_errors',
     'Return the current build compiler errors and warnings.',
