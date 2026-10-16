@@ -37,6 +37,7 @@ type
     procedure TestPaused;
     procedure TestOpenProgramWithoutProject;
     procedure TestDebugPreflightAndExit;
+    procedure TestRunOutput;
   end;
 
 function WindoweeLpi: string;
@@ -231,7 +232,7 @@ procedure TTestWindows.TestTree;
 var
   T : string;
 begin
-  T := Call('project_run', '{}');
+  T := Call('project_run', '{"wait_seconds":0}');
   CheckEquals('True', JPath(T, 'success'), T);
   T := WaitForWindow;
   CheckTrue(Pos('Window "MCP Windowee" 200,200 ', T) > 0, 'form: ' + T);
@@ -252,7 +253,7 @@ var
   Png     : string;
   W, H    : Integer;
 begin
-  CheckEquals('True', JPath(Call('project_run', '{}'), 'success'));
+  CheckEquals('True', JPath(Call('project_run', '{"wait_seconds":0}'), 'success'));
   WaitForWindow;
   R := McpRequest('POST', '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{' +
     '"name":"project_get_windows","arguments":{"image":true,"max_size":100}}}',
@@ -393,6 +394,75 @@ begin
     CheckEquals('3', JPath(T, 'exit_code'), T);
   finally
     Call('debug_stop', '{}');
+    Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+    DeleteDirectory(Dir, False);
+  end;
+end;
+
+{ project_run answers with the output and the exit code (ADR-016), and a program that
+  keeps running is read and stopped with project_run_output. }
+procedure TTestWindows.TestRunOutput;
+var
+  Dir, Lpr, T : string;
+  SL          : TStringList;
+  I           : Integer;
+begin
+  Dir := GetTempDir(False) + 'mcprunprog' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr := Dir + 'runner.lpr';
+  SL := TStringList.Create;
+  try
+    SL.Text :=
+      'program runner;' + LineEnding +
+      '{$mode objfpc}{$H+}' + LineEnding +
+      'uses SysUtils;' + LineEnding +
+      'begin' + LineEnding +
+      '  WriteLn(''hello '', ParamStr(1), '' in '', ExtractFileName(ExcludeTrailingPathDelimiter(GetCurrentDir)));' + LineEnding +
+      '  Flush(Output);' + LineEnding +
+      '  WriteLn(StdErr, ''oops'');' + LineEnding +
+      '  Flush(StdErr);' + LineEnding +
+      '  if ParamStr(1) = ''wait'' then Sleep(60000);' + LineEnding +
+      '  Halt(3);' + LineEnding +
+      'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');
+  try
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+    CheckFalse(IsError(T), T);
+
+    T := Call('project_run', '{"args":"quick","wait_seconds":30}');
+    CheckFalse(IsError(T), T);
+    CheckEquals('True', JPath(T, 'success'), T);
+    CheckEquals('False', JPath(T, 'running'), T);
+    CheckEquals('3', JPath(T, 'exit_code'), T);
+    CheckTrue(Pos('hello quick in mcprunprog', JPath(T, 'stdout')) = 1, 'stdout: ' + T);
+    CheckTrue(Pos('oops', JPath(T, 'stderr')) = 1, 'stderr: ' + T);
+    T := Call('project_run_output', '{}');
+    CheckEquals('3', JPath(T, 'exit_code'), 'kept after the end: ' + T);
+    CheckEquals('', JPath(T, 'stdout'), 'already handed out: ' + T);
+
+    T := Call('project_run', '{"args":"wait","wait_seconds":2}');
+    CheckEquals('True', JPath(T, 'success'), T);
+    CheckEquals('True', JPath(T, 'running'), T);
+    CheckEquals('', JPath(T, 'exit_code'), 'no exit code yet: ' + T);
+    CheckTrue(Pos('hello wait', JPath(T, 'stdout')) = 1, 'output so far: ' + T);
+    T := Call('project_run', '{"wait_seconds":0}');
+    CheckTrue(IsError(T) and (Pos('still running', T) > 0), 'one at a time: ' + T);
+    T := Call('project_run_output', '{"stop":true}');
+    CheckFalse(IsError(T), T);
+    CheckEquals('False', JPath(T, 'running'), T);
+    CheckEquals('1', JPath(T, 'exit_code'), T);
+  finally
+    Call('project_run_output', '{"stop":true}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
     DeleteDirectory(Dir, False);
   end;

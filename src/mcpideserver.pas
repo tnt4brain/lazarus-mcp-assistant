@@ -85,7 +85,7 @@ uses
   StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
-  McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog;
+  McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram;
 
 const
   { MCP revisions this server implements, oldest first: the last is the one
@@ -1083,6 +1083,17 @@ begin
           Text := McpLazbuildJSON(Args.Strings['lpk_path'], Err);
       end;
     end;
+  end
+  else if ToolName = 'project_run' then
+  begin
+    { the IDE builds and starts the program on the main thread; the wait for its
+      end happens here (ADR-016) }
+    Text := CallOnMain(ToolName, Args, AClientId, Err);
+    if not Err then
+      if Assigned(Args) then
+        Text := McpRunFinish(Text, Args.Get('wait_seconds', 10))
+      else
+        Text := McpRunFinish(Text, 10);
   end
   else if ToolName = 'ide_run_tests' then
   begin

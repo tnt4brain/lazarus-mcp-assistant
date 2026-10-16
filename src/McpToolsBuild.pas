@@ -22,7 +22,7 @@ uses
   fpjson,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
-  McpToolsPkgManage;
+  McpToolsPkgManage, McpRunProgram;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -33,7 +33,9 @@ const
   SCHEMA_RUN_PROJECT =
     '{"type":"object","properties":{"args":{"type":"string",' +
     '"description":"Command-line arguments for the program. Stored in the project''s ' +
-    'run parameters (also used by debug runs); omit to keep the current ones"}}}';
+    'run parameters (also used by debug runs); omit to keep the current ones"},' +
+    '"wait_seconds":{"type":"integer","description":"Wait up to this long (0..300, default 10) ' +
+    'for the program to end before answering"}}}';
 
   SCHEMA_COMPILE_PLUGIN =
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +
@@ -67,7 +69,6 @@ var
   Errors   : TJSONArray;
   Warns    : TJSONArray;
   BuildRes : TModalResult;
-  Proj     : TLazProject;
   MsgArr   : TJSONArray;
   MsgView  : TExtToolView;
   MsgLine  : TMessageLine;
@@ -125,29 +126,9 @@ begin
   else if Name = 'project_run' then
   begin
     Result := True;
-    if not Assigned(LazarusIDE) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No IDE available'; Exit;
-    end;
-    if Assigned(Ctx.Params) and (Ctx.Params.IndexOfName('args') >= 0) then
-    begin
-      Proj := LazarusIDE.ActiveProject;
-      if not Assigned(Proj) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-      end;
-      { stored in the project's run parameters, so debug runs use them too }
-      Proj.RunParameters.GetOrCreate('default').CmdLineParams :=
-        Ctx.Params.Get('args', '');
-    end;
-    BuildRes := LazarusIDE.DoRunProjectWithoutDebug;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('success', BuildRes = mrOK);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
+    { starts the program and answers at once; the server then waits for its end
+      off the main thread (McpRunFinish, ADR-016) }
+    Ctx.Result := McpRunLaunch(Ctx.Params, Ctx.Error);
   end
 
   else if Name = 'ide_get_messages' then
@@ -447,7 +428,11 @@ begin
     SCHEMA_BUILD_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_run',
     'Build (if needed) and run the active project without the debugger, ' +
-    'optionally with new command-line arguments.',
+    'optionally with new command-line arguments. Waits up to wait_seconds (default 10) and ' +
+    'answers {success, running, pid, exit_code, stdout, stderr}; a program still running ' +
+    '(a GUI program, a server) comes back with running=true: read it later with ' +
+    'project_run_output, which can also stop it. The program has no console window and no ' +
+    'input (stdin is closed); one program at a time.',
     SCHEMA_RUN_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('package_compile',
     'Compile a Lazarus package by package_name or lpk_path: with the IDE''s own ' +
