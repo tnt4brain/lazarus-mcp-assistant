@@ -406,6 +406,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-012](docs/adr/0012-multiple-clients.md) | Multiple clients: session identity, debug session lease, debugger lock |
 | [ADR-013](docs/adr/0013-user-consent-before-new-code.md) | User consent before new code enters the IDE (package installs) |
 | [ADR-014](docs/adr/0014-designer-undo.md) | Designer undo: the IDE's undo list, replacement steps, keeping references |
+| [ADR-015](docs/adr/0015-packages-and-bare-programs-addressed-per-call.md) | Packages and bare programs: addressed per call, no active state |
 
 ADR-007 was never assigned; no document is missing.
 
