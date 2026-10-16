@@ -945,12 +945,25 @@ begin
   try
   if ToolName = 'package_compile' then
   begin
-    if not Assigned(Args) or (Args.Get('lpk_path', '') = '') then
+    if not Assigned(Args) or ((Args.Get('lpk_path', '') = '') and
+                              (Args.Get('package_name', '') = '')) then
     begin
-      Text := 'Error: lpk_path required';
+      Text := 'package_name or lpk_path required';
       Err  := True;
     end else
-      Text := McpRunLazbuild(Args.Strings['lpk_path'], Err);
+    begin
+      { the IDE compiles a package that is loaded; lazbuild the rest }
+      Text := CallOnMain('package_compile_ide', Args, AClientId, Err);
+      if not Err and (Pos('"use_lazbuild"', Text) > 0) then
+      begin
+        if Args.Get('lpk_path', '') = '' then
+        begin
+          Text := 'method lazbuild needs lpk_path';
+          Err  := True;
+        end else
+          Text := McpLazbuildJSON(Args.Strings['lpk_path'], Err);
+      end;
+    end;
   end
   else if ToolName = 'ide_run_tests' then
   begin

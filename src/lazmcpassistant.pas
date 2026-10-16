@@ -13,7 +13,7 @@ uses
   McpToolsCodeTools, McpToolsForms, McpToolsProject, McpToolsGit, 
   McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent, McpLauncher, 
   McpOptions, McpSettingsFile, McpRefKeeper, McpExceptionLog, McpLineDiff, 
-  McpToolsFormat, McpToolsWindows, LazarusPackageIntf;
+  McpToolsFormat, McpToolsWindows, McpToolsPkgManage, LazarusPackageIntf;
 
 implementation
 

@@ -21,7 +21,8 @@ uses
   Controls, Forms,
   fpjson,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
-  McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent;
+  McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
+  McpToolsPkgManage;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -36,8 +37,12 @@ const
 
   SCHEMA_COMPILE_PLUGIN =
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +
-    '"description":"Absolute path to the .lpk package file to compile"}},' +
-    '"required":["lpk_path"]}';
+    '"description":"Absolute path to the .lpk package file to compile"},' +
+    '"package_name":{"type":"string","description":"Or a package loaded in the IDE"},' +
+    '"method":{"type":"string","description":"auto (default): the IDE''s compiler for a ' +
+    'package that is loaded, lazbuild otherwise; or ide, or lazbuild"},' +
+    '"clean":{"type":"boolean","description":"Rebuild everything (-B). The IDE skips a unit ' +
+    'whose file looks unchanged, e.g. edited within the same second as the last build"}}}';
 
   SCHEMA_REBUILD_IDE =
     '{"type":"object","properties":{}}';
@@ -60,6 +65,7 @@ function DispatchBuildTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   Obj      : TJSONObject;
   Errors   : TJSONArray;
+  Warns    : TJSONArray;
   BuildRes : TModalResult;
   Proj     : TLazProject;
   MsgArr   : TJSONArray;
@@ -94,14 +100,22 @@ begin
     Obj := TJSONObject.Create;
     try
       Obj.Add('success', BuildRes = mrOK);
-      if Assigned(McpHookManager) then
-        Errors := McpHookManager.CurrentCompilerErrors
-      else
-        Errors := nil;
-      if Assigned(Errors) then
-        Obj.Add('errors', Errors.Clone as TJSONArray)
-      else
-        Obj.Add('errors', TJSONArray.Create);
+      { every error line of the build, from the Messages window; the one the
+        user had selected is all the compiler hook knows }
+      Errors := TJSONArray.Create;
+      Warns  := TJSONArray.Create;
+      try
+        McpCompilerMessages(Errors, Warns);
+        if (Errors.Count = 0) and (BuildRes <> mrOK) and
+           Assigned(McpHookManager) and Assigned(McpHookManager.CurrentCompilerErrors) then
+          Obj.Add('errors', McpHookManager.CurrentCompilerErrors.Clone as TJSONArray)
+        else
+          Obj.Add('errors', Errors.Clone as TJSONArray);
+        Obj.Add('warning_count', Warns.Count);
+      finally
+        Errors.Free;
+        Warns.Free;
+      end;
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -436,8 +450,10 @@ begin
     'optionally with new command-line arguments.',
     SCHEMA_RUN_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('package_compile',
-    'Compile a Lazarus package (.lpk) using lazbuild and return the full ' +
-    'compiler output. Use this as a smoke-test before calling ide_rebuild. ' +
+    'Compile a Lazarus package by package_name or lpk_path: with the IDE''s own ' +
+    'compiler when the package is open in the IDE (messages also in ide_get_messages; unsaved ' +
+    'editor files are compiled as on disk and listed), else with lazbuild. Returns ' +
+    '{method, success, errors}. Use this as a smoke-test before calling ide_rebuild. ' +
     'Does not restart the IDE.',
     SCHEMA_COMPILE_PLUGIN, MCP_ANN_WRITE));
   Tools.Add(MakeTool('ide_rebuild',

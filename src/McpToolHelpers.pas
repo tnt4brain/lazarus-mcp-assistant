@@ -18,6 +18,10 @@ function McpGetUnitInterface(const FilePath: string; out IsError: Boolean): stri
 { Run lazbuild on a .lpk or .lpi and return filtered compiler output. }
 function McpRunLazbuild(const LpkPath: string; out IsError: Boolean): string;
 
+{ McpRunLazbuild as {method, success, errors, output}; errors are the compiler's
+  "file(line,col) Error: text" lines. }
+function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean): string;
+
 { Compile and run the FPCUnit test project at ResolvedLpi (must be non-empty
   and fully resolved by the caller). }
 function McpRunTests(const ResolvedLpi, JUnitOut: string;
@@ -150,6 +154,56 @@ begin
             'lazbuild' + GetExeExt;
   if not FileExists(Result) and (FindDefaultExecutablePath('lazbuild') <> '') then
     Result := FindDefaultExecutablePath('lazbuild');
+end;
+
+function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean): string;
+var
+  Text, S : string;
+  Lines   : TStringList;
+  Obj, E  : TJSONObject;
+  Errors  : TJSONArray;
+  I, P, Q : Integer;
+  Pos1    : string;
+  Parts   : TStringList;
+begin
+  Text := McpRunLazbuild(LpkPath, IsError);
+  Obj := TJSONObject.Create;
+  Errors := TJSONArray.Create;
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Text;
+    for I := 0 to Lines.Count - 1 do
+    begin
+      S := Lines[I];
+      P := Pos(') Error: ', S);
+      if P = 0 then P := Pos(') Fatal: ', S);
+      if P = 0 then Continue;
+      E := TJSONObject.Create;
+      Q := P;
+      while (Q > 0) and (S[Q] <> '(') do Dec(Q);
+      E.Add('file', Copy(S, 1, Q - 1));
+      Pos1 := Copy(S, Q + 1, P - Q - 1);
+      Parts := TStringList.Create;
+      try
+        Parts.CommaText := Pos1;
+        if Parts.Count > 0 then E.Add('line', StrToIntDef(Parts[0], 0));
+        if Parts.Count > 1 then E.Add('column', StrToIntDef(Parts[1], 0));
+      finally
+        Parts.Free;
+      end;
+      E.Add('message', Trim(Copy(S, P + 9, MaxInt)));
+      Errors.Add(E);
+    end;
+    Obj.Add('method',  'lazbuild');
+    Obj.Add('success', not IsError);
+    Obj.Add('errors',  Errors); Errors := nil;
+    Obj.Add('output',  Text);
+    Result := Obj.AsJSON;
+  finally
+    Errors.Free;
+    Lines.Free;
+    Obj.Free;
+  end;
 end;
 
 function McpRunLazbuild(const LpkPath: string; out IsError: Boolean): string;

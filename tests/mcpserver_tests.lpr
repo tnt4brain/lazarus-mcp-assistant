@@ -20,7 +20,7 @@ uses
   THttpHelper,
   TUtils, TProtocol, TAuth, TTestInfra,
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
-  TConsent, TDebugger, TPackageEdit, TFormUndo, TCodeComplete, TCodeFormat,
+  TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
   TCodeRename, TWindows;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }

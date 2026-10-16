@@ -74,6 +74,11 @@ end;
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
 const
+  { files of a package instead of the project's, for one call (no "active package": clients share the IDE) }
+  PKG_SCOPE_PROPS =
+    '"package_name":{"type":"string","description":"Use this loaded package''s files instead of the project''s"},' +
+    '"lpk_path":{"type":"string","description":"Or the package''s .lpk, loaded for the call"}';
+
   SCHEMA_GET_SYMBOL_DECLARATION =
     '{"type":"object","properties":{' +
     '"symbol":{"type":"string","description":"Identifier name to look up"},' +
@@ -101,7 +106,8 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path to the file containing the declaration"},' +
     '"line":{"type":"integer","description":"Line of the declaration (1-based)"},' +
-    '"col":{"type":"integer","description":"Column of the declaration (1-based)"}},' +
+    '"col":{"type":"integer","description":"Column of the declaration (1-based)"},' +
+    PKG_SCOPE_PROPS + '},' +
     '"required":["file","line","col"]}';
 
   SCHEMA_RENAME_IDENTIFIER =
@@ -111,7 +117,8 @@ const
     '"col":{"type":"integer","description":"Column of the identifier (1-based)"},' +
     '"new_name":{"type":"string","description":"New identifier name (not needed with dry_run)"},' +
     '"dry_run":{"type":"boolean","description":"List the references with their line text and change nothing (default false)"},' +
-    '"auto_save":{"type":"boolean","description":"Save the changed files after renaming (default false: they stay unsaved, Ctrl+Z works)"}},' +
+    '"auto_save":{"type":"boolean","description":"Save the changed files after renaming (default false: they stay unsaved, Ctrl+Z works)"},' +
+    PKG_SCOPE_PROPS + '},' +
     '"required":["file","line","col"]}';
 
   SCHEMA_GOTO_DECLARATION =
@@ -126,12 +133,14 @@ const
     '"directory":{"type":"string","description":"Search this folder and its subfolders ' +
     'instead of the project''s files, e.g. a package''s source folder"},' +
     '"mask":{"type":"string","description":"With directory: file masks, default ' +
-    '*.pas;*.pp;*.inc;*.lpr;*.dpr;*.lfm"}},' +
+    '*.pas;*.pp;*.inc;*.lpr;*.dpr;*.lfm"},' +
+    PKG_SCOPE_PROPS + '},' +
     '"required":["query"]}';
 
   SCHEMA_LIST_TODOS =
     '{"type":"object","properties":{' +
-    '"include_done":{"type":"boolean","description":"Also list DONE items (default false)"}}}';
+    '"include_done":{"type":"boolean","description":"Also list DONE items (default false)"},' +
+    PKG_SCOPE_PROPS + '}}';
 
   SCHEMA_CREATE_UNIT =
     '{"type":"object","properties":{' +
@@ -549,7 +558,7 @@ begin
     Ctx.Error := True; Ctx.Result := 'The identifier is already named ' + NewName; Exit;
   end;
 
-  TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+  TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
   TmpCtx.StopServer := nil;
   McpDispatch('project_list_files', TmpCtx, TmpHandled);
   if TmpCtx.Error then
@@ -726,7 +735,7 @@ begin
     end
     else
     begin
-      TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+      TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
       TmpCtx.StopServer := nil;
       McpDispatch('project_list_files', TmpCtx, TmpHandled);
       if TmpCtx.Error then
@@ -741,7 +750,7 @@ begin
   else if Name = 'project_list_todos' then
   begin
     Result := True;
-    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+    TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
     TmpCtx.StopServer := nil;
     McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then
@@ -902,7 +911,7 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
     end;
-    TmpCtx.Params := nil; TmpCtx.Result := ''; TmpCtx.Error := False;
+    TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
     TmpCtx.StopServer := nil;
     McpDispatch('project_list_files', TmpCtx, TmpHandled);
     if TmpCtx.Error then

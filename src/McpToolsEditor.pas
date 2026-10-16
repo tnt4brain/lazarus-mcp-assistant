@@ -16,7 +16,8 @@ uses
   Classes, SysUtils, StrUtils,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils, Controls,
   fpjson,
-  McpToolContext, McpToolHelpers;
+  PackageIntf, PackageDefs,
+  McpToolContext, McpToolHelpers, McpToolsPackages;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -36,7 +37,10 @@ const
   READ_CAP = 40000;
 
   SCHEMA_GET_PROJECT_FILES =
-    '{"type":"object","properties":{}}';
+    '{"type":"object","properties":{' +
+    '"package_name":{"type":"string","description":"List this loaded package''s files ' +
+    'instead of the project''s"},' +
+    '"lpk_path":{"type":"string","description":"Or the package''s .lpk, loaded for the call"}}}';
 
   SCHEMA_GET_OPEN_EDITORS =
     '{"type":"object","properties":{}}';
@@ -101,6 +105,8 @@ var
   Obj          : TJSONObject;
   Files        : TJSONArray;
   Proj         : TLazProject;
+  PkgScope     : TLazPackage;
+  PkgErr       : string;
   SyncFilePath : string;
   SyncFileNames: TStringList;
   PasName      : string;
@@ -266,6 +272,21 @@ begin
     Result := True;
     Files := TJSONArray.Create;
     try
+      if Assigned(Ctx.Params) and
+         ((Ctx.Params.Get('package_name', '') <> '') or (Ctx.Params.Get('lpk_path', '') <> '')) then
+      begin
+        { a package's files, real ones only (not virtual units or macro paths) }
+        if not TargetPackage(Ctx.Params, PkgScope, PkgErr, False) then
+        begin
+          Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+        end;
+        for I := 0 to PkgScope.FileCount - 1 do
+          if (PkgScope.Files[I].FileType <> pftVirtualUnit) and
+             (Pos('$(', PkgScope.Files[I].GetFullFilename) = 0) then
+            Files.Add(PkgScope.Files[I].GetFullFilename);
+        Ctx.Result := Files.AsJSON;
+        Exit;
+      end;
       if Assigned(LazarusIDE) then
       begin
         Proj := LazarusIDE.ActiveProject;
@@ -708,7 +729,8 @@ begin
     'and next_line to continue from.',
     SCHEMA_GET_FILE_CONTENT, MCP_ANN_RO));
   Tools.Add(MakeTool('project_list_files',
-    'Return the list of source files in the active project.',
+    'Return the list of source files in the active project, or of a package ' +
+    '(package_name or lpk_path) when given.',
     SCHEMA_GET_PROJECT_FILES, MCP_ANN_RO));
   Tools.Add(MakeTool('editor_list_open',
     'Return the list of all currently open editor tabs (file names).',

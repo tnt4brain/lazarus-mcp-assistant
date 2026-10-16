@@ -10,32 +10,45 @@ unit McpToolsPackages;
 
 interface
 
+uses
+  SysUtils, fpjson, PackageDefs;
+
+{ Shared with McpToolsPkgManage. }
+
+{ The package a call names, by package_name or lpk_path; a .lpk not loaded yet
+  is loaded without a package editor.  AForEdit: also refuse a package that
+  has never been saved or is read-only. }
+function TargetPackage(AParams: TJSONObject; out APkg: TLazPackage;
+  out AErr: string; AForEdit: Boolean = True): Boolean;
+
+{ Saves the package unless that would write more than this change; the JSON
+  tells which. }
+function EditResult(APkg: TLazPackage; AWasModified: Boolean; AObj: TJSONObject): string;
+
+{ A package's status and contents.  APkg: the package to describe, else the
+  one loaded under PkgName. }
+function PackageInfoJSON(const PkgName: string; WithFiles: Boolean;
+  APkg: TLazPackage = nil): string;
+
 implementation
 
 uses
-  Classes, SysUtils, Contnrs,
+  Classes, Contnrs,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf,
   LazFileUtils, FileUtil,
   PackageDependencyIntf,
-  PackageDefs, Project,   { IdePackager/IdeProject, linked via IdeDebugger: TPkgDependency }
+  Project,                { IdePackager/IdeProject, linked via IdeDebugger: TPkgDependency }
   PackageSystem,          { PackageGraph }
   PackageLinks,           { LazPackageLinks }
   ParsedCompilerOpts, SearchPathProcs,  { IdeConfig: unit/include paths }
   CodeToolManager, CodeCache,
   Controls,               { mrOk }
   Laz2_XMLCfg, fphttpclient, opensslsockets, md5, zipper,
-  fpjson,
   McpToolContext, McpIdeState, McpConsent, McpToolsCodeTools;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
 const
-  SCHEMA_GET_PACKAGE_INFO_EX =
-    '{"type":"object","properties":{"package_name":{"type":"string",' +
-    '"description":"Package name as registered in the IDE (e.g. LazMcpAssistant)"},' +
-    '"files":{"type":"boolean","description":"Include the package''s files (default false)"}},' +
-    '"required":["package_name"]}';
-
   SCHEMA_LIST_PROJECT_PACKAGES =
     '{"type":"object","properties":{"recursive":{"type":"boolean",' +
     '"description":"Also list every package the project needs indirectly, in compile ' +
@@ -802,7 +815,8 @@ begin
 end;
 
 { package_get_info: install state, plus requirements, users and files of a loaded package. }
-function PackageInfoJSON(const PkgName: string; WithFiles: Boolean): string;
+function PackageInfoJSON(const PkgName: string; WithFiles: Boolean;
+  APkg: TLazPackage): string;
 var
   Obj, FObj : TJSONObject;
   Arr       : TJSONArray;
@@ -819,7 +833,9 @@ begin
     Obj.Add('is_installed', Assigned(IDEPkg));
     if Assigned(IDEPkg) then
       Obj.Add('package_file', IDEPkg.Filename);
-    IDEPkg := PackageEditingInterface.FindPackageWithName(PkgName);
+    IDEPkg := APkg;
+    if IDEPkg = nil then
+      IDEPkg := PackageEditingInterface.FindPackageWithName(PkgName);
     Obj.Add('is_loaded', Assigned(IDEPkg));
     if IDEPkg is TLazPackage then
     begin
@@ -835,6 +851,14 @@ begin
         Obj.Add('read_only', True);
       if Pkg.Missing then
         Obj.Add('lpk_missing', True);
+      Obj.Add('saved', not Pkg.IsVirtual);
+      if Pkg.Author <> '' then Obj.Add('author', Pkg.Author);
+      if Pkg.License <> '' then Obj.Add('license', Capped(Pkg.License, 200));
+      Obj.Add('unit_output_dir', Pkg.CompilerOptions.UnitOutputDirectory);
+      Obj.Add('unit_search_path', Pkg.CompilerOptions.OtherUnitFiles);
+      Obj.Add('include_path',     Pkg.CompilerOptions.IncludePath);
+      if Pkg.CompilerOptions.CustomOptions <> '' then
+        Obj.Add('custom_options', Pkg.CompilerOptions.CustomOptions);
       Arr := TJSONArray.Create;
       Obj.Add('requires', Arr);
       Dep := Pkg.FirstRequiredDependency;
@@ -867,6 +891,8 @@ begin
             FObj.Add('unit', F.Unit_Name);
           if (F.FileType in PkgFileRealUnitTypes) and not F.InUses then
             FObj.Add('in_uses', False);
+          if (F is TPkgFile) and TPkgFile(F).HasRegisterProc then
+            FObj.Add('register', True);
         end;
       end;
     end;
@@ -931,7 +957,7 @@ end;
   whose name is already loaded from another file is refused (opening it would
   ask whether to replace the loaded one). }
 function TargetPackage(AParams: TJSONObject; out APkg: TLazPackage;
-  out AErr: string): Boolean;
+  out AErr: string; AForEdit: Boolean): Boolean;
 var
   Name, Lpk : string;
   Other     : TLazPackage;
@@ -974,6 +1000,7 @@ begin
   begin
     AErr := 'package_name or lpk_path required'; Exit;
   end;
+  if not AForEdit then begin Result := True; Exit; end;
   if APkg.IsVirtual then
   begin AErr := APkg.Name + ' has not been saved yet'; Exit; end;
   if APkg.ReadOnly then
@@ -1389,18 +1416,7 @@ begin
     Exit;
   end;
 
-  if Name = 'package_get_info' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
-    end;
-    Ctx.Result := PackageInfoJSON(Ctx.Params.Get('package_name', ''),
-                                  Ctx.Params.Get('files', False));
-  end
-
-  else if Name = 'project_list_packages' then
+  if Name = 'project_list_packages' then
   begin
     Result := True;
     if not (LazarusIDE.ActiveProject is TProject) then
@@ -1519,10 +1535,6 @@ begin
     'packages folder: MD5 checked against the catalog, archive checked before ' +
     'extracting. Installs nothing; returns the .lpk files for package_install.',
     SCHEMA_DOWNLOAD, MCP_ANN_OPEN));
-  Tools.Add(MakeTool('package_get_info',
-    'A package''s load and install status; for a loaded package also its version, ' +
-    'requirements (with status: not_found etc.), the packages using it, and optionally its files.',
-    SCHEMA_GET_PACKAGE_INFO_EX, MCP_ANN_RO));
   Tools.Add(MakeTool('project_list_packages',
     'The active project''s required packages as in Project Inspector: version ' +
     'limits, the resolved .lpk, and status (ok, not_found, ...). recursive=true adds the ' +

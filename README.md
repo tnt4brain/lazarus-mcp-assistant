@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 116 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 121 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows and Linux. The whole test suite, the debugger tests
 > included, passes on Windows and on Debian 12 (Lazarus 4.6, FPC 3.2.2, GTK2).
@@ -194,21 +194,24 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_get_compiler_errors` | Errors and warnings of the last build |
 | `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters) |
 | `project_get_windows` | The running program's visible windows (Windows only): a tree of windowed controls, `Class "text" x,y wxh`, about 20 tokens a line; `image` adds a PNG of each window (scaled to `max_size`), which also shows controls without a handle such as `TLabel`. Never waits for the program, so it also works while the program is paused in the debugger (the image is then copied from the screen) |
-| `project_open` | Open an existing `.lpi`, closing the current project; refused while debugging or building, or with unsaved changes |
+| `project_open` | Open a `.lpi` (or a program's `.lpr`, for which the `.lpi` is written next to it), closing the current project; refused while debugging or building, or with unsaved changes |
 | `project_list_templates` / `project_create` | Project templates; create a project from one |
 
 ### Packages — `package_*`
 
 | Tool | Description |
 |---|---|
-| `package_get_info` | Load and install status; for a loaded package also version, requirements with their status, the packages using it, and (`files`) its files |
+| `package_get_info` | A package by name or `.lpk` path: status, version, type, requirements with their status, the packages using it, output dir, search paths, compiler options, and (`files`) its files with units and `Register` |
+| `package_list` | The packages loaded in the IDE (default: those that do not come with Lazarus) |
+| `package_open` / `package_create` | Load an `.lpk` without installing it; create a package (`.lpk`, optional first unit) in a directory and load it |
+| `package_get_settings` / `package_set_settings` | Package type, output dir, unit/include paths, compiler options, target, usage paths; old and new values returned, `.lpk` saved |
 | `package_find_unit` | Which loaded packages contain a unit, and whether the project depends on them — for "Can't find unit" |
 | `package_add_file` / `package_remove_file` | Files of a `.lpk`, as the package editor's Add/Remove: unit name and `Register` detected, unit/include path extended when needed |
 | `package_add_dependency` / `package_remove_dependency` | Required packages of a `.lpk`, with version limits; cycles, unknown packages and new code for the IDE are refused (ADR-013) |
 | `package_set_info` | Version, description, author and/or license of a `.lpk`, as on the package options' Package page; returns old and new values |
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
 | `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS, or HTTP when the IDE has no OpenSSL) |
-| `package_compile` | Compile a `.lpk` with `lazbuild` — a smoke test before `ide_rebuild` |
+| `package_compile` | Compile a package (`package_name` or `.lpk`): with the IDE's compiler when it is open there (errors as data, also in the Messages window), else `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE, as `ide_rebuild` does |
 
 Installing a package that is not installed yet with `package_install` is off
@@ -372,6 +375,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestSession` | 8 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp`, 404 for unknown session ids |
 | `TTestToolSmoke` | 22 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
+| `TTestPackageManage` | 3 | MCP server reachable: `package_create`/`get_settings`/`set_settings`/`compile` (IDE and lazbuild) on a package written to a temp directory, `project_list_files`/`project_search` scoped to it |
 | `TTestFormUndo` | 11 | MCP server reachable: `form_undo`/`form_redo` and what the `form_*` tools record, on a temp copy of the fixture form |
 | `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
 | `TTestCodeFormat` | 7 | MCP server reachable: `code_format` on temp files (whole file, line range, parse errors, include files, trailing lines) |

@@ -304,6 +304,7 @@ procedure TTestWindows.TestOpenProgramWithoutProject;
 var
   Dir, Lpr, Lpi, T : string;
   SL               : TStringList;
+  I                : Integer;
 begin
   Dir := GetTempDir(False) + 'mcpbareprog' + PathDelim;
   ForceDirectories(Dir);
@@ -320,7 +321,13 @@ begin
   Call('debug_stop', '{}');
   Call('project_set_settings', '{}');  { saves a project the breakpoints modified }
   try
-    T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+    { the previous test's program may still be going down }
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
     CheckFalse(IsError(T), T);
     CheckTrue(Pos('"created_project_file" : true', T) > 0, 'wrote the .lpi: ' + T);
     CheckTrue(FileExists(Lpi), '.lpi next to the .lpr');
