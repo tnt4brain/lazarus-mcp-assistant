@@ -67,10 +67,10 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
 | `code_get_unit_interface` | The interface section of a unit |
 | `code_get_procedure_ast` | Locals and block-level control flow (if/for/while/try/case…) of one routine, with line ranges |
-| `code_find_declaration` | Where an identifier is declared, with a context snippet |
+| `code_find_declaration` | Where an identifier is declared, with a context snippet; follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
 | `code_goto_declaration` | Jump the editor cursor to a declaration |
 | `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
-| `code_find_references` | Every reference to an identifier across the project |
+| `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
 | `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
 | `code_add_uses` | Add a unit to the interface or implementation uses clause |
 | `code_insert_in_procedure` | Insert text right after a routine's `begin` |
@@ -409,6 +409,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-014](docs/adr/0014-designer-undo.md) | Designer undo: the IDE's undo list, replacement steps, keeping references |
 | [ADR-015](docs/adr/0015-packages-and-bare-programs-addressed-per-call.md) | Packages and bare programs: addressed per call, no active state |
 | [ADR-016](docs/adr/0016-running-without-the-debugger.md) | Running without the debugger: output, exit code, later attach |
+| [ADR-017](docs/adr/0017-declaration-lookup-through-uses-clauses.md) | Declaration lookup through uses clauses; reference search scopes |
 
 ADR-007 was never assigned; no document is missing.
 

@@ -21,3 +21,4 @@ ADR-007 was never assigned; no document is missing.
 | [0014](0014-designer-undo.md) | # ADR-014 — Designer Undo |
 | [0015](0015-packages-and-bare-programs-addressed-per-call.md) | # ADR-015 — Packages and Bare Programs: Addressed Per Call, No "Active" State |
 | [0016](0016-running-without-the-debugger.md) | # ADR-016 — Running a Program Without the Debugger: Output, Exit Code, Later Attach |
+| [0017](0017-declaration-lookup-through-uses-clauses.md) | # ADR-017 — Declaration Lookup Through Uses Clauses, and Reference Search Scopes |

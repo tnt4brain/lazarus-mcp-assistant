@@ -25,7 +25,7 @@ implementation
 
 uses
   Classes, SysUtils, StrUtils,
-  LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils, FileUtil,
+  LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf, MacroIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   BasicCodeTools,
   Controls,
@@ -82,7 +82,8 @@ const
   SCHEMA_GET_SYMBOL_DECLARATION =
     '{"type":"object","properties":{' +
     '"symbol":{"type":"string","description":"Identifier name to look up"},' +
-    '"file":{"type":"string","description":"Absolute path of the file containing the identifier"}},' +
+    '"file":{"type":"string","description":"Absolute path of the file containing the identifier"}' +
+    ',"line":{"type":"integer","description":"Optional: line of a use of the name in file (1-based); with col, the declaration is resolved from that position"},"col":{"type":"integer","description":"Optional: column of that use (1-based)"}},' +
     '"required":["symbol","file"]}';
 
   SCHEMA_GET_UNIT_INTERFACE =
@@ -107,6 +108,9 @@ const
     '"file":{"type":"string","description":"Absolute path to the file containing the declaration"},' +
     '"line":{"type":"integer","description":"Line of the declaration (1-based)"},' +
     '"col":{"type":"integer","description":"Column of the declaration (1-based)"},' +
+    '"also":{"type":"array","items":{"type":"string"},"description":"Also search other sources: same_folder (the file''s folder), lcl, components, rtl, fcl (FPC packages), packages (the packages loaded in the IDE). Only files that mention the name are parsed. The answer then is an object with references, extra_files_searched and truncated"},' +
+    '"search_dir":{"type":"string","description":"Also search this folder and its subfolders"},' +
+    '"max_files":{"type":"integer","description":"At most this many extra files that mention the name are searched (default 300); the answer says truncated if there were more"},' +
     PKG_SCOPE_PROPS + '},' +
     '"required":["file","line","col"]}';
 
@@ -124,7 +128,8 @@ const
   SCHEMA_GOTO_DECLARATION =
     '{"type":"object","properties":{' +
     '"symbol":{"type":"string","description":"Identifier name to look up"},' +
-    '"file":{"type":"string","description":"Absolute path of the file that contains (or imports) the identifier"}},' +
+    '"file":{"type":"string","description":"Absolute path of the file that contains (or imports) the identifier"}' +
+    ',"line":{"type":"integer","description":"Optional: line of a use of the name in file (1-based); with col, the declaration is resolved from that position"},"col":{"type":"integer","description":"Optional: column of that use (1-based)"}},' +
     '"required":["symbol","file"]}';
 
   SCHEMA_SEARCH_IN_PROJECT =
@@ -666,6 +671,253 @@ begin
   end;
 end;
 
+{ ── Declaration lookup ───────────────────────────────────────────────────── }
+
+{ Where Symbol is declared, as seen from Code (code_find_declaration and
+  code_goto_declaration).  In order:
+    1. at Line/Col, when the caller gives a position of a use;
+    2. the unit's own interface (fast, but it never follows a uses clause and
+       a program has no interface);
+    3. at the file's own uses of the name, one after the other (comments and strings
+       skipped): CodeTools resolves a use through the uses clauses, so TList is found in
+       Classes, and a program works. }
+function ResolveDeclaration(Code: TCodeBuffer; const Symbol: string; Line, Col: Integer;
+  out NewCode: TCodeBuffer; out NewX, NewY, NewTopLine: Integer;
+  out Why: string): Boolean;
+var
+  Src       : string;
+  P, L, Tries, X, Y : Integer;
+  BlockTop, BlockBottom : Integer;
+
+  function WordAt(Pos: Integer): Boolean;
+  begin
+    Result := (Pos + Length(Symbol) - 1 <= L) and
+              SameText(Copy(Src, Pos, Length(Symbol)), Symbol) and
+              ((Pos = 1) or not (Src[Pos - 1] in ['A'..'Z', 'a'..'z', '0'..'9', '_'])) and
+              ((Pos + Length(Symbol) > L) or
+               not (Src[Pos + Length(Symbol)] in ['A'..'Z', 'a'..'z', '0'..'9', '_']));
+  end;
+
+begin
+  Why := '';
+  if (Line > 0) and (Col > 0) then
+  begin
+    Result := CodeToolBoss.FindDeclaration(Code, Col, Line, NewCode, NewX, NewY,
+                NewTopLine, BlockTop, BlockBottom);
+    if not Result then Why := CodeToolBoss.ErrorMessage;
+    Exit;
+  end;
+  if CodeToolBoss.FindDeclarationInInterface(Code, Symbol, NewCode, NewX, NewY, NewTopLine) then
+    Exit(True);
+  Why := CodeToolBoss.ErrorMessage;
+  Src := Code.Source;
+  L := Length(Src);
+  P := 1;
+  Tries := 0;
+  while (P <= L) and (Tries < 30) do
+  begin
+    case Src[P] of
+      '{': begin
+             while (P <= L) and (Src[P] <> '}') do Inc(P);
+             Inc(P);
+           end;
+      '(': if (P < L) and (Src[P + 1] = '*') then
+           begin
+             P := PosEx('*)', Src, P + 2);
+             if P = 0 then Break;
+             Inc(P, 2);
+           end else Inc(P);
+      '/': if (P < L) and (Src[P + 1] = '/') then
+           begin
+             while (P <= L) and not (Src[P] in [#10, #13]) do Inc(P);
+           end else Inc(P);
+      '''': begin
+              Inc(P);
+              while (P <= L) and not (Src[P] in ['''', #10, #13]) do Inc(P);
+              Inc(P);
+            end;
+    else
+      if (Src[P] in ['A'..'Z', 'a'..'z', '_']) then
+      begin
+        if WordAt(P) then
+        begin
+          Inc(Tries);
+          Code.AbsoluteToLineCol(P, Y, X);
+          if CodeToolBoss.FindDeclaration(Code, X, Y, NewCode, NewX, NewY, NewTopLine,
+               BlockTop, BlockBottom) then
+            Exit(True);
+          Why := CodeToolBoss.ErrorMessage;
+        end;
+        while (P <= L) and (Src[P] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do Inc(P);
+      end else
+        Inc(P);
+    end;
+  end;
+  if Tries = 0 then
+    Why := 'the name is not used in this file; pass line and col of a use, ' +
+           'or search from a file that uses it'
+  else if Why = '' then
+    Why := 'not found';
+  Result := False;
+end;
+
+{ ── Extra search scopes for code_find_references ─────────────────────────── }
+
+const
+  IdentChars = ['A'..'Z', 'a'..'z', '0'..'9', '_'];
+  DefaultMaxFiles = 300;
+
+{ The source folder a name in "also" stands for ('' when unknown); Recursive tells
+  whether its subfolders belong to it. }
+function ExtraSourceRoot(const AName: string; Code: TCodeBuffer; out Recursive: Boolean): string;
+var
+  S: string;
+begin
+  Recursive := True;
+  Result := '';
+  if AName = 'same_folder' then
+  begin
+    Recursive := False;
+    Exit(ExtractFilePath(Code.Filename));
+  end;
+  if AName = 'lcl' then S := '$(LazarusDir)/lcl'
+  else if AName = 'components' then S := '$(LazarusDir)/components'
+  else if AName = 'rtl' then S := '$(FPCSrcDir)/rtl'
+  else if AName = 'fcl' then S := '$(FPCSrcDir)/packages'
+  else Exit;
+  if Assigned(IDEMacros) and IDEMacros.SubstituteMacros(S) then
+    Result := SetDirSeparators(S);
+end;
+
+{ Does the file contain Ident as a whole word, ignoring case?  A text test only: it
+  decides which files are worth handing to CodeTools, which then resolves each use. }
+function FileHasWord(const AFile, LowIdent: string): Boolean;
+var
+  Stream : TFileStream;
+  Text   : string;
+  P, L   : Integer;
+begin
+  Result := False;
+  try
+    Stream := TFileStream.Create(AFile, fmOpenRead or fmShareDenyNone);
+    try
+      SetLength(Text, Stream.Size);
+      if Length(Text) > 0 then Stream.ReadBuffer(Text[1], Length(Text));
+    finally
+      Stream.Free;
+    end;
+  except
+    Exit;
+  end;
+  Text := LowerCase(Text);
+  L := Length(LowIdent);
+  P := Pos(LowIdent, Text);
+  while P > 0 do
+  begin
+    if ((P = 1) or not (Text[P - 1] in IdentChars)) and
+       ((P + L > Length(Text)) or not (Text[P + L] in IdentChars)) then
+      Exit(True);
+    P := PosEx(LowIdent, Text, P + 1);
+  end;
+end;
+
+{ Adds to FileNames the files of the requested scopes (also, search_dir) that mention
+  the identifier at X/Y of Code, at most max_files of them.  Used says whether any extra
+  scope was asked for. }
+function AddExtraFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
+  FileNames: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
+  out Err: string): Boolean;
+var
+  Also      : TJSONArray;
+  Roots     : TStringList;   { folder, '1' = recursive in Objects }
+  Found     : TStringList;
+  Seen      : TStringList;
+  Line, Ident, Root : string;
+  I, J, A, B, MaxFiles : Integer;
+  Recursive : Boolean;
+begin
+  Result := True;
+  Used := False;
+  Truncated := False;
+  Searched := 0;
+  Err := '';
+  Also := nil;
+  if Assigned(Params.Find('also')) and (Params.Find('also') is TJSONArray) then
+    Also := TJSONArray(Params.Find('also'));
+  Roots := TStringList.Create;
+  Seen := TStringList.Create;
+  try
+    if Assigned(Also) then
+      for I := 0 to Also.Count - 1 do
+      begin
+        Used := True;
+        if Also.Strings[I] = 'packages' then
+        begin
+          for J := 0 to PackageEditingInterface.GetPackageCount - 1 do
+            if PackageEditingInterface.GetPackages(J).DirectoryExpanded <> '' then
+              Roots.AddObject(PackageEditingInterface.GetPackages(J).DirectoryExpanded, TObject(PtrUInt(1)));
+          Continue;
+        end;
+        Root := ExtraSourceRoot(Also.Strings[I], Code, Recursive);
+        if Root = '' then
+        begin
+          Err := 'Unknown "also" scope ' + Also.Strings[I] +
+                 ' (same_folder, lcl, components, rtl, fcl, packages)';
+          Exit(False);
+        end;
+        Roots.AddObject(Root, TObject(PtrUInt(Ord(Recursive))));
+      end;
+    if Params.Get('search_dir', '') <> '' then
+    begin
+      Used := True;
+      Roots.AddObject(Params.Get('search_dir', ''), TObject(PtrUInt(1)));
+    end;
+    if not Used then Exit;
+
+    { the identifier at the declaration }
+    Line := Code.GetLine(Y - 1, False);
+    A := X;
+    while (A > 1) and (A <= Length(Line) + 1) and (Line[A - 1] in IdentChars) do Dec(A);
+    B := X;
+    while (B >= 1) and (B <= Length(Line)) and (Line[B] in IdentChars) do Inc(B);
+    Ident := Copy(Line, A, B - A);
+    if Ident = '' then Exit;   { FindReferences reports the missing identifier }
+    Ident := LowerCase(Ident);
+
+    MaxFiles := Params.Get('max_files', DefaultMaxFiles);
+    Seen.Sorted := True;
+    Seen.CaseSensitive := False;
+    for I := 0 to FileNames.Count - 1 do
+      Seen.Add(FileNames[I]);
+    for I := 0 to Roots.Count - 1 do
+    begin
+      if not DirectoryExists(Roots[I]) then Continue;
+      Found := FindAllFiles(Roots[I], '*.pas;*.pp;*.lpr', PtrUInt(Roots.Objects[I]) <> 0);
+      try
+        for J := 0 to Found.Count - 1 do
+        begin
+          if Seen.IndexOf(Found[J]) >= 0 then Continue;
+          if not FileHasWord(Found[J], Ident) then Continue;
+          if Searched >= MaxFiles then
+          begin
+            Truncated := True;
+            Break;
+          end;
+          Seen.Add(Found[J]);
+          FileNames.Add(Found[J]);
+          Inc(Searched);
+        end;
+      finally
+        Found.Free;
+      end;
+      if Truncated then Break;
+    end;
+  finally
+    Seen.Free;
+    Roots.Free;
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DoDispatchCodeTools(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -682,6 +934,11 @@ var
   NewTopLine : Integer;
   DeclPt     : TPoint;
   Snippet    : string;
+  Why        : string;
+  FoundSelf  : Boolean;
+  ExtraUsed, ExtraTrunc : Boolean;
+  ExtraCount : Integer;
+  ExtraErr   : string;
   Tool       : TCodeTool;
   TreeNode   : TCodeTreeNode;
   Outline    : TJSONArray;
@@ -779,8 +1036,8 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
     end;
-    if CodeToolBoss.FindDeclarationInInterface(CodeBuf, Symbol,
-         NewCode, NewX, NewY, NewTopLine) then
+    if ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
+         Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
     begin
       Obj := TJSONObject.Create;
       try
@@ -800,8 +1057,7 @@ begin
     else
     begin
       Ctx.Error  := True;
-      Ctx.Result := 'Declaration not found for: ' + Symbol +
-                    ' (' + CodeToolBoss.ErrorMessage + ')';
+      Ctx.Result := 'Declaration not found for: ' + Symbol + ' (' + Why + ')';
     end;
   end
 
@@ -924,12 +1180,24 @@ begin
     try
       for J := 0 to FileListJ.Count - 1 do
         FileNames.Add(FileListJ.Strings[J]);
+      { a file outside the project (or package) is still searched: its own references }
+      FoundSelf := False;
+      for J := 0 to FileNames.Count - 1 do
+        if SameFileName(FileNames[J], CodeBuf.Filename) then FoundSelf := True;
+      if not FoundSelf then FileNames.Add(CodeBuf.Filename);
+      if not AddExtraFiles(Ctx.Params, CodeBuf, NewX, NewY, FileNames, ExtraUsed,
+           ExtraTrunc, ExtraCount, ExtraErr) then
+      begin
+        Ctx.Error := True; Ctx.Result := ExtraErr; Exit;
+      end;
       DeclPt := Point(NewX, NewY);
       if not CodeToolBoss.FindReferencesInFiles(FileNames, CodeBuf,
              DeclPt, False, RefTree) then
       begin
         Ctx.Error  := True;
-        Ctx.Result := 'FindReferences failed: ' + CodeToolBoss.ErrorMessage;
+        Ctx.Result := 'FindReferences failed: ' +
+          IfThen(CodeToolBoss.ErrorMessage <> '', CodeToolBoss.ErrorMessage,
+                 'no identifier at line ' + IntToStr(NewY) + ', col ' + IntToStr(NewX));
         Exit;
       end;
       RefArr := TJSONArray.Create;
@@ -948,7 +1216,21 @@ begin
             RefNode := RefNode.Successor;
           end;
         end;
-        Ctx.Result := RefArr.AsJSON;
+        if ExtraUsed then
+        begin
+          { with an extra scope the answer says how far the search went }
+          Obj := TJSONObject.Create;
+          try
+            Obj.Add('references', RefArr.Clone as TJSONArray);
+            Obj.Add('extra_files_searched', ExtraCount);
+            if ExtraTrunc then
+              Obj.Add('truncated', True);
+            Ctx.Result := Obj.AsJSON;
+          finally
+            Obj.Free;
+          end;
+        end else
+          Ctx.Result := RefArr.AsJSON;
       finally
         RefArr.Free;
       end;
@@ -984,12 +1266,11 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
     end;
-    if not CodeToolBoss.FindDeclarationInInterface(CodeBuf, Symbol,
-             NewCode, NewX, NewY, NewTopLine) then
+    if not ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
+             Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
     begin
       Ctx.Error  := True;
-      Ctx.Result := 'Declaration not found for: ' + Symbol +
-                    ' (' + CodeToolBoss.ErrorMessage + ')';
+      Ctx.Result := 'Declaration not found for: ' + Symbol + ' (' + Why + ')';
       Exit;
     end;
     DeclPt := Point(NewX, NewY);
@@ -1563,7 +1844,9 @@ procedure RegisterCodeToolsSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('code_find_declaration',
     'Find where an identifier is declared using Codetools. ' +
-    'Returns declaration file, line, column and a short context snippet.',
+    'Returns declaration file, line, column and a short context snippet. Resolves through ' +
+    'the unit''s uses clauses (a type from Classes or a sibling unit) from a use of the ' +
+    'name in file, so it also works in a program (.lpr); line and col pick a particular use.',
     SCHEMA_GET_SYMBOL_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('code_get_unit_interface',
     'Return only the interface section of a Pascal unit ' +
@@ -1580,7 +1863,9 @@ begin
     SCHEMA_GET_CODE_OUTLINE, MCP_ANN_RO));
   Tools.Add(MakeTool('code_find_references',
     'Find every reference to the identifier at the given declaration position ' +
-    'across all project files.',
+    'across all project files (or a package''s, with package_name or lpk_path) and the file itself. ' +
+    'also and search_dir add folders or the LCL, RTL, FPC packages, components or loaded ' +
+    'packages, e.g. to see how an API is used.',
     SCHEMA_FIND_ALL_REFERENCES, MCP_ANN_RO));
   Tools.Add(MakeTool('code_rename_identifier',
     'Rename the identifier at (file, line, col), its declaration or any ' +
@@ -1593,7 +1878,8 @@ begin
     SCHEMA_RENAME_IDENTIFIER, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_goto_declaration',
     'Find where an identifier is declared and jump the editor cursor there. ' +
-    'Opens the declaration file if needed.',
+    'Opens the declaration file if needed. Resolves like code_find_declaration, ' +
+    'including names from the uses clauses.',
     SCHEMA_GOTO_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('project_search',
     'Search for a text substring (case-insensitive) across the project''s source ' +
