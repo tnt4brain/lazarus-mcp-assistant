@@ -251,12 +251,18 @@ begin
   T := Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
   CheckEquals('paused', JPath(T, 'state'), 'run: ' + T);
   CheckEquals(IntToStr(MarkLine('work')), JPath(T, 'line'), 'stops at the breakpoint: ' + T);
+  CheckEquals('breakpoint', JPath(T, 'reason'), 'a breakpoint, not a plain run: ' + T);
 
   T := Call(GSessA, 'debug_step_over', '{}');
   CheckEquals(IntToStr(MarkLine('inc')), JPath(T, 'line'), 'step over: ' + T);
+  CheckEquals('step', JPath(T, 'reason'), T);
 
   T := Call(GSessA, 'debug_evaluate', '{"expression":"Counter"}');
   CheckTrue(Pos('41', JPath(T, 'value')) > 0, 'Counter after the first line: ' + T);
+  CheckTrue(JPath(T, 'type') <> '', 'a variable has its type: ' + T);
+  T := Call(GSessA, 'debug_evaluate', '{"expression":"Counter + 1"}');
+  CheckEquals('42', JPath(T, 'value'), T);
+  CheckEquals(0, Pos('"type"', T), 'a computed value has no type, not an empty one: ' + T);
 
   T := Call(GSessA, 'debug_stop', '{}');
   CheckFalse(IsError(T), 'stop: ' + T);
@@ -663,6 +669,17 @@ begin
     Ignore('not an x86 target: ' + T);
   CheckTrue(Pos(LowerCase(Copy(Frame0, 2, MaxInt)), LowerCase(Pc)) > 0,
     'rip/eip = frame 0 address ' + Frame0 + ': ' + Pc);
+
+  { a filtered list: the instruction pointer and stack pointer only }
+  T := Call(GSessA, 'debug_get_registers', '{"names":["RIP","rsp"]}');
+  CheckFalse(IsError(T), T);
+  if Pc <> '' then
+  begin
+    CheckTrue((Pos('"rip"', T) > 0) and (Pos('"rsp"', T) > 0) and (Pos('"rax"', T) = 0), T);
+    CheckTrue(Length(T) < 600, 'short: ' + IntToStr(Length(T)));
+    T := Call(GSessA, 'debug_get_registers', '{"general":true}');
+    CheckTrue((Pos('"rip"', T) > 0) and (Length(T) < 4000), 'general registers only: ' + IntToStr(Length(T)));
+  end;
 
   { disassembly at the frame, at a symbol, and at the caller's return address }
   T := Call(GSessA, 'debug_disassemble', '{}');

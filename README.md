@@ -160,7 +160,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | Tool | Description |
 |---|---|
 | `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`data` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
-| `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code` |
+| `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code`; a stop on a breakpoint says `reason: "breakpoint"`; if no session starts (a failed build) the answer is an error saying so |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
 | `debug_step_over` / `debug_step_into` / `debug_step_out` | F8 / F7 / Shift+F8 |
 | `debug_pause` / `debug_stop` | Pause / stop the session; a pause makes the program's main thread current (not the debugger's break-in thread) |
@@ -173,7 +173,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `debug_get_exception` | The exception the program is paused at |
 | `debug_add_watch` / `debug_remove_watch` / `debug_list_watches` | Watches window; values for the selected (or given) thread and frame |
 | `debug_list_threads` | Threads with state and top frame |
-| `debug_get_registers` | CPU registers of a thread and frame, as the Registers window shows them, plus `hex`; `changed` since the previous pause |
+| `debug_get_registers` | CPU registers of a thread and frame, as the Registers window shows them, plus `hex`; `changed` since the previous pause; `names` or `general` keep only some (the full list is ~20 KB) |
 | `debug_disassemble` | Machine code around an address, a symbol, or a frame: bytes, instruction, function+offset, source lines, call/jump targets |
 | `debug_get_output` | What the program wrote to its console, and debugger output |
 

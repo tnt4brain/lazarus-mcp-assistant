@@ -38,6 +38,7 @@ type
     procedure TestOpenProgramWithoutProject;
     procedure TestDebugPreflightAndExit;
     procedure TestRunOutput;
+    procedure TestDebugRunOfBrokenProgram;
   end;
 
 function WindoweeLpi: string;
@@ -467,5 +468,45 @@ begin
     DeleteDirectory(Dir, False);
   end;
 end;
+
+{ A program that does not build: debug_run says so instead of answering "stopped". }
+procedure TTestWindows.TestDebugRunOfBrokenProgram;
+var
+  Dir, Lpr, T : string;
+  SL          : TStringList;
+  I           : Integer;
+begin
+  Dir := GetTempDir(False) + 'mcpbrokenprog' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr := Dir + 'broken.lpr';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'program broken;' + LineEnding + 'begin' + LineEnding +
+               '  NoSuchRoutine(1);' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');
+  try
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+    CheckFalse(IsError(T), T);
+    T := Call('debug_run', '{"timeout_s":30}');
+    CheckTrue(IsError(T), 'an error, not a state: ' + T);
+    CheckTrue(Pos('did not start', T) > 0, T);
+    CheckTrue(Pos('project_get_compiler_errors', T) > 0, T);
+  finally
+    Call('debug_stop', '{}');
+    Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+    DeleteDirectory(Dir, False);
+  end;
+end;
+
 
 end.

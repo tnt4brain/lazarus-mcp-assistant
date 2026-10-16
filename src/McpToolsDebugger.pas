@@ -121,6 +121,7 @@ type
     OutSwitchFrom  : Integer;   { 0 = no switch }
     OutSwitchTo    : Integer;
     OutSwitchFn    : string;    { the chosen thread's top function }
+    OutHits        : Integer;   { total hit count of all breakpoints }
     { Registers in/out }
     InRegThread    : Integer;   { 0 = the current thread }
     InRegFrame     : Integer;
@@ -156,6 +157,7 @@ type
     procedure InitThreads;
     procedure ReadThreads;
     procedure SelectRunningThread;
+    procedure ReadHits;
     procedure InitRegisters;
     procedure ReadRegisters;
     procedure PrepareDisasm;   { first call starts loading; later calls poll }
@@ -1094,6 +1096,7 @@ end;
 
 procedure TDbgSyncHelper.ReadThreads;
 var
+  FileName : string;
   T   : TCurrentThreads;
   E   : TIdeThreadEntry;
   I   : Integer;
@@ -1117,14 +1120,20 @@ begin
       E   := T[I];
       Obj := TJSONObject.Create;
       Obj.Add('id',      E.ThreadId);
-      Obj.Add('name',    E.ThreadName);
+      if E.ThreadName <> '' then Obj.Add('name', E.ThreadName);
       Obj.Add('state',   GetEnumName(TypeInfo(TDbgThreadState), Ord(E.ThreadState)));
       Obj.Add('current', E.ThreadId = T.CurrentThreadId);
       if Assigned(E.TopFrame) then
       begin
         Obj.Add('function', E.TopFrame.FunctionName);
-        Obj.Add('file',     E.TopFrame.Source);
-        Obj.Add('line',     E.TopFrame.Line);
+        FileName := E.TopFrame.Source;
+        { the current thread's top frame comes without a file: the editor sits on its line }
+        if (FileName = '') and (E.ThreadId = T.CurrentThreadId) and (E.TopFrame.Line > 0) and
+           Assigned(SourceEditorManagerIntf.ActiveEditor) and
+           (SourceEditorManagerIntf.ActiveEditor.CursorTextXY.Y = E.TopFrame.Line) then
+          FileName := SourceEditorManagerIntf.ActiveEditor.FileName;
+        if FileName <> '' then Obj.Add('file', FileName);
+        if E.TopFrame.Line > 0 then Obj.Add('line', E.TopFrame.Line);
       end;
       Arr.Add(Obj);
     end;
@@ -1133,6 +1142,18 @@ begin
   finally
     Arr.Free;
   end;
+end;
+
+{ The breakpoints' hit counts added up: a stop after which the sum is higher was a
+  breakpoint (debug_run and the steps cannot otherwise tell it from a plain stop). }
+procedure TDbgSyncHelper.ReadHits;
+var
+  I : Integer;
+begin
+  OutHits := 0;
+  if not Assigned(DebugBoss) or not Assigned(DebugBoss.BreakPoints) then Exit;
+  for I := 0 to DebugBoss.BreakPoints.Count - 1 do
+    Inc(OutHits, DebugBoss.BreakPoints.Items[I].HitCount);
 end;
 
 { Break on Windows runs a thread inside the program that executes the break-in
@@ -1178,6 +1199,56 @@ begin
       Exit;
     end;
   OutSwitchReady := True;   { no current thread: nothing to do }
+end;
+
+{ debug_get_registers' filters: "names" (exact, any case) and "general" (the integer
+  registers, instruction/stack pointer and flags of x86, x86-64 and ARM).  The full list
+  is about 20 KB, mostly vector and floating-point registers. }
+function IsGeneralRegister(const AName: string): Boolean;
+const
+  Plain : array[0..30] of string = ('rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rbp', 'rsp',
+    'rip', 'eflags', 'rflags', 'eax', 'ebx', 'ecx', 'edx', 'esi', 'edi', 'ebp', 'esp', 'eip',
+    'cs', 'ss', 'ds', 'es', 'fs', 'gs', 'sp', 'pc', 'lr', 'cpsr', 'fp');
+var
+  N : string;
+  I : Integer;
+begin
+  N := LowerCase(AName);
+  for I := Low(Plain) to High(Plain) do
+    if N = Plain[I] then Exit(True);
+  { r8..r15 and ARM r0..r15, ARM64 x0..x30 }
+  Result := (Length(N) in [2, 3]) and (N[1] in ['r', 'x']) and
+            (StrToIntDef(Copy(N, 2, MaxInt), -1) >= 0);
+end;
+
+function FilterRegisters(Regs: TJSONArray; Params: TJSONObject): TJSONArray;
+var
+  Names   : TJSONArray;
+  General : Boolean;
+  I, J    : Integer;
+  RName   : string;
+  Keep    : Boolean;
+begin
+  Names := nil;
+  General := False;
+  if Assigned(Params) then
+  begin
+    if Params.Find('names') is TJSONArray then Names := TJSONArray(Params.Find('names'));
+    General := Params.Get('general', False);
+  end;
+  if ((Names = nil) or (Names.Count = 0)) and not General then
+    Exit(Regs.Clone as TJSONArray);
+  Result := TJSONArray.Create;
+  for I := 0 to Regs.Count - 1 do
+  begin
+    RName := TJSONObject(Regs[I]).Get('name', '');
+    Keep := General and IsGeneralRegister(RName);
+    if Assigned(Names) then
+      for J := 0 to Names.Count - 1 do
+        if SameText(Names.Strings[J], RName) then Keep := True;
+    if Keep then
+      Result.Add(Regs[I].Clone);
+  end;
 end;
 
 { ── Internal helpers ─────────────────────────────────────────────────────── }
@@ -1231,6 +1302,8 @@ end;
 
 var
   GCmdExcSeq : Integer = -1;  { exception sequence when the last command was issued }
+  GHitsBefore : Integer = 0;    { breakpoint hits when the last command was issued }
+  GLaunchFailed : Boolean = False;   { the last PollForPause never saw a session start }
 
 { A session the user started may be waiting in the exception dialog.  Answer
   it with Break and wait (up to 5 s) until the program is paused at the
@@ -1261,6 +1334,8 @@ begin
   if TookOver and GSyncHelper.OutExcValid then
     Dec(GCmdExcSeq);  { report the exception we are now paused at }
   GSyncHelper.OutFeedback := '';  { report only messages caused by this command }
+  TThread.Synchronize(nil, @GSyncHelper.ReadHits);
+  GHitsBefore := GSyncHelper.OutHits;
   { debug_pause: Break already paused the program }
   if TookOver and (ACmd = 1) and (GSyncHelper.OutState = dsPause) then Exit;
   GSyncHelper.InCmd := ACmd;
@@ -1306,8 +1381,10 @@ var
 begin
   if AWaitLaunch then
   begin
+    GLaunchFailed := False;
     if not WaitForLaunch(ALaunchWaitMs) then
     begin
+      GLaunchFailed := True;
       FinalFile := '';
       FinalLine := 0;
       Result    := dsStop;
@@ -1776,6 +1853,7 @@ var
   FrameJSON : string;
   FrameData : TJSONData;
   EndsBefore : Integer;
+  RegAll     : TJSONArray;
 
   procedure Finish(const AReason: string);
   var
@@ -1783,6 +1861,22 @@ var
     J    : TJSONData;
   begin
     if S = dsRun then R := 'timeout' else R := AReason;
+    { a stop on a breakpoint is not a plain run or step }
+    if (S = dsPause) and ((R = 'run') or (R = 'step')) then
+    begin
+      TThread.Synchronize(nil, @GSyncHelper.ReadHits);
+      if GSyncHelper.OutHits > GHitsBefore then R := 'breakpoint';
+    end;
+    { no session ever started: usually the build failed }
+    if GLaunchFailed and (S = dsStop) and (GMcpSessionEnds = EndsBefore) then
+    begin
+      GLaunchFailed := False;
+      Ctx.Error  := True;
+      Ctx.Result := 'The program did not start: no debug session began within ' +
+        '10 s. The build may have failed (project_get_compiler_errors, ' +
+        'ide_get_messages) or the IDE waits in a dialog (project_get_windows).';
+      Exit;
+    end;
     Ctx.Result := MakeStateJSON(S, FinalFile, FinalLine, R, GCmdExcSeq);
     { the program ended during this command: say so, with its exit code }
     if (S in [dsNone, dsIdle, dsStop]) and (GMcpSessionEnds <> EndsBefore) then
@@ -1962,7 +2056,8 @@ begin
       if EvaluateOnWorker(Ctx.Params.Get('expression', ''), Value, Typ, Err) then
       begin
         Obj.Add('value', Value);
-        Obj.Add('type',  Typ);
+        { the backend gives no type for a computed value: unknown, not empty }
+        if Typ <> '' then Obj.Add('type', Typ);
       end
       else
       begin
@@ -2111,7 +2206,12 @@ begin
     try
       Obj.Add('thread', GSyncHelper.OutRegThread);
       Obj.Add('frame', GSyncHelper.InRegFrame);
-      Obj.Add('registers', GetJSON(GSyncHelper.OutRegJSON));
+      RegAll := TJSONArray(GetJSON(GSyncHelper.OutRegJSON));
+      try
+        Obj.Add('registers', FilterRegisters(RegAll, Ctx.Params));
+      finally
+        RegAll.Free;
+      end;
       Ctx.Result := Obj.AsJSON;
     finally Obj.Free; end;
   end
@@ -2337,7 +2437,9 @@ const
   SCHEMA_GET_REGISTERS =
     '{"type":"object","properties":{' +
     '"thread":{"type":"integer","description":"Thread id (debug_list_threads); default current"},' +
-    '"frame":{"type":"integer","description":"Stack frame index; default 0"}}}';
+    '"frame":{"type":"integer","description":"Stack frame index; default 0"},' +
+    '"names":{"type":"array","items":{"type":"string"},"description":"Only these registers (case-insensitive), e.g. [\"rip\",\"rsp\"]"},' +
+    '"general":{"type":"boolean","description":"Only the general-purpose registers, the instruction and stack pointers and the flags"}}}';
 
   SCHEMA_DISASSEMBLE =
     '{"type":"object","properties":{' +
@@ -2450,7 +2552,8 @@ begin
     SCHEMA_GET_LOCAL_VARIABLES, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_get_registers',
     'CPU registers of a thread and frame while paused, as the Registers window ' +
-    'shows them; "changed" marks values that changed since the previous pause.',
+    'shows them; "changed" marks values that changed since the previous pause. The full list is ' +
+    'about 20 KB: names or general=true keep only some.',
     SCHEMA_GET_REGISTERS, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_disassemble',
     'Machine code around an address or a stack frame while paused, with source ' +
