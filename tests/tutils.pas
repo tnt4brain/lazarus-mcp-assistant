@@ -20,6 +20,7 @@ type
     procedure TestFindFreePortNonZero;
     procedure TestFindFreePortIsUsable;
     procedure TestIsPortFreeForBoundPort;
+    procedure TestListenAddresses;
     procedure TestSwap16RoundTrip;
     procedure TestNormalizePathAbsolute;
     procedure TestNormalizePathRelativeUnchanged;
@@ -53,6 +54,44 @@ procedure TTestUtils.TestGenerateTokenIsUnique;
 begin
   CheckNotEquals(GenerateToken, GenerateToken,
     'Two consecutive GenerateToken calls must return different values');
+end;
+
+{ Where the server may listen: IPv4 addresses only, the loopback is the default }
+procedure TTestUtils.TestListenAddresses;
+var
+  P : Word;
+begin
+  CheckTrue(McpValidListenAddress('127.0.0.1'));
+  CheckTrue(McpValidListenAddress('0.0.0.0'));
+  CheckTrue(McpValidListenAddress('192.0.2.10'));
+  CheckFalse(McpValidListenAddress(''), 'empty');
+  CheckFalse(McpValidListenAddress('localhost'), 'a name');
+  CheckFalse(McpValidListenAddress('1.2.3'), 'three numbers');
+  CheckFalse(McpValidListenAddress('1.2.3.4.5'), 'five numbers');
+  CheckFalse(McpValidListenAddress('256.1.1.1'), 'out of range');
+  CheckFalse(McpValidListenAddress('1.2.3.-4'), 'a sign');
+  CheckFalse(McpValidListenAddress('1..3.4'), 'an empty part');
+  CheckFalse(McpValidListenAddress('::1'), 'IPv6');
+
+  CheckTrue(McpIsLoopback('127.0.0.1'));
+  CheckTrue(McpIsLoopback('127.1.2.3'));
+  CheckFalse(McpIsLoopback('0.0.0.0'), 'every interface is not the loopback');
+  CheckFalse(McpIsLoopback('10.0.0.1'));
+  CheckFalse(McpIsLoopback('127.x'));
+
+  CheckEquals('127.0.0.1', McpClientHost('0.0.0.0'), 'reached through the loopback');
+  CheckEquals('127.0.0.1', McpClientHost(''));
+  CheckEquals('127.0.0.1', McpClientHost('nonsense'));
+  CheckEquals('192.0.2.10', McpClientHost('192.0.2.10'));
+
+  { '' without a network; otherwise an address of this machine, never 0.0.0.0 or the loopback }
+  CheckFalse(McpIsLoopback(McpPrimaryAddress) or (McpPrimaryAddress = '0.0.0.0'));
+  CheckTrue((McpPrimaryAddress = '') or McpValidListenAddress(McpPrimaryAddress));
+
+  P := FindFreePort('0.0.0.0');
+  CheckTrue(P > 0, 'a port on every interface');
+  CheckTrue(IsPortFree(P, '0.0.0.0'));
+  CheckEquals(0, FindFreePort('203.0.113.77'), 'an address this machine does not have');
 end;
 
 procedure TTestUtils.TestFindFreePortNonZero;

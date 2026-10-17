@@ -62,7 +62,8 @@ begin
   Headers.Add('Authorization', 'Bearer ' + Token);
   Server := TJSONObject.Create;
   Server.Add('type',    'http');
-  Server.Add('url',     Format('http://127.0.0.1:%d/mcp', [Port]));
+  { the config is for pasting into a client, which may be on another machine }
+  Server.Add('url',     Format('http://%s:%d/mcp', [GetServerRemoteHost, Port]));
   Server.Add('headers', Headers);
   Servers := TJSONObject.Create;
   Servers.Add('lazarus-ide', Server);

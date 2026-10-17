@@ -276,10 +276,11 @@ var
   R       : THttpResult;
   D       : TJSONData;
   Content : TJSONArray;
-  Png     : string;
+  Png, T  : string;
   W, H    : Integer;
 begin
-  CheckEquals('True', JPath(Call('project_run', '{"wait_seconds":0}'), 'success'));
+  T := Call('project_run', '{"wait_seconds":0}');
+  CheckEquals('True', JPath(T, 'success'), 'project_run: ' + T);
   WaitForWindow;
   R := McpRequest('POST', '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{' +
     '"name":"project_get_windows","arguments":{"image":true,"max_size":100}}}',

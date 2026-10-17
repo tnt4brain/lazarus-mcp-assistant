@@ -17,12 +17,31 @@ function Swap16(v: Word): Word; inline;
 { Returns a 64-character hex string derived from two GUIDs. }
 function GenerateToken: string;
 
-{ Probe-bind 127.0.0.1:0 to let the OS pick a free port.
-  Returns 0 on failure. }
-function FindFreePort: Word;
+const
+  { the address the server listens on unless the settings say otherwise }
+  McpLoopback = '127.0.0.1';
 
-{ Try to bind 127.0.0.1:APort. Returns True if the port is currently free. }
-function IsPortFree(APort: Word): Boolean;
+{ Probe-bind AAddr:0 to let the OS pick a free port.
+  Returns 0 on failure. }
+function FindFreePort(const AAddr: string = McpLoopback): Word;
+
+{ Try to bind AAddr:APort. Returns True if the port is currently free. }
+function IsPortFree(APort: Word; const AAddr: string = McpLoopback): Boolean;
+
+{ S is a dotted IPv4 address (four numbers 0..255). }
+function McpValidListenAddress(const S: string): Boolean;
+
+{ S is in 127.0.0.0/8. }
+function McpIsLoopback(const S: string): Boolean;
+
+{ The address a client on this machine connects to for a server listening on
+  AListen: 0.0.0.0 ("every interface") is reached through the loopback. }
+function McpClientHost(const AListen: string): string;
+
+{ The address of this machine on the network, as other machines reach it (the one
+  its default route uses); '' when it has none.  For the config of a remote client
+  of a server that listens on 0.0.0.0. }
+function McpPrimaryAddress: string;
 
 { An absolute path with native separators and no '.'/'..' segments, so
   D:/x/../y.pas and D:\y.pas compare equal.  Relative paths come back
@@ -99,7 +118,82 @@ begin
   Result := ((v and $00FF) shl 8) or (v shr 8);
 end;
 
-function FindFreePort: Word;
+function McpValidListenAddress(const S: string): Boolean;
+var
+  I, P, N, Parts : Integer;
+  Part : string;
+  T    : string;
+begin
+  Result := False;
+  T := S;
+  Parts := 0;
+  repeat
+    P := Pos('.', T);
+    if P = 0 then Part := T else Part := Copy(T, 1, P - 1);
+    if (Part = '') or (Length(Part) > 3) then Exit;
+    for I := 1 to Length(Part) do
+      if not (Part[I] in ['0'..'9']) then Exit;
+    N := StrToInt(Part);
+    if N > 255 then Exit;
+    Inc(Parts);
+    if P = 0 then Break;
+    Delete(T, 1, P);
+  until False;
+  Result := Parts = 4;
+end;
+
+function McpIsLoopback(const S: string): Boolean;
+begin
+  Result := McpValidListenAddress(S) and (Copy(S, 1, 4) = '127.');
+end;
+
+function McpClientHost(const AListen: string): string;
+begin
+  if (AListen = '') or (AListen = '0.0.0.0') or not McpValidListenAddress(AListen) then
+    Result := McpLoopback
+  else
+    Result := AListen;
+end;
+
+function McpPrimaryAddress: string;
+var
+  S    : LongInt;
+  Addr : TInetSockAddr;
+  Len  : LongInt;
+begin
+  Result := '';
+  S := fpSocket(AF_INET, SOCK_DGRAM, 0);
+  if S < 0 then Exit;
+  try
+    { connecting a datagram socket sends nothing: it only makes the system pick the
+      local address for the route (192.0.2.1 is reserved for documentation) }
+    FillChar(Addr, SizeOf(Addr), 0);
+    Addr.sin_family := AF_INET;
+    Addr.sin_port   := Swap16(9);
+    Addr.sin_addr   := StrToNetAddr('192.0.2.1');
+    if fpConnect(S, @Addr, SizeOf(Addr)) <> 0 then Exit;
+    Len := SizeOf(Addr);
+    if fpGetSockName(S, @Addr, @Len) <> 0 then Exit;
+    Result := NetAddrToStr(Addr.sin_addr);
+    if (Result = '0.0.0.0') or McpIsLoopback(Result) then Result := '';
+  finally
+    CloseSocket(S);
+  end;
+end;
+
+{ A socket address for the dotted address S (loopback when it is not valid) }
+procedure FillAddr(var Addr: TInetSockAddr; const S: string; APort: Word);
+begin
+  FillChar(Addr, SizeOf(Addr), 0);
+  Addr.sin_family := AF_INET;
+  Addr.sin_port   := Swap16(APort);
+  if McpValidListenAddress(S) then
+    Addr.sin_addr := StrToNetAddr(S)
+  else
+    Addr.sin_addr := StrToNetAddr(McpLoopback);
+end;
+
+function FindFreePort(const AAddr: string): Word;
 var
   S    : LongInt;
   Addr : TInetSockAddr;
@@ -108,13 +202,7 @@ begin
   Result := 0;
   S := fpSocket(AF_INET, SOCK_STREAM, 0);
   if S < 0 then Exit;
-  FillChar(Addr, SizeOf(Addr), 0);
-  Addr.sin_family          := AF_INET;
-  Addr.sin_port            := 0;
-  Addr.sin_addr.s_bytes[1] := 127;
-  Addr.sin_addr.s_bytes[2] := 0;
-  Addr.sin_addr.s_bytes[3] := 0;
-  Addr.sin_addr.s_bytes[4] := 1;
+  FillAddr(Addr, AAddr, 0);
   if fpBind(S, @Addr, SizeOf(Addr)) = 0 then
   begin
     Len := SizeOf(Addr);
@@ -124,7 +212,7 @@ begin
   CloseSocket(S);
 end;
 
-function IsPortFree(APort: Word): Boolean;
+function IsPortFree(APort: Word; const AAddr: string): Boolean;
 var
   S      : LongInt;
   Addr   : TInetSockAddr;
@@ -135,13 +223,7 @@ begin
   if S < 0 then Exit;
   Enable := 1;
   fpSetSockOpt(S, SOL_SOCKET, SO_REUSEADDR, @Enable, SizeOf(Enable));
-  FillChar(Addr, SizeOf(Addr), 0);
-  Addr.sin_family          := AF_INET;
-  Addr.sin_port            := Swap16(APort);
-  Addr.sin_addr.s_bytes[1] := 127;
-  Addr.sin_addr.s_bytes[2] := 0;
-  Addr.sin_addr.s_bytes[3] := 0;
-  Addr.sin_addr.s_bytes[4] := 1;
+  FillAddr(Addr, AAddr, APort);
   Result := fpBind(S, @Addr, SizeOf(Addr)) = 0;
   CloseSocket(S);
 end;

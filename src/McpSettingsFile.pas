@@ -20,6 +20,7 @@ type
     FXmlConfig: TXMLConfig;
     FServerToken: string;
     FServerPort: Word;
+    FListenAddress: string;         { IPv4 the server listens on; 0.0.0.0 = every interface }
     FLastConfigPath: string;
     FClaudePath: string;            { '' = claude on PATH }
     FWorkingDirectory: string;      { '' = project directory }
@@ -40,6 +41,7 @@ type
     property ConfigFileName: string read GetConfigFileName;
     property ServerToken: string read FServerToken write FServerToken;
     property ServerPort: Word read FServerPort write FServerPort;
+    property ListenAddress: string read FListenAddress write FListenAddress;
     property LastConfigPath: string read FLastConfigPath write FLastConfigPath;
     property ClaudePath: string read FClaudePath write FClaudePath;
     property WorkingDirectory: string read FWorkingDirectory write FWorkingDirectory;
@@ -54,6 +56,7 @@ implementation
 constructor TMcpIdeSettings.Create;
 begin
   inherited Create;
+  FListenAddress := '127.0.0.1';
   FXmlConfig := TXMLConfig.Create(nil);
 end;
 
@@ -65,6 +68,7 @@ end;
 
 procedure TMcpIdeSettings.LoadDefaultSettings;
 begin
+  FListenAddress       := '127.0.0.1';
   FClaudePath          := '';
   FWorkingDirectory    := '';
   FExtraClaudeArgs     := '';
@@ -92,7 +96,8 @@ begin
     FServerToken      := FXmlConfig.GetValue('Server/Token', '');
     FServerPort       := FXmlConfig.GetValue('Server/Port', 0);
     FLastConfigPath   := FXmlConfig.GetValue('Server/LastConfigPath', '');
-    FClaudePath       := FXmlConfig.GetValue('Claude/Path', '');
+    FListenAddress    := FXmlConfig.GetValue('Server/ListenAddress', '127.0.0.1');
+    FClaudePath      := FXmlConfig.GetValue('Claude/Path', '');
     FWorkingDirectory := FXmlConfig.GetValue('Claude/WorkingDirectory', '');
     FExtraClaudeArgs  := FXmlConfig.GetValue('Claude/ExtraArgs', '');
     FTerminalCommand  := FXmlConfig.GetValue('Claude/TerminalCommand', '');
@@ -110,6 +115,7 @@ begin
     FXmlConfig.SetValue('Server/Token',          FServerToken);
     FXmlConfig.SetValue('Server/Port',           Integer(FServerPort));
     FXmlConfig.SetValue('Server/LastConfigPath', FLastConfigPath);
+    FXmlConfig.SetValue('Server/ListenAddress',  FListenAddress);
     FXmlConfig.SetValue('Claude/Path',             FClaudePath);
     FXmlConfig.SetValue('Claude/WorkingDirectory', FWorkingDirectory);
     FXmlConfig.SetValue('Claude/ExtraArgs',        FExtraClaudeArgs);

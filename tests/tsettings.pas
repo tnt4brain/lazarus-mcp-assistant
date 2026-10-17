@@ -52,6 +52,7 @@ begin
     CheckEquals('', S.ClaudePath);
     CheckEquals('', S.GitPath);
     CheckFalse(S.AllowPackageInstall, 'installing packages is off by default');
+    CheckEquals('127.0.0.1', S.ListenAddress, 'listens on the loopback by default');
   finally
     S.Free;
   end;
@@ -73,6 +74,7 @@ begin
     S.TerminalCommand     := 'kitty -e';
     S.GitPath             := 'C:\Program Files\Git\cmd\git.exe';
     S.AllowPackageInstall := True;
+    S.ListenAddress       := '192.168.1.5';
     S.SaveSettings;
   finally
     S.Free;
@@ -91,6 +93,7 @@ begin
     CheckEquals('kitty -e', S.TerminalCommand);
     CheckEquals('C:\Program Files\Git\cmd\git.exe', S.GitPath);
     CheckTrue(S.AllowPackageInstall);
+    CheckEquals('192.168.1.5', S.ListenAddress);
   finally
     S.Free;
   end;

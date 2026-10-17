@@ -34,7 +34,11 @@ type
     FTerminal        : TEdit;
     FGitPath         : TFileNameEdit;
     FAllowInstall    : TCheckBox;
+    FServerGroup     : TGroupBox;
+    FListen          : TEdit;
+    FListenNote      : TLabel;
     FFileLabel       : TLabel;
+    procedure ListenChanged(Sender: TObject);
     function AddGroup(const ACaption: string): TGroupBox;
     function AddLabel(AParent: TWinControl; const ACaption: string): TLabel;
     procedure Place(AControl: TControl; AParent: TWinControl; ASpaceAfter: Integer = 8);
@@ -64,7 +68,7 @@ implementation
 
 uses
   FileUtil,
-  McpIdeState, McpLauncher;
+  McpIdeState, McpLauncher, McpIdeServer, McpUtils;
 
 { TMcpOptionsGroup }
 
@@ -145,6 +149,14 @@ begin
   FGitPath := TFileNameEdit.Create(Self);
   Place(FGitPath, FToolsGroup);
 
+  FServerGroup := AddGroup('Server');
+  AddLabel(FServerGroup, 'Listen on this IPv4 address (127.0.0.1: this machine only; ' +
+                         '0.0.0.0: every interface):');
+  FListen := TEdit.Create(Self);
+  FListen.OnChange := @ListenChanged;
+  Place(FListen, FServerGroup);
+  FListenNote := AddLabel(FServerGroup, '');
+
   FSecurityGroup := AddGroup('Security');
   FAllowInstall := TCheckBox.Create(Self);
   FAllowInstall.Caption := 'Allow assistants to install packages ' +
@@ -155,6 +167,21 @@ begin
   FFileLabel.Align := alTop;
   FFileLabel.Top   := FTop;
   FFileLabel.Parent := Self;
+end;
+
+procedure TMcpOptionsFrame.ListenChanged(Sender: TObject);
+var
+  A: string;
+begin
+  A := Trim(FListen.Text);
+  if not McpValidListenAddress(A) then
+    FListenNote.Caption := 'Not an IPv4 address: the change is not saved.'
+  else if McpIsLoopback(A) then
+    FListenNote.Caption := 'Only programs on this machine can connect. Applied when OK is pressed.'
+  else
+    FListenNote.Caption := 'Warning: other machines can connect. Everyone who has the token ' +
+      'can drive this IDE (edit files, run programs), and the connection is not encrypted: ' +
+      'use it on a network you trust, or tunnel it (ssh -L). Applied when OK is pressed.';
 end;
 
 function TMcpOptionsFrame.GetTitle: string;
@@ -221,12 +248,28 @@ begin
   FTerminal.Text       := McpSettings.TerminalCommand;
   FGitPath.Text        := McpSettings.GitPath;
   FAllowInstall.Checked := McpSettings.AllowPackageInstall;
+  FListen.Text         := McpSettings.ListenAddress;
+  ListenChanged(nil);
   FFileLabel.Caption   := 'Stored in ' + McpSettings.ConfigFileName;
 end;
 
 procedure TMcpOptionsFrame.WriteSettings(AOptions: TAbstractIDEOptions);
+var
+  Addr: string;
 begin
   if not Assigned(McpSettings) then Exit;
+  Addr := Trim(FListen.Text);
+  if McpValidListenAddress(Addr) and (Addr <> McpSettings.ListenAddress) then
+  begin
+    McpSettings.ListenAddress := Addr;
+    McpSettings.SaveSettings;
+    { the server listens on the new address from now on; clients reconnect }
+    if IsServerRunning then
+    begin
+      FinalizeMcpServer;
+      InitializeMcpServer;
+    end;
+  end;
   McpSettings.ClaudePath          := Trim(FClaudePath.Text);
   McpSettings.WorkingDirectory    := Trim(FWorkDir.Text);
   McpSettings.ExtraClaudeArgs     := Trim(FExtraArgs.Text);

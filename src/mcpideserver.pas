@@ -23,6 +23,7 @@ type
     FServer : TMcpHttpServer;
     FToken  : string;
     FPort   : Word;
+    FAddress : string;    { the IPv4 address it listens on }
     FStopping : Boolean;  { StopServer was called }
     procedure HandleRequest(Sender: TObject;
                             var ARequest  : TFPHTTPConnectionRequest;
@@ -57,11 +58,12 @@ type
   protected
     procedure Execute; override;
   public
-    constructor Create(const AToken: string; APort: Word);
+    constructor Create(const AToken: string; APort: Word; const AAddress: string);
     destructor  Destroy; override;
     procedure StopServer;
     property Token : string read FToken;
     property Port  : Word   read FPort;
+    property Address : string read FAddress;
     property Stopping : Boolean read FStopping;
   end;
 
@@ -73,6 +75,12 @@ procedure FinalizeMcpServer;
 procedure RegisterIDECloseHook;
 function  IsServerRunning : Boolean;
 function  GetServerPort   : Word;
+{ The host to put in the URL of the running server: where a client on this machine
+  reaches it (a server on 0.0.0.0 answers on the loopback) }
+function  GetServerHost   : string;
+{ The host for a client on another machine: the listen address, or for 0.0.0.0 this
+  machine's address on the network (the loopback when it has none) }
+function  GetServerRemoteHost : string;
 function  GetServerToken  : string;
 function  WriteMcpConfig  : string; // returns temp config file path
 
@@ -105,7 +113,7 @@ const
 const
   McpServerVersion = '1.0';
 
-procedure MakeDummyConnect(APort: Word);
+procedure MakeDummyConnect(APort: Word; const AHost: string);
 var
   S    : LongInt;
   Addr : TInetSockAddr;
@@ -113,12 +121,9 @@ begin
   S := fpSocket(AF_INET, SOCK_STREAM, 0);
   if S < 0 then Exit;
   FillChar(Addr, SizeOf(Addr), 0);
-  Addr.sin_family          := AF_INET;
-  Addr.sin_port            := Swap16(APort); // host → network
-  Addr.sin_addr.s_bytes[1] := 127;
-  Addr.sin_addr.s_bytes[2] := 0;
-  Addr.sin_addr.s_bytes[3] := 0;
-  Addr.sin_addr.s_bytes[4] := 1;
+  Addr.sin_family := AF_INET;
+  Addr.sin_port   := Swap16(APort); // host → network
+  Addr.sin_addr   := StrToNetAddr(AHost);
   fpConnect(S, @Addr, SizeOf(Addr));
   CloseSocket(S);
 end;
@@ -179,13 +184,15 @@ end;
 
 { ── TMcpServerThread ─────────────────────────────────────────────────────── }
 
-constructor TMcpServerThread.Create(const AToken: string; APort: Word);
+constructor TMcpServerThread.Create(const AToken: string; APort: Word;
+  const AAddress: string);
 begin
   inherited Create(True); // start suspended
   FToken := AToken;
   FPort  := APort;
+  FAddress := AAddress;
   FServer := TMcpHttpServer.Create(nil);
-  FServer.Address   := '127.0.0.1';
+  FServer.Address   := AAddress;
   FServer.Port      := APort;
   FServer.Threaded  := True;   { each connection gets its own thread — required for blocking tools }
   FServer.OnRequest := @HandleRequest;
@@ -215,7 +222,7 @@ begin
   FStopping := True;
   if FServer.Active then
     FServer.Active := False; // calls StopAccepting(False)
-  MakeDummyConnect(FPort);   // unblocks the blocking accept()
+  MakeDummyConnect(FPort, McpClientHost(FAddress));   // unblocks the blocking accept()
 end;
 
 { ── HTTP request handler ─────────────────────────────────────────────────── }
@@ -1203,6 +1210,24 @@ begin
     Result := 0;
 end;
 
+function GetServerHost: string;
+begin
+  if Assigned(McpServerThread) then
+    Result := McpClientHost(McpServerThread.Address)
+  else
+    Result := McpLoopback;
+end;
+
+function GetServerRemoteHost: string;
+begin
+  Result := GetServerHost;
+  if Assigned(McpServerThread) and (McpServerThread.Address = '0.0.0.0') then
+  begin
+    Result := McpPrimaryAddress;
+    if Result = '' then Result := GetServerHost;
+  end;
+end;
+
 function GetServerToken: string;
 begin
   if Assigned(McpServerThread) then
@@ -1260,7 +1285,7 @@ begin
   GMcpGitHash := Result;
 end;
 
-procedure WriteActiveConfig(APort: Word; const AVersion, AHash: string);
+procedure WriteActiveConfig(const AHost: string; APort: Word; const AVersion, AHash: string);
 var
   Obj  : TJSONObject;
   SL   : TStringList;
@@ -1271,7 +1296,7 @@ begin
   Obj := TJSONObject.Create;
   SL  := TStringList.Create;
   try
-    Obj.Add('url',     Format('http://127.0.0.1:%d/mcp', [APort]));
+    Obj.Add('url',     Format('http://%s:%d/mcp', [AHost, APort]));
     Obj.Add('version', AVersion);
     Obj.Add('git_hash', AHash);
     SL.Text := Obj.FormatJSON;
@@ -1294,8 +1319,15 @@ var
   Tries   : Integer;
   Ver     : string;
   GitHash : string;
+  Addr    : string;
 begin
   if IsServerRunning then Exit;
+
+  { the address from the settings; anything that is not an IPv4 address means the
+    safe default }
+  Addr := Trim(McpSettings.ListenAddress);
+  if not McpValidListenAddress(Addr) then
+    Addr := McpLoopback;
 
   // Reuse persisted token so Claude Code sessions survive IDE restarts
   Token := McpSettings.ServerToken;
@@ -1308,8 +1340,19 @@ begin
 
   // Try to reuse the persisted port so the MCP URL stays identical
   Port := McpSettings.ServerPort;
-  if (Port = 0) or not IsPortFree(Port) then
-    Port := FindFreePort;
+  if (Port = 0) or not IsPortFree(Port, Addr) then
+    Port := FindFreePort(Addr);
+  if (Port = 0) and (Addr <> McpLoopback) then
+  begin
+    { not an address of this machine, or in use: fall back to the safe default }
+    if Assigned(IDEMessagesWindow) then
+      IDEMessagesWindow.AddCustomMessage(mluImportant,
+        'MCP Assistant: cannot listen on ' + Addr + ', using ' + McpLoopback + ' instead');
+    Addr := McpLoopback;
+    Port := McpSettings.ServerPort;
+    if (Port = 0) or not IsPortFree(Port, Addr) then
+      Port := FindFreePort(Addr);
+  end;
   if Port = 0 then
   begin
     DebugLn('[MCP Server] Could not allocate a free port.');
@@ -1318,8 +1361,8 @@ begin
 
   if Assigned(LazarusIDE) then
     McpSetSessionLogDir(LazarusIDE.GetPrimaryConfigPath);
-  McpLogSession(Format('server starting on port %d (server version %s)', [Port, McpServerVersion]));
-  McpServerThread := TMcpServerThread.Create(Token, Port);
+  McpLogSession(Format('server starting on %s:%d (server version %s)', [Addr, Port, McpServerVersion]));
+  McpServerThread := TMcpServerThread.Create(Token, Port, Addr);
   McpServerThread.Start;
 
   { Give the server thread up to 1 s to bind and start accepting.
@@ -1341,16 +1384,23 @@ begin
   McpSettings.ServerPort := Port;
   McpSettings.SaveSettings;
 
-  DebugLn(Format('[MCP Server] Listening on 127.0.0.1:%d.', [Port]));
+  DebugLn(Format('[MCP Server] Listening on %s:%d.', [Addr, Port]));
 
   { Report to IDE messages window and write stable discovery file }
   Ver     := GetMcpVersion;
   GitHash := GetMcpGitHash;
   if Assigned(IDEMessagesWindow) then
+  begin
     IDEMessagesWindow.AddCustomMessage(mluImportant,
-      Format('MCP Assistant %s [%s] listening on http://127.0.0.1:%d/mcp',
-             [Ver, GitHash, Port]));
-  WriteActiveConfig(Port, Ver, GitHash);
+      Format('MCP Assistant %s [%s] listening on http://%s:%d/mcp',
+             [Ver, GitHash, Addr, Port]));
+    if not McpIsLoopback(Addr) then
+      IDEMessagesWindow.AddCustomMessage(mluImportant,
+        'MCP Assistant: the server is reachable from other machines (' + Addr +
+        '). Everyone who has the token can drive this IDE; the connection is not ' +
+        'encrypted. Set the address back to 127.0.0.1 in Tools > Options > MCP Assistant.');
+  end;
+  WriteActiveConfig(McpClientHost(Addr), Port, Ver, GitHash);
 
   if McpSettings.LastConfigPath <> '' then
     WriteMcpConfig;
@@ -1390,7 +1440,7 @@ begin
 
   Srv := TJSONObject.Create;
   Srv.Add('type',    'http');
-  Srv.Add('url',     Format('http://127.0.0.1:%d/mcp', [GetServerPort]));
+  Srv.Add('url',     Format('http://%s:%d/mcp', [GetServerHost, GetServerPort]));
   Srv.Add('headers', Headers);
 
   Servers := TJSONObject.Create;

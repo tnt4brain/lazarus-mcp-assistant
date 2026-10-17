@@ -318,6 +318,7 @@ its settings.
 | Extra command-line options | None |
 | Terminal command (Linux/macOS), e.g. `kitty -e` | Detect a terminal |
 | git executable | `git` on `PATH` |
+| Listen address (IPv4) | `127.0.0.1`: this machine only. `0.0.0.0` or a machine address lets other machines connect over plain HTTP with the token: see [ADR-020](docs/adr/0020-listen-address-is-a-setting.md) |
 | Allow assistants to install packages | Off; see [ADR-013](docs/adr/0013-user-consent-before-new-code.md) |
 
 Settings are stored in `mcpassistantoptions.xml` in the IDE's primary config
@@ -417,6 +418,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-017](docs/adr/0017-declaration-lookup-through-uses-clauses.md) | Declaration lookup through uses clauses; reference search scopes |
 | [ADR-018](docs/adr/0018-https-for-package-download-via-curl.md) | HTTPS for package_download through the curl executable |
 | [ADR-019](docs/adr/0019-debug-attach-without-the-ide-dialog.md) | debug_attach: the IDE's attach path without its process dialog |
+| [ADR-020](docs/adr/0020-listen-address-is-a-setting.md) | The listen address is a setting; the loopback is the default |
 
 ADR-007 was never assigned; no document is missing.
 

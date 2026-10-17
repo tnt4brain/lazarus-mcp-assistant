@@ -24,3 +24,4 @@ ADR-007 was never assigned; no document is missing.
 | [0017](0017-declaration-lookup-through-uses-clauses.md) | # ADR-017 — Declaration Lookup Through Uses Clauses, and Reference Search Scopes |
 | [0018](0018-https-for-package-download-via-curl.md) | # ADR-018 — HTTPS for package_download through the curl executable |
 | [0019](0019-debug-attach-without-the-ide-dialog.md) | # ADR-019 — debug_attach: the IDE's attach path without its dialog |
+| [0020](0020-listen-address-is-a-setting.md) | # ADR-020 — The listen address is a setting, the loopback is the default |
