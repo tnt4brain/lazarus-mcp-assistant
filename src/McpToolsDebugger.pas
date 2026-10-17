@@ -950,6 +950,10 @@ begin
     Exit;   { still loading; caller retries }
   Lo := -Min(InAsmBefore, Dis.CountBefore);
   Hi := Min(InAsmAfter, Dis.CountAfter) - 1;
+  { the previous request's range can still be what the backend holds: wait until
+    it covers the address asked for }
+  if (Hi < Lo) or (Dis.Entries[Lo].Addr > InAsmAddr) or (Dis.Entries[Hi].Addr < InAsmAddr) then
+    Exit;
   Arr := TJSONArray.Create;
   try
     for I := Lo to Hi do

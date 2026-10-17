@@ -70,7 +70,7 @@ var
 begin
   T := CallToolText('ide_rebuild', '{"lpk_path":' + JsonStr(ProbeLpk) + '}', []);
   CheckEquals(1, Pos('TOOL ERROR:', T), 'refused before any rebuild: ' + T);
-  CheckTrue(Pos('package_install', T) > 0, 'points to package_install: ' + T);
+  CheckTrue(Pos('lpk_path', T) > 0, 'names the unknown parameter: ' + T);
   CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
     'the IDE is still up');
 end;
