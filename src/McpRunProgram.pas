@@ -37,11 +37,30 @@ uses
 const
   MaxBuffer = 256 * 1024;   { unread bytes kept per stream; the oldest are dropped }
   MaxWait = 300;
+  MaxInput = 1024 * 1024;   { input queued for the program and not yet written }
 
 type
+  TRunThread = class;
+
+  { Writes the queued input to the program's stdin.  A write blocks while the program
+    does not read, which must not hold up the tool call or the output pump. }
+  TFeeder = class(TThread)
+  private
+    FRun: TRunThread;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(ARun: TRunThread);
+  end;
+
   TRunThread = class(TThread)
   private
     FProc      : TProcess;
+    FFeed      : TFeeder;
+    FInEvent   : TEvent;
+    FInBuf     : string;      { queued for stdin }
+    FInOpen    : Boolean;     { more input is accepted }
+    FInClose   : Boolean;     { close stdin once the queue is written }
     FLock      : TCriticalSection;
     FOut, FErr : string;     { read from the pipes, not yet handed out }
     FTruncated : Boolean;
@@ -54,10 +73,13 @@ type
   protected
     procedure Execute; override;
   public
-    constructor Create(AProc: TProcess);
+    constructor Create(AProc: TProcess; AKeepInput: Boolean);
     destructor Destroy; override;
     procedure Take(out AOut, AErr: string; out ATruncated: Boolean);
     function Pending: Boolean;
+    function PendingSize: Integer;
+    function QueueInput(const S: string; ACloseAfter: Boolean; out Err: string): Boolean;
+    function InputOpen: Boolean;
     function WaitDone(Ms: Integer): Boolean;
     procedure Stop;
     property Pid: Integer read FPid;
@@ -69,6 +91,9 @@ type
     Armed       : Boolean;
     LaunchError : string;
     Launched    : Boolean;
+    HasStdin    : Boolean;    { project_run was given stdin text }
+    StdinText   : string;
+    KeepStdin   : Boolean;    { stdin stays open for project_run_input }
     function OnInit(Sender: TObject; var Handled: Boolean): TModalResult;
     procedure NotifyFinished;
   end;
@@ -81,17 +106,85 @@ var
 
 { ── The run ──────────────────────────────────────────────────────────────── }
 
-constructor TRunThread.Create(AProc: TProcess);
+constructor TFeeder.Create(ARun: TRunThread);
+begin
+  FRun := ARun;
+  inherited Create(False);
+end;
+
+procedure TFeeder.Execute;
+var
+  S: string;
+  Close, Broken: Boolean;
+begin
+  Broken := False;
+  while not Terminated do
+  begin
+    FRun.FInEvent.WaitFor(200);
+    FRun.FInEvent.ResetEvent;
+    repeat
+      FRun.FLock.Enter;
+      try
+        S := FRun.FInBuf;
+        FRun.FInBuf := '';
+        Close := FRun.FInClose;
+      finally
+        FRun.FLock.Leave;
+      end;
+      if (S <> '') and not Broken then
+      try
+        FRun.FProc.Input.WriteBuffer(S[1], Length(S));
+      except
+        Broken := True;   { the program ended or closed its stdin }
+      end;
+    until S = '';
+    if Close or Broken then
+    begin
+      FRun.FLock.Enter;
+      try
+        FRun.FInOpen := False;
+      finally
+        FRun.FLock.Leave;
+      end;
+      try
+        FRun.FProc.CloseInput;
+      except
+      end;
+      Exit;
+    end;
+    if FRun.WaitDone(0) then Exit;
+  end;
+end;
+
+constructor TRunThread.Create(AProc: TProcess; AKeepInput: Boolean);
 begin
   FProc := AProc;
   FPid  := Integer(AProc.ProcessID);
   FLock := TCriticalSection.Create;
   FDone := TEvent.Create(nil, True, False, '');
+  FInEvent := TEvent.Create(nil, True, False, '');
+  if AKeepInput then
+  begin
+    {$IFDEF UNIX}
+    { a write to a pipe the program has closed must fail, not kill the IDE }
+    fpSignal(SIGPIPE, SignalHandler(SIG_IGN));
+    {$ENDIF}
+    FInOpen := True;
+    FFeed := TFeeder.Create(Self);
+  end;
   inherited Create(False);
 end;
 
 destructor TRunThread.Destroy;
 begin
+  if Assigned(FFeed) then
+  begin
+    FFeed.Terminate;
+    FInEvent.SetEvent;
+    FFeed.WaitFor;
+    FFeed.Free;
+  end;
+  FInEvent.Free;
   FProc.Free;
   FDone.Free;
   FLock.Free;
@@ -215,6 +308,55 @@ begin
   end;
 end;
 
+function TRunThread.PendingSize: Integer;
+begin
+  FLock.Enter;
+  try
+    Result := Length(FOut) + Length(FErr);
+  finally
+    FLock.Leave;
+  end;
+end;
+
+function TRunThread.InputOpen: Boolean;
+begin
+  FLock.Enter;
+  try
+    Result := FInOpen and not WaitDone(0);
+  finally
+    FLock.Leave;
+  end;
+end;
+
+function TRunThread.QueueInput(const S: string; ACloseAfter: Boolean; out Err: string): Boolean;
+begin
+  Result := False;
+  Err := '';
+  FLock.Enter;
+  try
+    if WaitDone(0) then
+      Err := 'The program has ended'
+    else if not FInOpen then
+      Err := 'The program''s stdin is closed. Start it with project_run stdin or ' +
+             'keep_stdin_open=true to send it input'
+    else if Length(FInBuf) + Length(S) > MaxInput then
+      Err := 'Too much input is waiting to be read by the program (' +
+             IntToStr(Length(FInBuf)) + ' bytes): it does not read its stdin'
+    else begin
+      FInBuf := FInBuf + S;
+      if ACloseAfter then
+      begin
+        FInClose := True;
+        FInOpen  := False;
+      end;
+      Result := True;
+    end;
+  finally
+    FLock.Leave;
+  end;
+  if Result then FInEvent.SetEvent;
+end;
+
 function TRunThread.WaitDone(Ms: Integer): Boolean;
 begin
   Result := FDone.WaitFor(Ms) = wrSignaled;
@@ -264,7 +406,7 @@ var
   Proj    : TLazProject;
   Mode    : TAbstractRunParamsOptionsMode;
   Exe, Dir, CmdLine, Line : string;
-  Ok      : Boolean;
+  Ok, Keep : Boolean;
   Params  : TStringList;
   Proc    : TProcess;
   I, P    : Integer;
@@ -345,10 +487,13 @@ begin
         Exit;
       end;
     end;
-    { the program has no input: reading stdin ends at once instead of waiting }
-    Proc.CloseInput;
-    Result := TRunThread.Create(Proc);
+    Keep := Assigned(GHandler) and (GHandler.HasStdin or GHandler.KeepStdin);
+    { without input, reading stdin ends at once instead of waiting }
+    if not Keep then Proc.CloseInput;
+    Result := TRunThread.Create(Proc, Keep);
     Proc := nil;   { the thread owns it }
+    if Keep and GHandler.HasStdin then
+      Result.QueueInput(GHandler.StdinText, not GHandler.KeepStdin, Line);
   finally
     Proc.Free;
     Params.Free;
@@ -443,10 +588,17 @@ begin
   GHandler.LaunchError := '';
   GHandler.Launched    := False;
   GHandler.Armed       := True;
+  GHandler.HasStdin    := Assigned(Args) and (Args.IndexOfName('stdin') >= 0);
+  GHandler.StdinText   := '';
+  if GHandler.HasStdin then GHandler.StdinText := Args.Get('stdin', '');
+  GHandler.KeepStdin   := Assigned(Args) and Args.Get('keep_stdin_open', False);
   try
     Res := LazarusIDE.DoRunProjectWithoutDebug;
   finally
-    GHandler.Armed := False;
+    GHandler.Armed     := False;
+    GHandler.HasStdin  := False;
+    GHandler.KeepStdin := False;
+    GHandler.StdinText := '';
   end;
   Obj := TJSONObject.Create;
   try
@@ -484,6 +636,8 @@ begin
     Obj.Add('pid', Run.Pid);
     if Done then
       Obj.Add('exit_code', Run.ExitCode);
+    if Run.InputOpen then
+      Obj.Add('stdin_open', True);
     Obj.Add('stdout', SOut);
     Obj.Add('stderr', SErr);
     if Trunc then
@@ -544,12 +698,25 @@ const
     'for the program to end or write something"},' +
     '"stop":{"type":"boolean","description":"Terminate the program first"}}}';
 
+const
+  SCHEMA_RUN_INPUT =
+    '{"type":"object","properties":{' +
+    '"text":{"type":"string","description":"Written to the program''s stdin as it is: ' +
+    'end a line with \n"},' +
+    '"close":{"type":"boolean","description":"Close stdin after the text: the program ' +
+    'then reads end of file"},' +
+    '"wait_seconds":{"type":"integer","description":"Wait up to this long (0..300, default 0) ' +
+    'for the program to end or answer"}}}';
+
 function DispatchRunOutputTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   Run  : TRunThread;
-  Wait, Waited : Integer;
+  Wait, Waited, Last, I : Integer;
+  Err  : string;
+  IsInput : Boolean;
 begin
-  Result := Name = 'project_run_output';
+  IsInput := Name = 'project_run_input';
+  Result := IsInput or (Name = 'project_run_output');
   if not Result then Exit;
   Run := CurrentRun;
   if Run = nil then
@@ -558,7 +725,23 @@ begin
     Ctx.Result := 'No program has been started by project_run';
     Exit;
   end;
-  if Assigned(Ctx.Params) and Ctx.Params.Get('stop', False) then
+  if IsInput then
+  begin
+    if not Assigned(Ctx.Params) or
+       ((Ctx.Params.Get('text', '') = '') and not Ctx.Params.Get('close', False)) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'Give text to send, or close=true';
+      Exit;
+    end;
+    if not Run.QueueInput(Ctx.Params.Get('text', ''), Ctx.Params.Get('close', False), Err) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := Err;
+      Exit;
+    end;
+  end
+  else if Assigned(Ctx.Params) and Ctx.Params.Get('stop', False) then
   begin
     Run.Stop;
     Run.WaitDone(3000);
@@ -572,6 +755,14 @@ begin
     Sleep(50);
     Inc(Waited, 50);
   end;
+  { an answer arrives in pieces: wait until it pauses, so one call gets it whole }
+  if Wait > 0 then
+    for I := 1 to 10 do
+    begin
+      Last := Run.PendingSize;
+      Sleep(100);
+      if Run.WaitDone(0) or (Run.PendingSize = Last) then Break;
+    end;
   Ctx.Result := ReportJSON(Run, nil);
 end;
 
@@ -583,6 +774,13 @@ begin
     'end of the program or for new output; stop=true terminates it. The last run is ' +
     'kept until the next project_run.',
     SCHEMA_RUN_OUTPUT, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('project_run_input',
+    'Sends text to the stdin of the program started by project_run (which must have been ' +
+    'started with stdin or keep_stdin_open=true), then, with wait_seconds, returns what it ' +
+    'wrote in answer, as project_run_output does. close=true ends its input. The text goes ' +
+    'out as given: add the line ending yourself. A program that is waiting for input ' +
+    'shows stdin_open: true and no exit_code.',
+    SCHEMA_RUN_INPUT, MCP_ANN_WRITE));
 end;
 
 procedure Shutdown;

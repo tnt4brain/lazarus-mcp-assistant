@@ -52,13 +52,26 @@ program. The process object is a local variable, so it cannot be wrapped from ou
    existing debug tools. It needs DWARF info (as `debug_run` does), the debug lease
    (ADR-012), and `debug_stop` must detach rather than kill. Not built until it has been
    shown to work on a piped process; it cannot catch startup crashes (use `debug_run`).
-6. **A pseudo console is an opt-in mode (planned).** On Windows 10 1809+ `CreatePseudoConsole`
-   gives the program a real terminal (`isatty`, colors, interactive `Readln`, input
-   we can send, `Ctrl+C`). It has no window, and the output is a VT stream that would
-   need stripping or interpreting. FPC 3.2.2 has no declarations for it (dynamic loading
-   from `kernel32`, `STARTUPINFOEX`), and Linux would need `openpty`. It would be a
-   `tty: true` option behind the same tools. A visible mirror console would need a
-   helper process and is not planned.
+6. **Input over a pipe: `stdin`, `keep_stdin_open`, `project_run_input`.** By default
+   stdin is closed at the start, so a program that reads it gets end of file instead of
+   hanging. `project_run` takes `stdin` (text written at the start, stdin closed after it)
+   and `keep_stdin_open` (stdin stays open). `project_run_input {text, close,
+   wait_seconds}` then writes to it and, with `wait_seconds`, returns the answer the way
+   `project_run_output` does; a running program with open input reports `stdin_open: true`.
+   Text goes out as given (the client adds its own line ending). The write runs on its own
+   thread, because it blocks while the program does not read, and must not hold up the
+   output pump or the tool call; at most 1 MB waits unwritten. On Unix `SIGPIPE` is
+   ignored for the process so that a write to a program that has gone fails instead of
+   killing the IDE. A wait returns once the output has paused for 100 ms, so an answer
+   written in pieces comes back whole. No push channel: MCP clients take answers, not
+   streams, and `wait_seconds` is the long poll.
+7. **A pseudo console is an opt-in mode (not planned).** On Windows 10 1809+ `CreatePseudoConsole`
+   gives the program a real terminal (`isatty`, colors, line editing, `Ctrl+C`). Input
+   is now covered by decision 6, so what is left is the terminal itself. It has no window,
+   and the output is a VT stream that would need stripping or a screen emulator, stdout
+   and stderr merge, FPC 3.2.2 has no declarations for it, and Linux would need
+   `openpty`: two code paths for the rare console program that checks `isatty`. It would
+   be a `tty: true` option behind the same tools. Wait for a program that needs it.
 
 ## Alternatives considered
 

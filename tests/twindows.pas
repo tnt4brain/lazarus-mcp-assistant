@@ -47,6 +47,7 @@ type
     procedure TestOpenProgramWithoutProject;
     procedure TestDebugPreflightAndExit;
     procedure TestRunOutput;
+    procedure TestRunInput;
     procedure TestDebugRunOfBrokenProgram;
     procedure TestProjectFilesAndFormCreate;
     procedure TestAttach;
@@ -490,6 +491,78 @@ begin
     {$ELSE}
     CheckEquals('1', JPath(T, 'exit_code'), T);
     {$ENDIF}
+  finally
+    Call('project_run_output', '{"stop":true}');
+    Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+    DeleteDirectory(Dir, False);
+  end;
+end;
+
+{ Input for a running program: stdin text at the start, closed stdin by default, and
+  project_run_input for a conversation (ADR-016). }
+procedure TTestProjectRuns.TestRunInput;
+var
+  Dir, Lpr, T : string;
+  SL          : TStringList;
+  I           : Integer;
+begin
+  Dir := GetTempDir(False) + 'mcpinputprog' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr := Dir + 'echoer.lpr';
+  SL := TStringList.Create;
+  try
+    SL.Text :=
+      'program echoer;' + LineEnding +
+      '{$mode objfpc}{$H+}' + LineEnding +
+      'var L: string;' + LineEnding +
+      'begin' + LineEnding +
+      '  while not EOF do begin' + LineEnding +
+      '    ReadLn(L);' + LineEnding +
+      '    WriteLn(''got '', L);' + LineEnding +
+      '    Flush(Output);' + LineEnding +
+      '  end;' + LineEnding +
+      '  WriteLn(''eof'');' + LineEnding +
+      '  Halt(5);' + LineEnding +
+      'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');
+  try
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+    CheckFalse(IsError(T), T);
+
+    T := Call('project_run', '{"wait_seconds":30}');
+    CheckEquals('5', JPath(T, 'exit_code'), 'stdin closed by default: ' + T);
+    CheckTrue(Pos('eof', JPath(T, 'stdout')) > 0, T);
+    CheckTrue(IsError(Call('project_run_input', '{"text":"x"}')), 'the program has ended');
+
+    T := Call('project_run', '{"stdin":"a\nb\n","wait_seconds":30}');
+    CheckEquals('5', JPath(T, 'exit_code'), 'stdin text, then end of file: ' + T);
+    CheckTrue((Pos('got a', JPath(T, 'stdout')) > 0) and (Pos('got b', JPath(T, 'stdout')) > 0) and
+              (Pos('eof', JPath(T, 'stdout')) > 0), T);
+
+    T := Call('project_run', '{"keep_stdin_open":true,"wait_seconds":2}');
+    CheckEquals('True', JPath(T, 'running'), 'waits for input: ' + T);
+    CheckEquals('True', JPath(T, 'stdin_open'), T);
+    T := Call('project_run_input', '{"text":"hi\n","wait_seconds":10}');
+    CheckFalse(IsError(T), T);
+    CheckTrue(Pos('got hi', JPath(T, 'stdout')) > 0, 'the answer: ' + T);
+    CheckEquals('True', JPath(T, 'running'), T);
+    T := Call('project_run_input', '{"text":"one\ntwo\n","wait_seconds":10}');
+    CheckTrue((Pos('got one', JPath(T, 'stdout')) > 0) and (Pos('got two', JPath(T, 'stdout')) > 0), T);
+    CheckTrue(IsError(Call('project_run_input', '{}')), 'text or close');
+    T := Call('project_run_input', '{"close":true,"wait_seconds":10}');
+    CheckEquals('False', JPath(T, 'running'), 'end of input ends it: ' + T);
+    CheckEquals('5', JPath(T, 'exit_code'), T);
+    CheckTrue(Pos('eof', JPath(T, 'stdout')) > 0, T);
   finally
     Call('project_run_output', '{"stop":true}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');

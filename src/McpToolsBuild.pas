@@ -34,6 +34,10 @@ const
     '{"type":"object","properties":{"args":{"type":"string",' +
     '"description":"Command-line arguments for the program. Stored in the project''s ' +
     'run parameters (also used by debug runs); omit to keep the current ones"},' +
+    '"stdin":{"type":"string","description":"Text written to the program''s stdin at ' +
+    'start. Without keep_stdin_open, stdin is closed after it"},' +
+    '"keep_stdin_open":{"type":"boolean","description":"Leave stdin open, to be fed with ' +
+    'project_run_input"},' +
     '"wait_seconds":{"type":"integer","description":"Wait up to this long (0..300, default 10) ' +
     'for the program to end before answering"}}}';
 
@@ -431,8 +435,9 @@ begin
     'optionally with new command-line arguments. Waits up to wait_seconds (default 10) and ' +
     'answers {success, running, pid, exit_code, stdout, stderr}; a program still running ' +
     '(a GUI program, a server) comes back with running=true: read it later with ' +
-    'project_run_output, which can also stop it. The program has no console window and no ' +
-    'input (stdin is closed); one program at a time.',
+    'project_run_output, which can also stop it. The program has no console window. Its ' +
+    'stdin is closed (it reads end of file) unless you pass stdin text or ' +
+    'keep_stdin_open=true and then talk to it with project_run_input; one program at a time.',
     SCHEMA_RUN_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('package_compile',
     'Compile a Lazarus package by package_name or lpk_path: with the IDE''s own ' +

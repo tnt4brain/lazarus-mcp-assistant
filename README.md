@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 123 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 124 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows and Linux. The whole test suite, the debugger tests
 > included, passes on Windows and on Debian 12 (Lazarus 4.6, FPC 3.2.2, GTK2).
@@ -198,6 +198,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_get_compiler_errors` | Errors and warnings of the last build |
 | `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `wait_seconds`, default 10; a program still running comes back with `running: true`) |
 | `project_run_output` | The output of that program since the last read, its exit code once it ended; can wait for more, or stop it |
+| `project_run_input` | Sends text to the stdin of that program (`project_run` with `stdin` or `keep_stdin_open`), or closes it; returns the answer |
 | `project_get_windows` | The running program's visible windows (Windows only): a tree of windowed controls, `Class "text" x,y wxh`, about 20 tokens a line; `image` adds a PNG of each window (scaled to `max_size`), which also shows controls without a handle such as `TLabel`. Never waits for the program, so it also works while the program is paused in the debugger (the image is then copied from the screen) |
 | `project_open` | Open a `.lpi` (or a program's `.lpr`, for which the `.lpi` is written next to it), closing the current project; refused while debugging or building, or with unsaved changes |
 | `project_list_templates` / `project_create` | Project templates; create a project from one |
