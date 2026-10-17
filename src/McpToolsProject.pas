@@ -724,6 +724,7 @@ begin
       begin
         PF := Proj.CreateProjectFile(FilePath);
         Proj.AddFile(PF, False);
+        PF.IsPartOfProject := True;   { else it is listed but not part of the project }
       end;
       LazarusIDE.DoSaveProject([]);
     end;

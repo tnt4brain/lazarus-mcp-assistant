@@ -1,0 +1,194 @@
+{ Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
+unit TGitWrite;
+
+{ TTestGitWrite — the git tools that change a repository: git_checkout, git_reset,
+  git_stash, git_stash_pop, with git_branches and git_log.  Each test works in a throwaway
+  repository in the temp folder (two commits, a.txt "one" then "two"); the results are
+  checked with git itself.  Requires a running MCP server and git.
+  Needs nothing from the IDE's project. }
+
+{$mode objfpc}{$H+}
+
+interface
+
+uses
+  fpcunit, testregistry, THttpHelper;
+
+type
+  TTestGitWrite = class(TTestCase)
+  private
+    FDir : string;
+    function Git(const AArgs: array of string): string;
+    function Tool(const ATool, AArgs: string): string;
+    function ReadA: string;
+    procedure WriteA(const AText: string);
+  protected
+    procedure SetUp; override;
+    procedure TearDown; override;
+  published
+    procedure TestCheckoutFileRestores;
+    procedure TestCheckoutBranchAndBranches;
+    procedure TestResetMixedUnstages;
+    procedure TestResetSoftKeepsStaged;
+    procedure TestStashAndPop;
+    procedure TestLog;
+  end;
+
+implementation
+
+uses
+  Classes, SysUtils, FileUtil, Process;
+
+function IsError(const T: string): Boolean;
+begin
+  Result := (Pos('TOOL ERROR', T) = 1) or (Pos('RPC ERROR', T) = 1) or (Pos('HTTP ', T) = 1);
+end;
+
+function TTestGitWrite.Git(const AArgs: array of string): string;
+var
+  O : string;
+begin
+  if not RunCommandInDir(FDir, 'git', AArgs, O) then
+    Fail('git ' + AArgs[0] + ' failed: ' + O);
+  Result := O;
+end;
+
+function TTestGitWrite.Tool(const ATool, AArgs: string): string;
+var
+  Extra : string;
+begin
+  Extra := '"work_dir":' + JsonStr(FDir);
+  if AArgs = '' then
+    Result := CallToolText(ATool, '{' + Extra + '}', [])
+  else
+    Result := CallToolText(ATool, '{' + AArgs + ',' + Extra + '}', []);
+end;
+
+function TTestGitWrite.ReadA: string;
+var
+  SL : TStringList;
+begin
+  SL := TStringList.Create;
+  try
+    SL.LoadFromFile(FDir + PathDelim + 'a.txt');
+    Result := Trim(SL.Text);
+  finally
+    SL.Free;
+  end;
+end;
+
+procedure TTestGitWrite.WriteA(const AText: string);
+var
+  SL : TStringList;
+begin
+  SL := TStringList.Create;
+  try
+    SL.Text := AText;
+    SL.SaveToFile(FDir + PathDelim + 'a.txt');
+  finally
+    SL.Free;
+  end;
+end;
+
+procedure TTestGitWrite.SetUp;
+var
+  O : string;
+begin
+  { a folder per test, new each run: git's read-only object files can outlive
+    DeleteDirectory on Windows }
+  FDir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpgitwrite' + PathDelim +
+          TestName + IntToStr(GetTickCount64) + PathDelim;
+  ForceDirectories(FDir);
+  if not RunCommandInDir(FDir, 'git', ['init', '-q'], O) then
+    Ignore('git not usable here: ' + O);
+  Git(['config', 'user.name', 'MCP Test']);
+  Git(['config', 'user.email', 'mcp@test.invalid']);
+  Git(['config', 'core.autocrlf', 'false']);
+  WriteA('one');
+  Git(['add', 'a.txt']);
+  Git(['commit', '-q', '-m', 'first']);
+  WriteA('two');
+  Git(['commit', '-q', '-a', '-m', 'second']);
+end;
+
+procedure TTestGitWrite.TearDown;
+begin
+  DeleteDirectory(FDir, False);
+end;
+
+procedure TTestGitWrite.TestCheckoutFileRestores;
+var
+  T : string;
+begin
+  WriteA('dirty');
+  T := Tool('git_checkout', '"target":"a.txt"');
+  CheckFalse(IsError(T), T);
+  CheckEquals('two', ReadA, 'the file is back as committed');
+end;
+
+procedure TTestGitWrite.TestCheckoutBranchAndBranches;
+var
+  T : string;
+begin
+  Git(['branch', 'feature']);
+  T := Tool('git_branches', '');
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('feature', T) > 0, 'lists the branch: ' + T);
+  T := Tool('git_checkout', '"target":"feature"');
+  CheckFalse(IsError(T), T);
+  CheckEquals('feature', Trim(Git(['rev-parse', '--abbrev-ref', 'HEAD'])), 'on the branch');
+  T := Tool('git_checkout', '"target":"no-such-branch"');
+  CheckTrue(IsError(T) or (Pos('error', LowerCase(T)) > 0) or (Pos('did not match', T) > 0),
+    'an unknown target is reported: ' + T);
+end;
+
+procedure TTestGitWrite.TestResetMixedUnstages;
+var
+  T : string;
+begin
+  WriteA('three');
+  Git(['add', 'a.txt']);
+  CheckTrue(Pos('M  a.txt', Git(['status', '--short'])) > 0, 'staged first');
+  T := Tool('git_reset', '"target":"HEAD"');
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos(' M a.txt', Git(['status', '--short'])) > 0, 'unstaged, change kept');
+  CheckEquals('three', ReadA, 'working tree untouched');
+end;
+
+procedure TTestGitWrite.TestResetSoftKeepsStaged;
+var
+  T : string;
+begin
+  T := Tool('git_reset', '"target":"HEAD~1","mode":"soft"');
+  CheckFalse(IsError(T), T);
+  CheckEquals('first', Trim(Git(['log', '-1', '--format=%s'])), 'HEAD moved back');
+  CheckTrue(Pos('M  a.txt', Git(['status', '--short'])) > 0, 'the second commit''s change is staged');
+  CheckEquals('two', ReadA, 'working tree untouched');
+end;
+
+procedure TTestGitWrite.TestStashAndPop;
+var
+  T : string;
+begin
+  WriteA('dirty');
+  T := Tool('git_stash', '"message":"wip"');
+  CheckFalse(IsError(T), T);
+  CheckEquals('two', ReadA, 'the change is stashed away');
+  CheckTrue(Pos('wip', Git(['stash', 'list'])) > 0, 'with its message');
+  T := Tool('git_stash_pop', '');
+  CheckFalse(IsError(T), T);
+  CheckEquals('dirty', ReadA, 'and back');
+  CheckEquals('', Trim(Git(['stash', 'list'])), 'the stash is used up');
+end;
+
+procedure TTestGitWrite.TestLog;
+var
+  T : string;
+begin
+  T := Tool('git_log', '"max_count":1');
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('second', T) > 0, T);
+  CheckEquals(0, Pos('first', T), 'max_count honoured: ' + T);
+end;
+
+end.

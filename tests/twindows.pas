@@ -39,6 +39,7 @@ type
     procedure TestDebugPreflightAndExit;
     procedure TestRunOutput;
     procedure TestDebugRunOfBrokenProgram;
+    procedure TestProjectFilesAndFormCreate;
   end;
 
 function WindoweeLpi: string;
@@ -503,6 +504,70 @@ begin
     CheckTrue(Pos('project_get_compiler_errors', T) > 0, T);
   finally
     Call('debug_stop', '{}');
+    Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+    DeleteDirectory(Dir, False);
+  end;
+end;
+
+
+{ project_add_file / project_remove_file, form_create and editor_get_active with a form
+  open, on a generated LCL program (its .lpi is written by project_open). }
+procedure TTestWindows.TestProjectFilesAndFormCreate;
+var
+  Dir, Lpr, Extra, T : string;
+  SL                 : TStringList;
+  I                  : Integer;
+begin
+  Dir   := GetTempDir(False) + 'mcpfilesprog' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr   := Dir + 'app.lpr';
+  Extra := Dir + 'extra.pas';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'program app;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+               'uses Interfaces, Forms;' + LineEnding + 'begin' + LineEnding +
+               '  Application.Initialize;' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+    SL.Text := 'unit extra;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+               'interface' + LineEnding + 'implementation' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(Extra);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');
+  try
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+    CheckFalse(IsError(T), T);
+
+    T := Call('project_add_file', '{"file":' + JsonStr(Extra) + '}');
+    CheckFalse(IsError(T), 'add: ' + T);
+    CheckTrue(Pos('extra.pas', LowerCase(Call('project_list_files', '{}'))) > 0, 'added');
+    T := Call('project_remove_file', '{"file":' + JsonStr(Extra) + '}');
+    CheckFalse(IsError(T), 'remove: ' + T);
+    CheckEquals(0, Pos('extra.pas', LowerCase(Call('project_list_files', '{}'))), 'removed');
+    CheckTrue(FileExists(Extra), 'the file itself stays on disk');
+
+    T := Call('form_create', '{"unit_name":"UnitSecond","directory":' +
+      JsonStr(ExcludeTrailingPathDelimiter(Dir)) + '}');
+    CheckFalse(IsError(T), 'form_create: ' + T);
+    CheckTrue(Pos('unitsecond.pas', LowerCase(Call('project_list_files', '{}'))) > 0,
+      'the form unit is in the project');
+    T := Call('editor_get_active', '{}');
+    CheckFalse(IsError(T), 'editor_get_active with a form open: ' + T);
+    CheckTrue(Pos('unitsecond', LowerCase(T)) > 0, T);
+    Call('editor_save', '{"file":' + JsonStr(Dir + 'unitsecond.pas') + '}');
+    CheckTrue(FileExists(Dir + 'unitsecond.pas') and FileExists(Dir + 'unitsecond.lfm'),
+      'unit and form file written');
+  finally
+    Call('editor_revert', '{"file":' + JsonStr(Dir + 'unitsecond.pas') + '}');
+    Call('editor_close', '{"file":' + JsonStr(Dir + 'unitsecond.pas') + '}');
+    Call('project_set_settings', '{}');   { saves the project }
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
     DeleteDirectory(Dir, False);
   end;
