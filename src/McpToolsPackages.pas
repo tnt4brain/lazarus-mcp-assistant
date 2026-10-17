@@ -43,7 +43,7 @@ uses
   ParsedCompilerOpts, SearchPathProcs,  { IdeConfig: unit/include paths }
   CodeToolManager, CodeCache,
   Controls,               { mrOk }
-  Laz2_XMLCfg, fphttpclient, opensslsockets, md5, zipper,
+  Laz2_XMLCfg, fphttpclient, opensslsockets, md5, zipper, process,
   McpToolContext, McpIdeState, McpConsent, McpToolsCodeTools;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
@@ -513,6 +513,83 @@ begin
   end;
 end;
 
+{ The curl executable: Windows 10 and later ship one in System32 (SChannel and the
+  system certificate store), macOS and most Linux systems have one on the PATH. }
+function FindCurl: string;
+begin
+  Result := '';
+  {$IFDEF MSWINDOWS}
+  Result := GetEnvironmentVariable('SystemRoot') + '\System32\curl.exe';
+  if FileExists(Result) then Exit;
+  {$ENDIF}
+  Result := FindDefaultExecutablePath('curl');
+end;
+
+{ Fetch AUrl through the curl executable into AStream. }
+function CurlGet(const AUrl: string; AStream: TMemoryStream; out AErr: string): Boolean;
+var
+  Exe, Tmp, Msg : string;
+  P             : TProcess;
+  Buf           : array[0..1023] of Byte;
+  N             : Integer;
+  Err           : TStringStream;
+begin
+  Result := False;
+  AErr := '';
+  Exe := FindCurl;
+  if Exe = '' then
+  begin
+    AErr := 'no curl executable found';
+    Exit;
+  end;
+  Tmp := GetTempFileName(GetTempDir, 'mcpdl');
+  P := TProcess.Create(nil);
+  Err := TStringStream.Create('');
+  try
+    P.Executable := Exe;
+    P.Parameters.AddStrings(['-fsSL', '--max-time', '120', '--connect-timeout', '15',
+                             '-o', Tmp, AUrl]);
+    P.Options := [poUsePipes, poNoConsole];
+    try
+      P.Execute;
+      while P.Running or (P.Stderr.NumBytesAvailable > 0) do
+      begin
+        N := P.Stderr.NumBytesAvailable;
+        if N > 0 then
+        begin
+          if N > SizeOf(Buf) then N := SizeOf(Buf);
+          N := P.Stderr.Read(Buf, N);
+          Err.Write(Buf, N);
+        end
+        else
+          Sleep(20);
+      end;
+    except
+      on X: Exception do
+      begin
+        AErr := 'curl could not run: ' + X.Message;
+        Exit;
+      end;
+    end;
+    if (P.ExitStatus = 0) and FileExists(Tmp) then
+    begin
+      AStream.Clear;
+      AStream.LoadFromFile(Tmp);
+      Result := True;
+    end
+    else
+    begin
+      Msg := Trim(Err.DataString);
+      if Msg = '' then Msg := 'exit code ' + IntToStr(P.ExitStatus);
+      AErr := 'curl: ' + Msg;
+    end;
+  finally
+    Err.Free;
+    P.Free;
+    if FileExists(Tmp) then DeleteFile(Tmp);
+  end;
+end;
+
 { Fetch AUrl into AStream; HTTPS first, plain HTTP only when OpenSSL is not
   available (the IDE on Windows often has no OpenSSL DLLs). }
 function FetchArchive(const AHttpsUrl: string; AStream: TMemoryStream;
@@ -551,6 +628,13 @@ begin
   ATransport := 'https';
   Result := Get(AUrl, AErr);
   if Result or (Pos('openssl', LowerCase(AErr)) = 0) then Exit;
+  { no TLS library in the IDE: the curl executable brings its own }
+  ATransport := 'https (curl)';
+  if CurlGet(AUrl, AStream, AErr) then
+  begin
+    Result := True;
+    Exit;
+  end;
   AUrl := 'http://' + Copy(AHttpsUrl, Length('https://') + 1, MaxInt);
   ATransport := 'http';
   Result := Get(AUrl, AErr);
@@ -687,7 +771,7 @@ begin
       Obj.Add('url', Job.Url);
       Obj.Add('transport', Job.Transport);
       if Job.Transport = 'http' then
-        Obj.Add('transport_note', 'HTTPS was not available (no OpenSSL in the IDE); the ' +
+        Obj.Add('transport_note', 'HTTPS was not available (no OpenSSL in the IDE, no curl); the ' +
           'archive came unencrypted and was checked against the catalog''s MD5 only');
       Obj.Add('md5_verified', True);
       Obj.Add('directory', Job.Target);

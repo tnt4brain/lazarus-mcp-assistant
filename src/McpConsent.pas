@@ -222,7 +222,7 @@ begin
   try
     if not (D is TJSONObject) then Exit;
     O := TJSONObject(D);
-    if O.Get('transport', '') = 'https' then
+    if Copy(O.Get('transport', ''), 1, 5) = 'https' then
       Transport := 'HTTPS'
     else
       Transport := 'HTTP (unencrypted)';
