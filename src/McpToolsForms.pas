@@ -144,8 +144,8 @@ const
 
   SCHEMA_FORM_GET_MENU =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
-    '"menu_name":{"type":"string","description":"TMainMenu/TPopupMenu name, or a menu item to get only its submenu"}},' +
-    '"required":["form_file","menu_name"]}';
+    '"menu_name":{"type":"string","description":"TMainMenu/TPopupMenu name, or a menu item to get only its submenu. Optional when the form has exactly one menu"}},' +
+    '"required":["form_file"]}';
 
   SCHEMA_FORM_ADD_MENU_ITEM =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
@@ -791,6 +791,18 @@ begin
   if SameText(ADesigner.LookupRoot.Name, AName) then
     Exit(ADesigner.LookupRoot);
   Result := ADesigner.LookupRoot.FindComponent(AName);
+end;
+
+{ The names of the menus (TMainMenu, TPopupMenu) on a form, for the messages that
+  ask for a menu and for the one-menu default of form_get_menu. }
+function MenuNamesOf(ARoot: TComponent): TStringList;
+var
+  I : Integer;
+begin
+  Result := TStringList.Create;
+  for I := 0 to ARoot.ComponentCount - 1 do
+    if ARoot.Components[I] is TMenu then
+      Result.Add(ARoot.Components[I].Name);
 end;
 
 function JSONValueAsString(AData: TJSONData): string;
@@ -1613,6 +1625,8 @@ var
   Walk       : TMenuItem;
   Snap       : TSnapshot;
   Snapped    : Boolean;
+  MenuNames  : TStringList;
+  MenuName   : string;
 begin
   Root := ADesigner.LookupRoot;
   Target  := nil;
@@ -1621,15 +1635,29 @@ begin
   try
     if Name = 'form_get_menu' then
     begin
-      Target := FindComp(ADesigner, Ctx.Params.Get('menu_name', ''));
-      Items  := nil;
-      if Assigned(Target) then
-        Items := MenuItemsOf(Target);
-      if Items = nil then
-      begin
-        Ctx.Error := True;
-        Ctx.Result := 'Menu or menu item not found: ' + Ctx.Params.Get('menu_name', '');
-        Exit;
+      MenuNames := MenuNamesOf(Root);
+      try
+        MenuName := Ctx.Params.Get('menu_name', '');
+        if (MenuName = '') and (MenuNames.Count = 1) then
+          MenuName := MenuNames[0];   { the only menu of the form }
+        Target := FindComp(ADesigner, MenuName);
+        Items  := nil;
+        if Assigned(Target) then
+          Items := MenuItemsOf(Target);
+        if Items = nil then
+        begin
+          Ctx.Error := True;
+          if MenuNames.Count = 0 then
+            Ctx.Result := 'This form has no menu (add a TMainMenu or TPopupMenu with form_add_component)'
+          else if MenuName = '' then
+            Ctx.Result := 'menu_name required: the menus of this form are ' + MenuNames.CommaText
+          else
+            Ctx.Result := 'Menu or menu item not found: ' + MenuName +
+                          '. The menus of this form: ' + MenuNames.CommaText;
+          Exit;
+        end;
+      finally
+        MenuNames.Free;
       end;
       Obj.Add('menu_name',  Target.Name);
       Obj.Add('menu_class', Target.ClassName);

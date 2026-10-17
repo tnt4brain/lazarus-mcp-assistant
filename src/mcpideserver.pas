@@ -1080,7 +1080,7 @@ begin
           Text := 'method lazbuild needs lpk_path';
           Err  := True;
         end else
-          Text := McpLazbuildJSON(Args.Strings['lpk_path'], Err);
+          Text := McpLazbuildJSON(Args.Strings['lpk_path'], Err, Args.Get('clean', False));
       end;
     end;
   end

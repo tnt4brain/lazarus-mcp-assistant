@@ -117,7 +117,7 @@ as `lines` and set from an array of strings.
 | `form_delete_component` | Delete a component and its child controls, or a menu item and its submenu (fields removed from the source) |
 | `form_list_collection_items` | Items of a collection property (ListView `Columns`, StatusBar `Panels`, grid `Columns`, `Sections`, `Bands`) with their properties |
 | `form_add_collection_item` / `form_delete_collection_item` / `form_move_collection_item` | Add (at an index, with properties), delete or reorder collection items |
-| `form_get_menu` | Item tree of a `TMainMenu`/`TPopupMenu`: captions, shortcuts, checked/enabled, OnClick |
+| `form_get_menu` | Item tree of a `TMainMenu`/`TPopupMenu`: captions, shortcuts, checked/enabled, OnClick; `menu_name` is optional when the form has one menu, and errors list the form's menus |
 | `form_add_menu_item` / `form_move_menu_item` | Add an item or separator (`-`) to a menu or submenu; move an item to another position or parent |
 | `form_arrange` | Same size as the first control, distribute with a fixed gap or evenly, align edges/centres to the first control or the parent |
 | `form_create_event_handler` | Create (or show) the handler for a component event |

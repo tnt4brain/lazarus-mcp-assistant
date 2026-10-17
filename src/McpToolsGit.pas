@@ -30,6 +30,10 @@ const
     '{"type":"object","properties":{' +
     '"staged":{"type":"boolean","description":"Diff staged (index) changes instead of working-tree (default false)"},' +
     '"path":{"type":"string","description":"Limit diff to this file or directory"},' +
+    '"stat":{"type":"boolean","description":"Only the per-file summary (git diff --stat): which files and how many lines changed"},' +
+    '"name_only":{"type":"boolean","description":"Only the names of the changed files"},' +
+    '"context":{"type":"integer","description":"Lines of context around each change (default 3)"},' +
+    '"max_bytes":{"type":"integer","description":"Cut the output after this many bytes (default 60000), with a note; 0 = no limit"},' +
     '"active_file":{"type":"boolean","description":"Diff the active editor''s file, in its own repository (saved content only)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
@@ -406,6 +410,7 @@ var
   Ok        : Boolean;
   Staged    : Boolean;
   DiffPath  : string;
+  MaxBytes : Integer;
   MaxCount  : Integer;
   Branch    : string;
   Target    : string;
@@ -465,6 +470,13 @@ begin
     try
       GitArgs.Add('diff');
       if Staged   then GitArgs.Add('--staged');
+      if Assigned(Ctx.Params) then
+      begin
+        if Ctx.Params.Get('stat', False) then GitArgs.Add('--stat');
+        if Ctx.Params.Get('name_only', False) then GitArgs.Add('--name-only');
+        if Ctx.Params.Get('context', -1) >= 0 then
+          GitArgs.Add('-U' + IntToStr(Ctx.Params.Get('context', 3)));
+      end;
       if DiffPath <> '' then
       begin
         GitArgs.Add('--');
@@ -477,6 +489,13 @@ begin
     Obj := TJSONObject.Create;
     try
       if Trim(Output) = '' then Output := '(no diff)';
+      MaxBytes := 60000;
+      if Assigned(Ctx.Params) then MaxBytes := Ctx.Params.Get('max_bytes', 60000);
+      if (MaxBytes > 0) and (Length(Output) > MaxBytes) then
+      begin
+        Obj.Add('truncated_bytes', Length(Output) - MaxBytes);
+        Output := Copy(Output, 1, MaxBytes) + LineEnding + '... (cut; use path, stat, name_only or a larger max_bytes)';
+      end;
       Obj.Add('output',   Output);
       Obj.Add('work_dir', WorkDir);
       if Assigned(ActiveEd) then

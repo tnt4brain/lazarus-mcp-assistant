@@ -15,12 +15,14 @@ uses
 { Read the interface section of a Pascal unit (everything above 'implementation'). }
 function McpGetUnitInterface(const FilePath: string; out IsError: Boolean): string;
 
-{ Run lazbuild on a .lpk or .lpi and return filtered compiler output. }
-function McpRunLazbuild(const LpkPath: string; out IsError: Boolean): string;
+{ Run lazbuild on a .lpk or .lpi (AClean: with -B) and return filtered compiler output. }
+function McpRunLazbuild(const LpkPath: string; out IsError: Boolean;
+  AClean: Boolean = False): string;
 
 { McpRunLazbuild as {method, success, errors, output}; errors are the compiler's
   "file(line,col) Error: text" lines. }
-function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean): string;
+function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean;
+  AClean: Boolean = False): string;
 
 { Compile and run the FPCUnit test project at ResolvedLpi (must be non-empty
   and fully resolved by the caller). }
@@ -58,6 +60,9 @@ function McpCheckFileToOpen(const AFileName: string; out AErr: string): Boolean;
 
 implementation
 
+uses
+  LazIDEIntf, ProjectIntf;
+
 function McpCheckFileToOpen(const AFileName: string; out AErr: string): Boolean;
 begin
   AErr   := '';
@@ -65,7 +70,14 @@ begin
   if Result then
     InvalidateFileStateCache(AFileName)
   else
+  begin
     AErr := 'File not found: ' + AFileName;
+    { an unsaved project (the IDE's default one) has files only in the IDE }
+    if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+       (LazarusIDE.ActiveProject.ProjectInfoFile = '') then
+      AErr := AErr + '. The active project has not been saved, so its files exist only in ' +
+              'the IDE: create a project with project_create or open one with project_open';
+  end;
 end;
 
 { ── Unit interface extractor ─────────────────────────────────────────────── }
@@ -156,7 +168,8 @@ begin
     Result := FindDefaultExecutablePath('lazbuild');
 end;
 
-function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean): string;
+function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean;
+  AClean: Boolean = False): string;
 var
   Text, S : string;
   Lines   : TStringList;
@@ -166,7 +179,7 @@ var
   Pos1    : string;
   Parts   : TStringList;
 begin
-  Text := McpRunLazbuild(LpkPath, IsError);
+  Text := McpRunLazbuild(LpkPath, IsError, AClean);
   Obj := TJSONObject.Create;
   Errors := TJSONArray.Create;
   Lines := TStringList.Create;
@@ -206,7 +219,8 @@ begin
   end;
 end;
 
-function McpRunLazbuild(const LpkPath: string; out IsError: Boolean): string;
+function McpRunLazbuild(const LpkPath: string; out IsError: Boolean;
+  AClean: Boolean = False): string;
 var
   LazbuildExe : string;
   Proc        : TProcess;
@@ -228,6 +242,8 @@ begin
   Proc   := TProcess.Create(nil);
   try
     Proc.Executable := LazbuildExe;
+    if AClean then
+      Proc.Parameters.Add('-B');   { rebuild everything }
     Proc.Parameters.Add(LpkPath);
     Proc.Options    := [poUsePipes, poStdErrToOutput];
     Proc.Execute;

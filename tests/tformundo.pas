@@ -35,6 +35,8 @@ type
     procedure TestAnchorSideSet;
     procedure TestCreateEventHandler;
     procedure TestMenu;
+    procedure TestGetMenuNames;
+    procedure TestDeleteUndoKeepsPosition;
     procedure TestFormItselfNotUndoable;
   end;
 
@@ -299,6 +301,43 @@ begin
   CheckEquals(0, Pos('miOpen', T), 'menu item add undone: ' + T);
   CheckTrue(Pos('object miFile: TMenuItem', T) > 0, T);
   CheckTrue(Pos('Menu = mm', T) > 0, 'the form still shows the replaced menu: ' + T);
+end;
+
+procedure TTestFormUndo.TestGetMenuNames;
+var
+  T : string;
+begin
+  T := Call('form_get_menu', '');
+  CheckTrue(IsError(T) and (Pos('has no menu', T) > 0), 'no menu yet: ' + T);
+  Call('form_add_component', ',"class_name":"TMainMenu","name":"mm"');
+  Call('form_add_menu_item', ',"parent_name":"mm","caption":"&File","name":"miFile"');
+  T := Call('form_get_menu', '');
+  CheckFalse(IsError(T), 'the only menu is the default: ' + T);
+  CheckTrue(Pos('miFile', T) > 0, T);
+  Call('form_add_component', ',"class_name":"TPopupMenu","name":"pm"');
+  T := Call('form_get_menu', '');
+  CheckTrue(IsError(T) and (Pos('mm,pm', T) > 0), 'two menus: they are named: ' + T);
+  T := Call('form_get_menu', ',"menu_name":"nope"');
+  CheckTrue(IsError(T) and (Pos('The menus of this form: mm,pm', T) > 0), T);
+end;
+
+{ A deleted control comes back where it was among its siblings, not at the end. }
+procedure TTestFormUndo.TestDeleteUndoKeepsPosition;
+var
+  T, Before : string;
+begin
+  Call('form_add_component', ',"class_name":"TLabel","name":"lblB"');
+  Call('form_add_component', ',"class_name":"TLabel","name":"lblC"');
+  Before := Lfm;
+  CheckTrue((Pos('btnOK', Before) < Pos('lblB', Before)) and (Pos('lblB', Before) < Pos('lblC', Before)),
+    'order btnOK, lblB, lblC: ' + Before);
+  T := Call('form_delete_component', ',"component_name":"lblB"');
+  CheckFalse(IsError(T), T);
+  T := Call('form_undo', '');
+  CheckFalse(IsError(T), T);
+  T := Lfm;
+  CheckTrue((Pos('btnOK', T) < Pos('lblB', T)) and (Pos('lblB', T) < Pos('lblC', T)),
+    'lblB is back before lblC: ' + T);
 end;
 
 procedure TTestFormUndo.TestFormItselfNotUndoable;
