@@ -33,6 +33,7 @@ type
     procedure TestAlsoSameFolder;
     procedure TestSearchDirAndLimit;
     procedure TestAlsoUnknownScope;
+    procedure TestAddToClassIndent;
   end;
 
 implementation
@@ -284,4 +285,50 @@ begin
     ',"line":5,"col":3,"also":["moon"]}', []);
   CheckTrue(IsError(T) and (Pos('Unknown "also" scope moon', T) > 0), T);
 end;
+{ code_add_to_class indents the new member like the ones around it. }
+procedure TTestFindDeclaration.TestAddToClassIndent;
+var
+  T, Src, Text : string;
+  SL           : TStringList;
+begin
+  Src := FDir + 'cls.pas';
+  Save(Src,
+    'unit cls;' + LineEnding +
+    '{$mode objfpc}{$H+}' + LineEnding +
+    'interface' + LineEnding +
+    'type' + LineEnding +
+    '  TFoo = class' + LineEnding +
+    '  private' + LineEnding +
+    '    FA: Integer;' + LineEnding +
+    '  public' + LineEnding +
+    '    procedure Existing;' + LineEnding +
+    '  end;' + LineEnding +
+    'implementation' + LineEnding +
+    'procedure TFoo.Existing;' + LineEnding +
+    'begin' + LineEnding +
+    'end;' + LineEnding +
+    'end.' + LineEnding);
+  try
+    T := CallToolText('code_add_to_class', '{"file":' + JsonStr(Src) +
+      ',"class_name":"TFoo","section":"public","text":"procedure Added;","auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    T := CallToolText('code_add_to_class', '{"file":' + JsonStr(Src) +
+      ',"class_name":"TFoo","section":"private","text":"FB: string;\nFC: Integer;","auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    SL := TStringList.Create;
+    try
+      SL.LoadFromFile(Src);
+      Text := StringReplace(SL.Text, #13#10, #10, [rfReplaceAll]);
+    finally
+      SL.Free;
+    end;
+    CheckTrue(Pos('    procedure Existing;'#10'    procedure Added;'#10, Text) > 0, 'public: ' + Text);
+    CheckTrue(Pos('    FA: Integer;'#10'    FB: string;'#10'    FC: Integer;'#10, Text) > 0, 'private: ' + Text);
+  finally
+    CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
+    CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
+  end;
+end;
+
+
 end.

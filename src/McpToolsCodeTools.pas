@@ -671,6 +671,56 @@ begin
   end;
 end;
 
+{ The indent for text added at the end of a class section (code_add_to_class): that of
+  the last member above InsertLine, or the section keyword's plus two when the section
+  is empty. }
+function ClassMemberIndent(CodeBuf: TCodeBuffer; InsertLine: Integer): string;
+var
+  I     : Integer;
+  Line, T : string;
+begin
+  Result := '    ';
+  for I := InsertLine - 1 downto 1 do
+  begin
+    Line := CodeBuf.GetLine(I - 1, False);
+    T := LowerCase(Trim(Line));
+    if T = '' then Continue;
+    Result := Copy(Line, 1, Length(Line) - Length(TrimLeft(Line)));
+    if (T = 'public') or (T = 'private') or (T = 'protected') or (T = 'published') or
+       (T = 'strict private') or (T = 'strict protected') or (T = 'automated') or
+       (Copy(T, 1, 5) = 'type ') or (Copy(T, Length(T) - 4, 5) = 'class') then
+      Result := Result + '  ';
+    Exit;
+  end;
+end;
+
+{ Text indented as the members it joins, unless the caller indented it already. }
+function IndentMembers(const AText, AIndent: string): string;
+var
+  Lines : TStringList;
+  I     : Integer;
+  Done  : Boolean;
+begin
+  Lines := TStringList.Create;
+  try
+    Lines.Text := AText;
+    Done := False;
+    for I := 0 to Lines.Count - 1 do
+      if Trim(Lines[I]) <> '' then
+      begin
+        Done := (Lines[I][1] in [' ', #9]);   { already indented: leave it }
+        Break;
+      end;
+    if not Done then
+      for I := 0 to Lines.Count - 1 do
+        if Trim(Lines[I]) <> '' then
+          Lines[I] := AIndent + Lines[I];
+    Result := TrimRight(Lines.Text);
+  finally
+    Lines.Free;
+  end;
+end;
+
 { ── Declaration lookup ───────────────────────────────────────────────────── }
 
 { Where Symbol is declared, as seen from Code (code_find_declaration and
@@ -1649,6 +1699,8 @@ begin
       Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
     end;
     Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
+    Snippet := StringReplace(IndentMembers(Snippet, ClassMemberIndent(CodeBuf, InsertLine)),
+                 LineEnding, #10, [rfReplaceAll]);
     Ed.ReplaceText(Point(1, InsertLine), Point(1, InsertLine),
                    Snippet + #10);
     if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);

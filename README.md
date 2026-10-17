@@ -90,6 +90,9 @@ lines removed and added) rather than the whole file.
 - `code_format` uses the settings of JCF's IDE plugin (**Tools → Options →
   JEDI Code Format**). Without that plugin, it uses `jcfsettings.cfg` in the
   IDE's config folder, created from JCF's defaults; the result says so.
+  Lazarus's default JCF settings change the case of some words (for example
+  `Integer` becomes `integer`); that is a style setting, not the tool: change it in
+  **Clarify → Capitalisation** (or edit `jcfsettings.cfg`).
 - After formatting, the editor is checked against JCF's output. If they
   differ, the change is put back and an error returned.
 - JCF itself isn't idempotent on long wrapped lines: a second run can still
