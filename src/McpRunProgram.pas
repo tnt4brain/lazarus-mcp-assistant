@@ -31,6 +31,7 @@ implementation
 uses
   Classes, SysUtils, SyncObjs, process, pipes, jsonparser, Controls, Forms,
   LazIDEIntf, ProjectIntf, MacroIntf, LazFileUtils, LazUTF8,
+  {$IFDEF UNIX} BaseUnix, {$ENDIF}
   McpToolContext;
 
 const
@@ -46,6 +47,7 @@ type
     FTruncated : Boolean;
     FDone      : TEvent;
     FExitCode  : Integer;
+    FStopped   : Boolean;     { Stop killed it }
     FPid       : Integer;
     function Pump(Stream: TInputPipeStream; var Buf: string): Boolean;
   protected
@@ -135,6 +137,10 @@ begin
     if not Got then Sleep(10);
   until False;
   FExitCode := Integer(FProc.ExitCode);
+  {$IFDEF UNIX}
+  { a killed process has no exit code of its own: the shell convention, 128 + signal }
+  if FStopped and (FExitCode = 0) then FExitCode := 128 + SIGKILL;
+  {$ENDIF}
   FDone.SetEvent;
   { the IDE's own run reports its end to the hooks on the main thread }
   if Assigned(GHandler) then
@@ -205,7 +211,12 @@ procedure TRunThread.Stop;
 begin
   if not WaitDone(0) then
   try
+    {$IFDEF UNIX}
+    FStopped := True;
+    fpkill(FPid, SIGKILL);
+    {$ELSE}
     FProc.Terminate(1);
+    {$ENDIF}
   except
     { it ended meanwhile }
   end;

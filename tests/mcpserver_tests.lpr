@@ -170,6 +170,7 @@ var
   App  : TMcpTestRunner;
   Port : Word;
   Tok  : string;
+  WindoweeSuite : TTestSuite;
 
 begin
   // TTestUtils, TTestJUnitWriter, TTestLauncher and TTestSettingsFile are
@@ -200,12 +201,19 @@ begin
     else
       WriteLn('Debugger tests skipped (set MCP_DEBUG_TESTS=1, or open ',
               'tests/debuggee/mcpdebuggee.lpi in the IDE).');
-    {$IFDEF WINDOWS}
+    { one setup, so one session: a debug lease the first suite leaves behind
+      would refuse the second suite's own session }
     if GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1' then
-      GetTestRegistry.AddTest(TWindoweeSetup.Create(TTestWindows.Suite))
+    begin
+      WindoweeSuite := TTestSuite.Create('Windowee');
+      {$IFDEF WINDOWS}
+      WindoweeSuite.AddTest(TTestWindows.Suite);
+      {$ENDIF}
+      WindoweeSuite.AddTest(TTestProjectRuns.Suite);
+      GetTestRegistry.AddTest(TWindoweeSetup.Create(WindoweeSuite));
+    end
     else
-      WriteLn('Window tests skipped (set MCP_DEBUG_TESTS=1).');
-    {$ENDIF}
+      WriteLn('Window and project run tests skipped (set MCP_DEBUG_TESTS=1).');
   end
   else
     WriteLn('Server not running — protocol/auth tests skipped.');

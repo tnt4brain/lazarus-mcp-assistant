@@ -82,6 +82,9 @@ program. The process object is a local variable, so it cannot be wrapped from ou
 - The IDE no longer sees the program as its run process, so its own "run finished"
   handlers do not fire for runs started by us; we call `DoCallRunFinishedHandler`
   ourselves when the process ends.
-- Tests: `TTestWindows.TestRunOutput` (opt-in suite) generates a console program that
-  prints to both streams, takes an argument, exits with 3 or sleeps, and checks output,
-  exit code, "still running", the one-at-a-time refusal and `stop`.
+- `stop` ends the program with `TerminateProcess(…, 1)` on Windows (exit code 1) and with
+  SIGKILL on Unix, reported as 137 (128 + 9): `TProcess` gives a signalled process the
+  exit code 0, which would read as success.
+- Tests: `TTestProjectRuns.TestRunOutput` (opt-in suite, Windows and Linux) generates a
+  console program that prints to both streams, takes an argument, exits with 3 or sleeps,
+  and checks output, exit code, "still running", the one-at-a-time refusal and `stop`.

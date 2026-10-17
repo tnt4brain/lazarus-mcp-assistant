@@ -2,7 +2,8 @@
 unit TWindows;
 
 { TTestWindows — project_get_windows on tests/windowee/mcpwindowee.lpi, and
-  project_set_settings' widgetset on that project.  Windows only.
+  project_set_settings' widgetset on that project (Windows only), and TTestProjectRuns, the
+  generated-program tests that run on every platform.
 
   Opt-in like the debugger tests, because they switch the IDE's project:
   MCP_DEBUG_TESTS=1 opens the fixture with project_open and reopens the
@@ -35,6 +36,14 @@ type
     procedure TestTree;
     procedure TestImage;
     procedure TestPaused;
+  end;
+
+  { Generated programs in a temp folder, on every platform: run output, debugger
+    start-up and project files.  The fixture only parks the IDE's project. }
+  TTestProjectRuns = class(TTestCase)
+  protected
+    procedure TearDown; override;
+  published
     procedure TestOpenProgramWithoutProject;
     procedure TestDebugPreflightAndExit;
     procedure TestRunOutput;
@@ -190,6 +199,12 @@ begin
       JsonStr(ChangeFileExt(WindoweeLpi, '.lpr')) + ',"line":' + IntToStr(MarkLine('tick')) + '}');
 end;
 
+procedure TTestProjectRuns.TearDown;
+begin
+  Call('debug_stop', '{}');
+end;
+
+
 { ── Tests ────────────────────────────────────────────────────────────────── }
 
 { Set in the build-mode matrix as the IDE does, reported back, and removed
@@ -304,7 +319,7 @@ end;
 
 { A program with only a .lpr: project_open writes the .lpi next to it, and the
   project builds with the IDE; project_get_settings names the compiler }
-procedure TTestWindows.TestOpenProgramWithoutProject;
+procedure TTestProjectRuns.TestOpenProgramWithoutProject;
 var
   Dir, Lpr, Lpi, T : string;
   SL               : TStringList;
@@ -352,7 +367,7 @@ end;
 
 { debug_run on a project without DWARF info is refused before the IDE asks in a
   dialog; once it has, a program that ends at once says so, with its exit code }
-procedure TTestWindows.TestDebugPreflightAndExit;
+procedure TTestProjectRuns.TestDebugPreflightAndExit;
 var
   Dir, Lpr, T : string;
   SL          : TStringList;
@@ -403,7 +418,7 @@ end;
 
 { project_run answers with the output and the exit code (ADR-016), and a program that
   keeps running is read and stopped with project_run_output. }
-procedure TTestWindows.TestRunOutput;
+procedure TTestProjectRuns.TestRunOutput;
 var
   Dir, Lpr, T : string;
   SL          : TStringList;
@@ -462,7 +477,11 @@ begin
     T := Call('project_run_output', '{"stop":true}');
     CheckFalse(IsError(T), T);
     CheckEquals('False', JPath(T, 'running'), T);
+    {$IFDEF UNIX}
+    CheckEquals('137', JPath(T, 'exit_code'), 'killed: ' + T);
+    {$ELSE}
     CheckEquals('1', JPath(T, 'exit_code'), T);
+    {$ENDIF}
   finally
     Call('project_run_output', '{"stop":true}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
@@ -471,7 +490,7 @@ begin
 end;
 
 { A program that does not build: debug_run says so instead of answering "stopped". }
-procedure TTestWindows.TestDebugRunOfBrokenProgram;
+procedure TTestProjectRuns.TestDebugRunOfBrokenProgram;
 var
   Dir, Lpr, T : string;
   SL          : TStringList;
@@ -512,7 +531,7 @@ end;
 
 { project_add_file / project_remove_file, form_create and editor_get_active with a form
   open, on a generated LCL program (its .lpi is written by project_open). }
-procedure TTestWindows.TestProjectFilesAndFormCreate;
+procedure TTestProjectRuns.TestProjectFilesAndFormCreate;
 var
   Dir, Lpr, Extra, T : string;
   SL                 : TStringList;
