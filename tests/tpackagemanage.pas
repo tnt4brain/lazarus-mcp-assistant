@@ -101,6 +101,8 @@ begin
     CheckTrue(Pos('"success" : false', T) > 0, 'fails: ' + T);
     CheckTrue(Pos('NoSuchIdent', T) > 0, 'says what: ' + T);
   finally
+    { a compile error may have opened the unit: close it before its file goes }
+    Call('editor_close', '{"file":' + JsonStr(Dir + 'mcptmpunita.pas') + '}');
     DeleteDirectory(Dir, False);
   end;
 end;

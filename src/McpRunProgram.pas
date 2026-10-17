@@ -48,6 +48,7 @@ type
     FDone      : TEvent;
     FExitCode  : Integer;
     FStopped   : Boolean;     { Stop killed it }
+    FGone      : Boolean;     { Unix: the process vanished without TProcess seeing it end }
     FPid       : Integer;
     function Pump(Stream: TInputPipeStream; var Buf: string): Boolean;
   protected
@@ -131,12 +132,24 @@ var
 begin
   repeat
     Alive := FProc.Running;
+    {$IFDEF UNIX}
+    { a debugger attached to the process can reap its end before TProcess does: the
+      process is gone (ESRCH = 3) although Running says otherwise }
+    if Alive and (fpkill(FPid, 0) <> 0) and (fpgeterrno = 3) then
+    begin
+      Alive := False;
+      FGone := True;
+    end;
+    {$ENDIF}
     Got := Pump(FProc.Output, FOut);
     if Pump(FProc.Stderr, FErr) then Got := True;
     if not Alive and not Got then Break;
     if not Got then Sleep(10);
   until False;
-  FExitCode := Integer(FProc.ExitCode);
+  if FGone then
+    FExitCode := 137   { 128 + SIGKILL: reaped elsewhere, its status is lost }
+  else
+    FExitCode := Integer(FProc.ExitCode);
   {$IFDEF UNIX}
   { a killed process has no exit code of its own: the shell convention, 128 + signal }
   if FStopped and (FExitCode = 0) then FExitCode := 128 + SIGKILL;

@@ -49,6 +49,7 @@ type
     procedure TestRunOutput;
     procedure TestDebugRunOfBrokenProgram;
     procedure TestProjectFilesAndFormCreate;
+    procedure TestAttach;
   end;
 
 function WindoweeLpi: string;
@@ -150,12 +151,19 @@ end;
 procedure TWindoweeSetup.OneTimeTearDown;
 var
   T : string;
+  I : Integer;
 begin
   { breakpoint changes mark the project modified; saving it leaves the
     .lpi as it was, and a modified project would block project_open }
   Call('project_set_settings', '{}');
   if GPrevProject = '' then Exit;
-  T := Call('project_open', '{"file_path":' + JsonStr(GPrevProject) + '}');
+  { the last test's debug session may still be going down }
+  for I := 1 to 20 do
+  begin
+    T := Call('project_open', '{"file_path":' + JsonStr(GPrevProject) + '}');
+    if Pos('busy', T) = 0 then Break;
+    Sleep(500);
+  end;
   if IsError(T) then
     raise Exception.Create('Could not reopen ' + GPrevProject + ': ' + T);
 end;
@@ -593,4 +601,86 @@ begin
 end;
 
 
+
+{ debug_attach to a program project_run started (ADR-019): it stops in the debugger with
+  its stack readable, detach lets it go on, a plain stop ends it, a wrong id is an error. }
+procedure TTestProjectRuns.TestAttach;
+var
+  Dir, Lpr, T, Pid : string;
+  SL               : TStringList;
+  I                : Integer;
+begin
+  Dir := GetTempDir(False) + 'mcpattachprog' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr := Dir + 'sleeper.lpr';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'program sleeper;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+               'uses SysUtils;' + LineEnding + 'begin' + LineEnding +
+               '  Sleep(60000);' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');
+  try
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+    CheckFalse(IsError(T), T);
+    T := Call('project_set_settings', '{"debug_info":"dwarf3"}');
+    CheckEquals('dwarf3', JPath(T, 'debug_info'), T);
+    T := Call('project_build', '{}');
+    CheckTrue(Pos('"success" : true', T) > 0, 'builds: ' + T);
+
+    T := Call('debug_attach', '{"pid":999999,"timeout_s":5}');
+    CheckTrue(IsError(T) and (Pos('did not attach', T) > 0), 'a wrong id: ' + T);
+    CheckTrue(IsError(Call('debug_attach', '{}')), 'pid required');
+
+    T := Call('project_run', '{"wait_seconds":0}');
+    CheckEquals('True', JPath(T, 'success'), T);
+    Pid := JPath(T, 'pid');
+    CheckTrue(StrToIntDef(Pid, 0) > 0, 'pid: ' + T);
+    Sleep(1000);
+
+    T := Call('debug_attach', '{"pid":' + Pid + ',"timeout_s":5}');
+    CheckFalse(IsError(T), 'attach: ' + T);
+    CheckTrue((JPath(T, 'state') = 'paused') or (JPath(T, 'state') = 'running'), T);
+    if JPath(T, 'state') = 'running' then
+    begin
+      T := Call('debug_pause', '{}');
+      CheckEquals('paused', JPath(T, 'state'), 'pause: ' + T);
+    end;
+    T := Call('debug_get_call_stack', '{"max_frames":30}');
+    CheckTrue(Pos('sleeper.lpr', LowerCase(T)) > 0, 'the program''s own frame: ' + T);
+    CheckTrue(IsError(Call('debug_attach', '{"pid":' + Pid + '}')), 'one session at a time');
+
+    T := Call('debug_stop', '{"detach":true}');
+    CheckFalse(IsError(T), T);
+    for I := 1 to 20 do
+    begin
+      if JPath(Call('debug_get_state', '{}'), 'state') = 'idle' then Break;
+      Sleep(250);
+    end;
+    T := Call('project_run_output', '{"wait_seconds":0}');
+    CheckEquals('True', JPath(T, 'running'), 'still running after detach: ' + T);
+
+    T := Call('debug_attach', '{"pid":' + Pid + ',"timeout_s":5}');
+    CheckFalse(IsError(T), 'attach again: ' + T);
+    Call('debug_stop', '{}');
+    T := Call('project_run_output', '{"wait_seconds":10}');
+    CheckEquals('False', JPath(T, 'running'), 'a plain stop ends the program: ' + T);
+  finally
+    Call('debug_stop', '{}');
+    Call('project_run_output', '{"stop":true}');
+    Call('project_set_settings', '{}');
+    Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+    { the folder stays: the debugger opens its source in an editor, and deleting a file the
+      IDE still holds raises a dialog that blocks it (Linux); the next run overwrites it }
+  end;
+end;
 end.

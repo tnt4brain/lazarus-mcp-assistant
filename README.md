@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 122 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 123 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows and Linux. The whole test suite, the debugger tests
 > included, passes on Windows and on Debian 12 (Lazarus 4.6, FPC 3.2.2, GTK2).
@@ -166,7 +166,8 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code`; a stop on a breakpoint says `reason: "breakpoint"`; if no session starts (a failed build) the answer is an error saying so |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
 | `debug_step_over` / `debug_step_into` / `debug_step_out` | F8 / F7 / Shift+F8 |
-| `debug_pause` / `debug_stop` | Pause / stop the session; a pause makes the program's main thread current (not the debugger's break-in thread) |
+| `debug_attach` | Attach the debugger to a running process by id (e.g. the program `project_run` started); it stops with its stack readable. `debug_stop` with `detach: true` lets it go on |
+| `debug_pause` / `debug_stop` | Pause / stop the session (ends an attached program unless `detach`); a pause makes the program's main thread current (not the debugger's break-in thread) |
 | `debug_get_state` | State and source location, in any state |
 | `debug_get_call_stack` | Frames with file, line, function and address (`max_frames`) |
 | `debug_get_locals` | Locals and parameters of a frame (`thread`, `frame`) |
@@ -414,6 +415,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-016](docs/adr/0016-running-without-the-debugger.md) | Running without the debugger: output, exit code, later attach |
 | [ADR-017](docs/adr/0017-declaration-lookup-through-uses-clauses.md) | Declaration lookup through uses clauses; reference search scopes |
 | [ADR-018](docs/adr/0018-https-for-package-download-via-curl.md) | HTTPS for package_download through the curl executable |
+| [ADR-019](docs/adr/0019-debug-attach-without-the-ide-dialog.md) | debug_attach: the IDE's attach path without its process dialog |
 
 ADR-007 was never assigned; no document is missing.
 

@@ -3,7 +3,7 @@ unit McpToolsDebugger;
 
 { Debugger tools: debug_set_breakpoint, debug_remove_breakpoint, debug_list_breakpoints,
   debug_get_state,
-  debug_run, debug_pause, debug_stop,
+  debug_run, debug_attach, debug_pause, debug_stop,
   debug_step_over, debug_step_into, debug_step_out, debug_run_to_line,
   debug_get_call_stack, debug_evaluate,
   debug_get_locals, debug_set_variable,
@@ -35,6 +35,7 @@ uses
   IdeDebuggerWatchResult,    { TWatchResultData }
   IdeDebuggerWatchValueIntf, { DefaultWatchDisplayFormat }
   IdeDebuggerWatchResPrinter,{ TWatchResultPrinter }
+  {$IFDEF UNIX} BaseUnix, {$ENDIF}
   TypInfo,
   fpjson,
   McpDebugGuard,             { GMcpLastExc, McpMarkDebugDriven }
@@ -136,9 +137,14 @@ type
     OutAsmReady    : Boolean;
     OutAsmJSON     : string;
     OutAsmErr      : string;
+    { Attach in/out }
+    InAttachPid    : string;
+    OutAttachErr   : string;
     { Methods }
     procedure ReadState;
     procedure Preflight;
+    procedure AttachStart;
+    procedure StopNow;
     procedure IssueCmd;
     function FindBreakpoint: TIDEBreakPoint;
     procedure AddBreakpoint;     { find or create, then apply the InBpSet* properties }
@@ -199,6 +205,12 @@ begin
   Dlg.ModalResult := mrOK;
 end;
 
+procedure TDbgSyncHelper.StopNow;
+begin
+  if Assigned(DebugBoss) then
+    DebugBoss.DoStopProject;
+end;
+
 procedure TDbgSyncHelper.StopLater(Data: PtrInt);
 begin
   if Assigned(DebugBoss) then
@@ -245,6 +257,35 @@ begin
   Result.Add('line',     GMcpLastExc.Line);
   Result.Add('function', GMcpLastExc.FuncName);
   Result.Add('address',  Format('$%x', [GMcpLastExc.Address]));
+end;
+
+{ debug_attach, the first half: the steps of the IDE's own Run > Attach (ecAttach in
+  main.pp) without its process list dialog.  The attach itself runs from the debug
+  manager's timer, so the caller polls the state.  Main thread. }
+procedure TDbgSyncHelper.AttachStart;
+begin
+  OutAttachErr := '';
+  if not Assigned(DebugBoss) then
+  begin
+    OutAttachErr := 'This IDE has no debug manager';
+    Exit;
+  end;
+  if LazarusIDE.ToolStatus <> itNone then
+  begin
+    OutAttachErr := 'The IDE is busy (building, running or debugging): debug_stop first, ' +
+                    'or wait for it to finish';
+    Exit;
+  end;
+  McpMarkDebugDriven;
+  OutFeedback := '';   { only what this attach causes }
+  if not DebugBoss.InitDebugger([difInitForAttach]) then
+  begin
+    OutAttachErr := 'The debugger could not be started for attaching (Tools > Options > ' +
+                    'Debugger); the IDE may have said why in its messages';
+    Exit;
+  end;
+  LazarusIDE.ToolStatus := itDebugger;
+  DebugBoss.Attach(InAttachPid);
 end;
 
 { The IDE asks in a modal before it runs a project whose debug info the
@@ -1308,6 +1349,7 @@ var
   GCmdExcSeq : Integer = -1;  { exception sequence when the last command was issued }
   GHitsBefore : Integer = 0;    { breakpoint hits when the last command was issued }
   GLaunchFailed : Boolean = False;   { the last PollForPause never saw a session start }
+  GAttachedPid  : Integer = 0;       { the process debug_attach attached to, until stopped or detached }
 
 { A session the user started may be waiting in the exception dialog.  Answer
   it with Break and wait (up to 5 s) until the program is paused at the
@@ -1526,7 +1568,19 @@ begin
         Application.QueueAsyncCall(@GSyncHelper.StopLater, 0);
       end
       else
-        DebugBoss.DoStopProject;   { non-blocking, already on main thread }
+      begin
+        if Assigned(Ctx.Params) and Ctx.Params.Get('detach', False) then
+          DebugBoss.Detach          { leaves an attached program running }
+        else
+        begin
+          DebugBoss.DoStopProject;  { non-blocking, already on main thread }
+          {$IFDEF UNIX}
+          { FpDebug lets an attached process go on when its session is stopped }
+          if GAttachedPid > 0 then fpkill(GAttachedPid, SIGKILL);
+          {$ENDIF}
+        end;
+        GAttachedPid := 0;
+      end;
     end;
     Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
   end
@@ -1897,6 +1951,46 @@ var
     end;
   end;
 
+  { Break and attach leave the debugger's own break-in thread current (Windows): move
+    to the program's main thread, waiting for the thread list to load }
+  procedure MoveToMainThread;
+  var
+    Waited : Integer;
+  begin
+    TThread.Synchronize(nil, @GSyncHelper.InitThreads);
+    Waited := 0;
+    repeat
+      TThread.Synchronize(nil, @GSyncHelper.SelectRunningThread);
+      if GSyncHelper.OutSwitchReady then Break;
+      Sleep(100);
+      Inc(Waited, 100);
+    until Waited >= 3000;
+    if GSyncHelper.OutSwitchFrom <> 0 then
+    begin
+      { the editor cursor the position came from is not where this thread is }
+      TThread.Synchronize(nil, @GSyncHelper.ReadState);
+      FinalFile := GSyncHelper.OutFileName;
+      FinalLine := GSyncHelper.OutLine;
+    end;
+  end;
+
+  procedure AddThreadNote(const AWho: string);
+  var
+    J : TJSONObject;
+  begin
+    if GSyncHelper.OutSwitchFrom = 0 then Exit;
+    J := TJSONObject(GetJSON(Ctx.Result));
+    try
+      J.Add('thread', GSyncHelper.OutSwitchTo);
+      J.Add('thread_function', GSyncHelper.OutSwitchFn);
+      J.Add('note', AWho + ' ran a thread of its own (' + IntToStr(GSyncHelper.OutSwitchFrom) +
+        '); the main thread is current instead. debug_list_threads shows the others.');
+      Ctx.Result := J.AsJSON;
+    finally
+      J.Free;
+    end;
+  end;
+
 begin
   EndsBefore := GMcpSessionEnds;
   Result    := False;
@@ -1928,41 +2022,52 @@ begin
     TimeoutMs := 5000;
     DoIssueCmd(1);
     S := PollForPause(TimeoutMs, FinalFile, FinalLine);
-    { Break leaves the debugger's own break-in thread current (Windows): move to
-      the program's main thread, waiting for the thread list to load }
-    if S = dsPause then
-    begin
-      TThread.Synchronize(nil, @GSyncHelper.InitThreads);
-      Elapsed := 0;
-      repeat
-        TThread.Synchronize(nil, @GSyncHelper.SelectRunningThread);
-        if GSyncHelper.OutSwitchReady then Break;
-        Sleep(100);
-        Inc(Elapsed, 100);
-      until Elapsed >= 3000;
-      if GSyncHelper.OutSwitchFrom <> 0 then
-      begin
-        { the editor cursor the position came from is not where this thread is }
-        TThread.Synchronize(nil, @GSyncHelper.ReadState);
-        FinalFile := GSyncHelper.OutFileName;
-        FinalLine := GSyncHelper.OutLine;
-      end;
-    end;
+    if S = dsPause then MoveToMainThread;
     Finish('paused');
-    if (S = dsPause) and (GSyncHelper.OutSwitchFrom <> 0) then
+    if S = dsPause then AddThreadNote('Break');
+  end
+
+  else if Name = 'debug_attach' then
+  begin
+    Result    := True;
+    TimeoutMs := 20000;
+    if Assigned(Ctx.Params) then
+      TimeoutMs := Ctx.Params.Get('timeout_s', 20) * 1000;
+    Value := '';
+    if Assigned(Ctx.Params) then
+      Value := IntToStr(Ctx.Params.Get('pid', 0));
+    if (Value = '0') or (StrToIntDef(Value, 0) <= 0) then
     begin
-      Obj := TJSONObject(GetJSON(Ctx.Result));
-      try
-        Obj.Add('thread', GSyncHelper.OutSwitchTo);
-        Obj.Add('thread_function', GSyncHelper.OutSwitchFn);
-        Obj.Add('note', 'Break ran a thread of its own (' + IntToStr(GSyncHelper.OutSwitchFrom) +
-          '); the main thread is current instead. debug_list_threads shows the others.');
-        Ctx.Result := Obj.AsJSON;
-      finally
-        Obj.Free;
-        Obj := nil;
-      end;
+      Ctx.Error := True;
+      Ctx.Result := 'pid required: the process id of the program to attach to (project_run answers with it)';
+      Exit;
     end;
+    GSyncHelper.InAttachPid := Value;
+    TThread.Synchronize(nil, @GSyncHelper.AttachStart);
+    if GSyncHelper.OutAttachErr <> '' then
+    begin
+      Ctx.Error := True; Ctx.Result := GSyncHelper.OutAttachErr; Exit;
+    end;
+    EndsBefore := GMcpSessionEnds;
+    S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
+    if GLaunchFailed and (S = dsStop) and (GMcpSessionEnds = EndsBefore) then
+    begin
+      GLaunchFailed := False;
+      Err := Trim(GSyncHelper.OutFeedback);
+      if Err <> '' then Err := ' (' + StringReplace(Err, #13#10, ' ', [rfReplaceAll]) + ')';
+      TThread.Synchronize(nil, @GSyncHelper.StopNow);   { puts the IDE's tool status back }
+      Ctx.Error  := True;
+      Ctx.Result := 'The debugger did not attach to process ' + Value + ' within 10 s' +
+        Err + ': ' +
+        'check the process id and that it is still running; the program needs debug ' +
+        'information (project_set_settings debug_info=dwarf3, then build). On Linux ' +
+        'ptrace must be allowed for the IDE.';
+      Exit;
+    end;
+    GAttachedPid := StrToIntDef(Value, 0);
+    if S = dsPause then MoveToMainThread;
+    Finish('attached');
+    if S = dsPause then AddThreadNote('Attaching');
   end
 
   else if Name = 'debug_step_over' then
@@ -2398,6 +2503,16 @@ const
     '{"type":"object","properties":{' +
     '"timeout_s":{"type":"integer","description":"Default 10 (step out: 30)"}}}';
 
+  SCHEMA_ATTACH =
+    '{"type":"object","properties":{' +
+    '"pid":{"type":"integer","description":"Process id of the running program (project_run answers with it)"},' +
+    '"timeout_s":{"type":"integer","description":"Seconds to wait for the program to pause; default 20"},' +
+    '"lease_idle_timeout":{"type":"integer","description":"Seconds without calls from you after which ' +
+      'your debug session is stopped and released to other clients; default 300, 10..3600"}},' +
+    '"required":["pid"]}';
+  SCHEMA_STOP =
+    '{"type":"object","properties":{' +
+    '"detach":{"type":"boolean","description":"Let an attached program keep running instead of ending it"}}}';
   SCHEMA_RUN_DEBUGGER =
     '{"type":"object","properties":{' +
     '"timeout_s":{"type":"integer","description":"Seconds to wait for pause; default 30"},' +
@@ -2510,6 +2625,14 @@ begin
     'pauses or ends, or returns state=timeout. The client that drives the ' +
     'debugger owns the session (see lease_idle_timeout).',
     SCHEMA_RUN_DEBUGGER, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('debug_attach',
+    'Attach the debugger to a running process by id, for example the program ' +
+    'project_run started, which then stops in the debugger so locals, stack and ' +
+    'registers can be read; blocks until it pauses (state=timeout if it keeps running: ' +
+    'debug_pause). The program needs debug information as for debug_run. debug_stop ' +
+    'ends it, debug_stop with detach=true lets it go on. One debug session at a time, ' +
+    'as for debug_run. On Linux the kernel must allow ptrace of the process.',
+    SCHEMA_ATTACH, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_pause',
     'Pause a running debug session. Blocks until the program pauses. On Windows the ' +
     'debugger runs a break-in thread of its own; the program''s main thread is made ' +
@@ -2518,8 +2641,9 @@ begin
     SCHEMA_NO_PARAMS, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_stop',
     'Stop the debug session unconditionally. Non-blocking; safe in any ' +
-    'state including after a timed-out step.',
-    SCHEMA_NO_PARAMS, MCP_ANN_WRITE_IDEM));
+    'state including after a timed-out step. For a program that debug_attach ' +
+    'attached to, stopping ends the program; detach=true lets it keep running.',
+    SCHEMA_STOP, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_step_over',
     'Step over the current line (F8). Blocks until the debugger pauses at ' +
     'the next line.',
