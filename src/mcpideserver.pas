@@ -534,8 +534,20 @@ procedure TMcpMainCall.RunQueued;
 var
   Release : Boolean;
 begin
-  McpEnsureDialogWatch;
-  Run;
+  try
+    McpEnsureDialogWatch;
+    Run;
+  except
+    { whatever goes wrong, the thread waiting for this call must get its answer:
+      an exception leaving here would end in the IDE's event loop and leave it
+      waiting for ever, with the debug lease held (seen on Linux, 2026-10-18) }
+    on E: Exception do
+    begin
+      McpLogSession('main: ' + ToolName + ' raised ' + E.ClassName + ': ' + E.Message);
+      Ctx.Error  := True;
+      Ctx.Result := E.Message;
+    end;
+  end;
   GCallLock.Enter;
   try
     Finished := True;
@@ -624,8 +636,10 @@ var
   Call : TMcpMainCall;
   Dialogs : TJSONArray;
   DialogMs: Integer;
+  WaitedMs: Integer;
   Abandon : Boolean;
 begin
+  Abandon := False;
   Call := TMcpMainCall.Create;
   try
     Call.ToolName            := AToolName;
@@ -655,8 +669,23 @@ begin
     Call.Done := TEvent.Create(nil, True, False, '');
     TThread.Queue(nil, @Call.RunQueued);
     DialogMs := 0;
+    WaitedMs := 0;
     while Call.Done.WaitFor(250) <> wrSignaled do
     begin
+      Inc(WaitedMs, 250);
+      { a call the main thread does not finish is a hang worth knowing about }
+      if (WaitedMs mod 20000) = 0 then
+      begin
+        GCallLock.Enter;
+        try
+          McpLogSession(Format('%s from %s has waited %d s for the main thread ' +
+            '(finished: %s, abandoned: %s)',
+            [AToolName, McpShortId(AClientId), WaitedMs div 1000,
+             BoolToStr(Call.Finished, True), BoolToStr(Call.Abandoned, True)]));
+        finally
+          GCallLock.Leave;
+        end;
+      end;
       { the main thread is stuck in a modal dialog? }
       Dialogs := McpOpenDialogs;
       try
