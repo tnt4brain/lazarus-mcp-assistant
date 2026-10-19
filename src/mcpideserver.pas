@@ -507,6 +507,8 @@ type
     Abandoned: Boolean;     { the waiting thread gave up: Run frees the call }
     destructor Destroy; override;
     procedure RunQueued;    { main thread: Run, then hand over or free }
+    procedure RunAsync(Data: PtrInt);       { RunQueued as an async call }
+    procedure LogAndFreeAsync(Data: PtrInt);
     procedure LogAndFree;   { main thread, queued: Log, then free this call }
     procedure Run;   { main thread }
     procedure Log;   { main thread }
@@ -528,6 +530,16 @@ begin
   finally
     Free;
   end;
+end;
+
+procedure TMcpMainCall.LogAndFreeAsync(Data: PtrInt);
+begin
+  LogAndFree;
+end;
+
+procedure TMcpMainCall.RunAsync(Data: PtrInt);
+begin
+  RunQueued;
 end;
 
 procedure TMcpMainCall.RunQueued;
@@ -667,7 +679,12 @@ begin
       end;
     end;
     Call.Done := TEvent.Create(nil, True, False, '');
-    TThread.Queue(nil, @Call.RunQueued);
+    { Not TThread.Queue: that entry carries the id of this thread, and the destructor
+      of any TThread object with the same id removes it unrun (RemoveQueuedEvents
+      matches on ThreadID).  Thread ids are reused, so on Linux a finished run's or
+      feeder's thread object freed after this thread had taken its id made a call
+      wait for ever, with the debug lease held (found with gdb, 2026-10-19). }
+    Application.QueueAsyncCall(@Call.RunAsync, 0);
     DialogMs := 0;
     WaitedMs := 0;
     while Call.Done.WaitFor(250) <> wrSignaled do
@@ -756,7 +773,7 @@ begin
         { queued, not synchronized: initialize must not wait for a busy main
           thread (right after a restart, or in a modal), or a client that
           re-initializes after the 404 times out and gives up }
-        TThread.Queue(nil, @Call.LogAndFree);
+        Application.QueueAsyncCall(@Call.LogAndFreeAsync, 0);
         Call := nil;
       finally
         Call.Free;
