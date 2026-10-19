@@ -32,6 +32,9 @@ type
     procedure TestResetSoftKeepsStaged;
     procedure TestStashAndPop;
     procedure TestLog;
+    procedure TestInitCreatesRepository;
+    procedure TestInitKeepsExistingGitignore;
+    procedure TestInitRefusedInsideRepository;
   end;
 
 implementation
@@ -189,6 +192,66 @@ begin
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('second', T) > 0, T);
   CheckEquals(0, Pos('first', T), 'max_count honoured: ' + T);
+end;
+
+{ A directory with a file in it, outside the repository of SetUp. }
+function PlainDir(const ATest: string; const AFile, AText: string): string;
+var
+  SL : TStringList;
+begin
+  Result := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpgitinit' + PathDelim +
+            ATest + IntToStr(GetTickCount64) + PathDelim;
+  ForceDirectories(Result);
+  SL := TStringList.Create;
+  try
+    SL.Text := AText;
+    SL.SaveToFile(Result + AFile);
+  finally
+    SL.Free;
+  end;
+end;
+
+procedure TTestGitWrite.TestInitCreatesRepository;
+var
+  D, T, O : string;
+begin
+  D := PlainDir(TestName, 'x.txt', 'keep me');
+  T := CallToolText('git_init', '{"work_dir":' + JsonStr(D) +
+    ',"initial_branch":"trunk","gitignore":true}', []);
+  CheckFalse(IsError(T), T);
+  CheckTrue(DirectoryExists(D + '.git'), 'a repository now');
+  CheckTrue(RunCommandInDir(D, 'git', ['symbolic-ref', '--short', 'HEAD'], O), O);
+  CheckEquals('trunk', Trim(O), 'the first branch is named');
+  CheckFalse(RunCommandInDir(D, 'git', ['rev-parse', '--verify', '-q', 'HEAD'], O),
+    'nothing is committed');
+  CheckTrue(FileExists(D + 'x.txt'), 'the files are kept');
+  CheckTrue(FileExists(D + '.gitignore'), 'the .gitignore is written');
+end;
+
+procedure TTestGitWrite.TestInitKeepsExistingGitignore;
+var
+  D, T : string;
+  SL : TStringList;
+begin
+  D := PlainDir(TestName, '.gitignore', 'mine');
+  T := CallToolText('git_init', '{"work_dir":' + JsonStr(D) + ',"gitignore":true}', []);
+  CheckFalse(IsError(T), T);
+  SL := TStringList.Create;
+  try
+    SL.LoadFromFile(D + '.gitignore');
+    CheckEquals('mine', Trim(SL.Text), 'an existing .gitignore is not overwritten');
+  finally
+    SL.Free;
+  end;
+end;
+
+procedure TTestGitWrite.TestInitRefusedInsideRepository;
+var
+  T : string;
+begin
+  T := Tool('git_init', '');
+  CheckTrue(IsError(T), 'refused in a repository: ' + T);
+  CheckTrue(Pos('already inside', T) > 0, T);
 end;
 
 end.

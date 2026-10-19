@@ -93,6 +93,20 @@ const
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["target"]}';
 
+  SCHEMA_GIT_INIT =
+    '{"type":"object","properties":{' +
+    '"work_dir":{"type":"string","description":"The directory to make a repository of; it must exist and not be inside a repository already. Default: the saved project''s directory, else the active editor file''s directory"},' +
+    '"initial_branch":{"type":"string","description":"Name of the first branch (default main)"},' +
+    '"gitignore":{"type":"boolean","description":"Also write a .gitignore with the usual Lazarus build output (lib/, *.exe, *.o, *.ppu, backup/ ...), unless the directory has one (default false)"}},' +
+    '"required":[]}';
+
+  GITIGNORE_LAZARUS =
+    '# Lazarus / Free Pascal build output' + LineEnding +
+    'lib/' + LineEnding + 'backup/' + LineEnding + '*.exe' + LineEnding +
+    '*.dll' + LineEnding + '*.o' + LineEnding + '*.ppu' + LineEnding +
+    '*.compiled' + LineEnding + '*.a' + LineEnding + '*.rsj' + LineEnding +
+    '*.bak' + LineEnding + '*.dbg' + LineEnding + '*.lps' + LineEnding;
+
 { ── Helpers ──────────────────────────────────────────────────────────────── }
 
 { AInput, if any, is written to git's standard input (git commit -F -): on
@@ -407,6 +421,8 @@ function DispatchGitTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   WorkDir   : string;
   Output    : string;
+  Output2   : string;
+  IgnoreWritten : Boolean;
   Ok        : Boolean;
   Staged    : Boolean;
   DiffPath  : string;
@@ -703,6 +719,62 @@ begin
     end;
   end
 
+  else if Name = 'git_init' then
+  begin
+    Result  := True;
+    WorkDir := GetGitWorkDir(Ctx);
+    Branch  := 'main';
+    if Assigned(Ctx.Params) then Branch := Ctx.Params.Get('initial_branch', 'main');
+    if WorkDir = '' then
+    begin
+      Ctx.Error := True; Ctx.Result := 'work_dir required: no saved project or file to take it from'; Exit;
+    end;
+    if not DirectoryExists(WorkDir) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Directory does not exist: ' + WorkDir; Exit;
+    end;
+    { Never nest a repository: say where the existing one is }
+    if RunGit(['rev-parse', '--show-toplevel'], WorkDir, Output) then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := WorkDir + ' is already inside the repository ' + Trim(Output);
+      Exit;
+    end;
+    if not RunGit(['check-ref-format', '--branch', Branch], WorkDir, Output) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Invalid branch name: ' + Branch; Exit;
+    end;
+    { init, then name the branch: "init -b" needs git 2.28 }
+    Ok := RunGit(['init'], WorkDir, Output);
+    if Ok then
+      Ok := RunGit(['symbolic-ref', 'HEAD', 'refs/heads/' + Branch], WorkDir, Output2);
+    IgnoreWritten := False;
+    if Ok and Assigned(Ctx.Params) and Ctx.Params.Get('gitignore', False) and
+       not FileExists(IncludeTrailingPathDelimiter(WorkDir) + '.gitignore') then
+    begin
+      GitArgs := TStringList.Create;
+      try
+        GitArgs.Text := GITIGNORE_LAZARUS;
+        GitArgs.SaveToFile(IncludeTrailingPathDelimiter(WorkDir) + '.gitignore');
+        IgnoreWritten := True;
+      finally
+        GitArgs.Free;
+      end;
+    end;
+    Obj := TJSONObject.Create;
+    try
+      if not Ok then Output := Output + Output2;
+      Obj.Add('output',   Trim(Output));
+      Obj.Add('work_dir', WorkDir);
+      Obj.Add('branch',   Branch);
+      Obj.Add('gitignore_written', IgnoreWritten);
+      if not Ok then Ctx.Error := True;
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
   else if Name = 'git_reset' then
   begin
     Result  := True;
@@ -780,6 +852,11 @@ begin
   Tools.Add(MakeTool('git_stash_pop',
     'Apply and remove a stash entry. index defaults to 0 (most recent stash).',
     SCHEMA_GIT_STASH_POP, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('git_init',
+    'Make a git repository of an existing directory (git init), keeping its files; ' +
+    'nothing is committed. Refused inside an existing repository. ' +
+    'initial_branch defaults to main; gitignore=true adds a Lazarus .gitignore if there is none.',
+    SCHEMA_GIT_INIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_reset',
     'Reset the current HEAD to target. mode=mixed (default) unstages changes ' +
     'and moves HEAD; mode=soft keeps changes staged. ' +
