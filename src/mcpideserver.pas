@@ -83,6 +83,11 @@ function  GetServerHost   : string;
 function  GetServerRemoteHost : string;
 function  GetServerToken  : string;
 function  WriteMcpConfig  : string; // returns temp config file path
+{ The config JSON (mcpServers) for a client on another machine, with AToken. }
+function  McpClientConfigJSON(const AToken: string): string;
+{ A new primary token: the sessions of the old one end, the server restarts with the
+  new one, and the files the IDE writes for local clients are rewritten. }
+procedure McpRegenerateServerToken;
 
 implementation
 
@@ -93,7 +98,21 @@ uses
   StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
-  McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram;
+  McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
+  McpTokens;
+
+threadvar
+  { the token of the request this thread is handling (ADR-021) }
+  GAuthTokenId   : string;
+  GAuthTokenName : string;
+
+function ClientTokenStore: TMcpTokenStore;
+begin
+  if Assigned(McpSettings) then
+    Result := McpSettings.ClientTokens
+  else
+    Result := nil;
+end;
 
 const
   { MCP revisions this server implements, oldest first: the last is the one
@@ -306,8 +325,9 @@ begin
     AResponse.Code := 403;
     Exit;
   end;
-  // Bearer-token auth
-  if ARequest.Authorization <> 'Bearer ' + FToken then
+  // Bearer-token auth: the primary token, or one of the named ones (ADR-021)
+  if not McpAuthorize(ARequest.Authorization, FToken, ClientTokenStore,
+           GAuthTokenId, GAuthTokenName) then
   begin
     AResponse.Code := 401;
     AResponse.SetCustomHeader('WWW-Authenticate', 'Bearer realm="lazarus-mcp"');
@@ -322,7 +342,10 @@ begin
     restarted (ide_rebuild): 404, as the spec says, so the client starts a new
     session with initialize and fetches tools/list again; a rebuild may have
     changed the tools.  The cookie identity of simple clients stays as it is. }
-  if (ClientId <> '') and not McpSessionKnown(ClientId) and
+  if (ClientId <> '') and
+     (not McpSessionKnown(ClientId) or
+      { a session belongs to the token it was started with (ADR-021) }
+      (McpSessionTokenId(ClientId) <> GAuthTokenId)) and
      ((ARequest.Method = 'DELETE') or
       (JsonRpcMethod(ARequest.Content) <> 'initialize')) then
   begin
@@ -768,8 +791,9 @@ begin
       ClientName := ClientInfo.Get('name', '?') + ' ' + ClientInfo.Get('version', '');
       Call := TMcpMainCall.Create;
       try
-        Call.LogMsg := Format('Client "%s" connected (protocol %s, session %s).',
-          [Trim(ClientName), ProtoVer, Copy(ANewSession, 1, 8)]);
+        Call.LogMsg := Format('Client "%s" connected (protocol %s, session %s%s).',
+          [Trim(ClientName), ProtoVer, Copy(ANewSession, 1, 8),
+           IfThen(GAuthTokenName <> '', ', token "' + GAuthTokenName + '"', '')]);
         { queued, not synchronized: initialize must not wait for a busy main
           thread (right after a restart, or in a modal), or a client that
           re-initializes after the 404 times out and gives up }
@@ -780,9 +804,10 @@ begin
       end;
     end;
   end;
-  McpRegisterSession(ANewSession, Trim(ClientName));
-  McpLogSession(Format('initialize: client "%s", protocol %s, new session %s',
-    [Trim(ClientName), ProtoVer, McpShortId(ANewSession)]));
+  McpRegisterSession(ANewSession, Trim(ClientName), GAuthTokenId, GAuthTokenName);
+  McpLogSession(Format('initialize: client "%s", protocol %s, new session %s, token %s',
+    [Trim(ClientName), ProtoVer, McpShortId(ANewSession),
+     IfThen(GAuthTokenName <> '', '"' + GAuthTokenName + '"', GAuthTokenId)]));
 
   ToolsCap := TJSONObject.Create;  // empty tools capability object
   Caps := TJSONObject.Create;
@@ -1525,6 +1550,42 @@ begin
   end;
 end;
 
+function McpClientConfigJSON(const AToken: string): string;
+var
+  Config, Servers, Srv, Headers : TJSONObject;
+begin
+  Headers := TJSONObject.Create;
+  Headers.Add('Authorization', 'Bearer ' + AToken);
+  Srv := TJSONObject.Create;
+  Srv.Add('type',    'http');
+  Srv.Add('url',     Format('http://%s:%d/mcp', [GetServerRemoteHost, GetServerPort]));
+  Srv.Add('headers', Headers);
+  Servers := TJSONObject.Create;
+  Servers.Add('lazarus-ide', Srv);
+  Config := TJSONObject.Create;
+  try
+    Config.Add('mcpServers', Servers);
+    Result := Config.FormatJSON;
+  finally
+    Config.Free;
+  end;
+end;
+
+procedure McpRegenerateServerToken;
+begin
+  if not Assigned(McpSettings) then Exit;
+  McpSettings.ServerToken := McpNewPrimaryToken;
+  McpSettings.SaveSettings;
+  McpLogSession('primary token regenerated');
+  { whoever holds the old token is out: its sessions go, the server restarts }
+  McpForgetTokenSessions(MCP_PRIMARY_ID);
+  if IsServerRunning then
+  begin
+    FinalizeMcpServer;
+    InitializeMcpServer;
+  end;
+end;
+
 { ── IDE close hook ───────────────────────────────────────────────────────── }
 
 type
@@ -1536,6 +1597,8 @@ procedure TMcpIDEHook.OnIDEClose(Sender: TObject);
 begin
   McpShutdownDebugGuard;
   FinalizeMcpServer;
+  { the tokens' last-used times are only in memory until now }
+  if Assigned(McpSettings) then McpSettings.SaveSettings;
 end;
 
 var

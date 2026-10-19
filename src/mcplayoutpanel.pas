@@ -33,17 +33,12 @@ implementation
 
 uses
   LazLogger, Clipbrd,
-  McpToolsProject, McpDebugGuard, McpLauncher, McpOptions, McpRefKeeper, McpExceptionLog;
+  McpToolsProject, McpDebugGuard, McpLauncher, McpOptions, McpTokensOptions, McpRefKeeper,
+  McpExceptionLog;
 
-{ Called from the menu: copies the current MCP server config JSON to the clipboard. }
+{ Called from the menu: makes a named token for a client on another machine and puts
+  the config for it on the clipboard (ADR-021).  The primary token is never copied. }
 procedure CopyMcpConfigToClipboard(Sender: TObject);
-var
-  Port   : Word;
-  Token  : string;
-  Config : TJSONObject;
-  Server : TJSONObject;
-  Headers: TJSONObject;
-  Servers: TJSONObject;
 begin
   if not IsServerRunning then
   begin
@@ -51,31 +46,7 @@ begin
                 'Tools → MCP Assistant → Launch MCP Assistant.');
     Exit;
   end;
-  Port  := GetServerPort;
-  Token := GetServerToken;
-  if (Port = 0) or (Token = '') then
-  begin
-    ShowMessage('Server port or token not available yet. Try again in a moment.');
-    Exit;
-  end;
-  Headers := TJSONObject.Create;
-  Headers.Add('Authorization', 'Bearer ' + Token);
-  Server := TJSONObject.Create;
-  Server.Add('type',    'http');
-  { the config is for pasting into a client, which may be on another machine }
-  Server.Add('url',     Format('http://%s:%d/mcp', [GetServerRemoteHost, Port]));
-  Server.Add('headers', Headers);
-  Servers := TJSONObject.Create;
-  Servers.Add('lazarus-ide', Server);
-  Config := TJSONObject.Create;
-  try
-    Config.Add('mcpServers', Servers);
-    Clipboard.AsText := Config.FormatJSON;
-    ShowMessage('MCP config copied to clipboard.' + LineEnding +
-                'Paste it into your .mcp.json or claude_desktop_config.json.');
-  finally
-    Config.Free;
-  end;
+  McpCreateClientToken;
 end;
 
 { Called from the menu: starts the MCP server (if needed) and spawns claude. }

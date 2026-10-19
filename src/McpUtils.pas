@@ -14,7 +14,7 @@ uses
 { Byte-swap a 16-bit value (network ↔ host byte order on little-endian hosts). }
 function Swap16(v: Word): Word; inline;
 
-{ Returns a 64-character hex string derived from two GUIDs. }
+{ Returns a 64-character hex string (32 random bytes from the operating system). }
 function GenerateToken: string;
 
 const
@@ -61,7 +61,7 @@ procedure McpRenameLegacyFileArg(const ATool: string; AArgs: TJSONObject);
 implementation
 
 uses
-  SysUtils, Sockets, LazFileUtils;
+  SysUtils, Sockets, LazFileUtils, McpTokens;
 
 const
   { argument names that hold file or directory paths; output_dir is not one
@@ -229,18 +229,8 @@ begin
 end;
 
 function GenerateToken: string;
-var
-  G1, G2 : TGUID;
-  S      : string;
-  I      : Integer;
 begin
-  CreateGUID(G1);
-  CreateGUID(G2);
-  S := GUIDToString(G1) + GUIDToString(G2);
-  Result := '';
-  for I := 1 to Length(S) do
-    if S[I] in ['0'..'9', 'A'..'F', 'a'..'f'] then
-      Result := Result + S[I];
+  Result := McpNewPrimaryToken;   { 32 bytes from the operating system, as hex }
 end;
 
 end.

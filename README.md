@@ -319,6 +319,7 @@ its settings.
 | Terminal command (Linux/macOS), e.g. `kitty -e` | Detect a terminal |
 | git executable | `git` on `PATH` |
 | Listen address (IPv4) | `127.0.0.1`: this machine only. `0.0.0.0` or a machine address lets other machines connect over plain HTTP with the token: see [ADR-020](docs/adr/0020-listen-address-is-a-setting.md) |
+| Client tokens | One named token per client on another machine: **Add token...** shows it once, masked, with an eye button and buttons to copy the token or the whole client config; only a hash is stored, so a lost token is revoked and replaced. **Revoke** cuts a client off at once and ends its sessions. The primary token (what the IDE writes for clients on this machine) is never shown; **Regenerate primary token...** replaces it. See [ADR-021](docs/adr/0021-named-client-tokens.md) |
 | Allow assistants to install packages | Off; see [ADR-013](docs/adr/0013-user-consent-before-new-code.md) |
 
 Settings are stored in `mcpassistantoptions.xml` in the IDE's primary config
@@ -419,6 +420,7 @@ Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
 | [ADR-018](docs/adr/0018-https-for-package-download-via-curl.md) | HTTPS for package_download through the curl executable |
 | [ADR-019](docs/adr/0019-debug-attach-without-the-ide-dialog.md) | debug_attach: the IDE's attach path without its process dialog |
 | [ADR-020](docs/adr/0020-listen-address-is-a-setting.md) | The listen address is a setting; the loopback is the default |
+| [ADR-021](docs/adr/0021-named-client-tokens.md) | Named client tokens, stored as tagged hashes and shown once |
 
 ADR-007 was never assigned; no document is missing.
 

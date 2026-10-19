@@ -68,7 +68,7 @@ implementation
 
 uses
   FileUtil,
-  McpIdeState, McpLauncher, McpIdeServer, McpUtils;
+  McpIdeState, McpLauncher, McpIdeServer, McpUtils, McpTokensOptions;
 
 { TMcpOptionsGroup }
 
@@ -290,6 +290,7 @@ end;
 procedure RegisterMcpOptionsPage;
 begin
   RegisterIDEOptionsEditor(McpOptionsGroupIndex, TMcpOptionsFrame, 1);
+  RegisterMcpTokensPage(McpOptionsGroupIndex);
 end;
 
 procedure McpSyncAllowInstallMenu;

@@ -86,6 +86,7 @@ var
   PollExe : string;
   PasFile : string;
   CfgFile : string;
+  Relaunch: string;
 begin
   Result  := '';
   PasFile := '';
@@ -108,12 +109,15 @@ begin
     CfgFile := McpSettings.ConfigFileName
   else
     CfgFile := '';
+  { if startlazarus does not bring the IDE back, the script starts this one }
+  Relaunch := ' "--relaunch=' + ParamStr(0) + '" "--pcp=' +
+              ExcludeTrailingPathDelimiter(LazarusIDE.GetPrimaryConfigPath) + '"';
   {$IFDEF WINDOWS}
   Result := 'cmd /c "SET PATH=' + FpcDir + ';%PATH% && "' + PollExe + '" "' +
-            PasFile + '" 180 "' + CfgFile + '""';
+            PasFile + '" 180 "' + CfgFile + '"' + Relaunch + '"';
   {$ELSE}
   Result := 'sh -c ''PATH="' + FpcDir + ':$PATH" "' + PollExe + '" "' +
-            PasFile + '" 180 "' + CfgFile + '"''';
+            PasFile + '" 180 "' + CfgFile + '"' + Relaunch + '''';
   {$ENDIF}
 end;
 

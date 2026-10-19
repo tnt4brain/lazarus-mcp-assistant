@@ -10,6 +10,8 @@ unit McpToolsProject;
 
 interface
 
+uses McpDebugLease;
+
 function GetSystemPromptText: string;
 
 implementation
@@ -561,6 +563,9 @@ begin
         back, or 'anonymous' (ADR-012) }
       if Ctx.ClientId <> '' then
         Obj.Add('client', Ctx.ClientId);
+      { and which token it came with (ADR-021) }
+      if McpSessionTokenName(Ctx.ClientId) <> '' then
+        Obj.Add('token', McpSessionTokenName(Ctx.ClientId));
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;

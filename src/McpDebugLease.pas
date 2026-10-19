@@ -42,9 +42,17 @@ const
 
 { ── Client sessions (any thread) ── }
 function  McpNewSessionId: string;
-procedure McpRegisterSession(const AId, AClientName: string);
+{ ATokenId and ATokenName: the bearer token the client came with (ADR-021). }
+procedure McpRegisterSession(const AId, AClientName: string;
+  const ATokenId: string = ''; const ATokenName: string = '');
 { DELETE /mcp: forget the session and release its lease. }
 procedure McpForgetSession(const AId: string);
+{ The id of the token a session was started with; '' if unknown. }
+function  McpSessionTokenId(const AId: string): string;
+{ The name of that token ('primary' for the primary one); '' if unknown. }
+function  McpSessionTokenName(const AId: string): string;
+{ A token was revoked: forget every session it started (each releases its lease). }
+procedure McpForgetTokenSessions(const ATokenId: string);
 
 { True if AId came from initialize since the IDE started }
 function McpSessionKnown(const AId: string): Boolean;
@@ -86,6 +94,8 @@ type
 var
   GLock         : TCriticalSection = nil;   { guards everything below }
   GSessions     : TStringList = nil;        { id=client name }
+  GSessionToken : TStringList = nil;        { id=token id }
+  GSessionVia   : TStringList = nil;        { id=token name ('' for the primary token) }
   GReadOnly     : TStringList = nil;        { sorted names of read-only tools }
   GOwner        : string = '';              { '' = lease free }
   GOwnerLabel   : string = '';
@@ -113,12 +123,19 @@ begin
   Result := LowerCase(Copy(GUIDToString(G), 2, 36));
 end;
 
-procedure McpRegisterSession(const AId, AClientName: string);
+procedure McpRegisterSession(const AId, AClientName: string;
+  const ATokenId: string; const ATokenName: string);
 begin
   if AId = '' then Exit;
   Lock.Enter;
   try
-    GSessions.Values[AId] := AClientName;
+    { an empty value would remove the entry, and the session with it }
+    if AClientName = '' then
+      GSessions.Values[AId] := 'client'
+    else
+      GSessions.Values[AId] := AClientName;
+    GSessionToken.Values[AId] := ATokenId;
+    GSessionVia.Values[AId]   := ATokenName;
   finally
     Lock.Leave;
   end;
@@ -126,12 +143,59 @@ end;
 
 function LabelLocked(const AId: string): string;
 var
-  N : string;
+  N, Via : string;
 begin
   if AId = ANONYMOUS_CLIENT then Exit('anonymous client (no Mcp-Session-Id)');
   N := GSessions.Values[AId];
   if N = '' then N := 'client';
+  Via := GSessionVia.Values[AId];
+  if Via <> '' then N := N + ' via token "' + Via + '"';
   Result := N + ' (session ' + Copy(AId, 1, 8) + ')';
+end;
+
+function McpSessionTokenId(const AId: string): string;
+begin
+  Lock.Enter;
+  try
+    Result := GSessionToken.Values[AId];
+  finally
+    Lock.Leave;
+  end;
+end;
+
+function McpSessionTokenName(const AId: string): string;
+begin
+  Lock.Enter;
+  try
+    Result := GSessionVia.Values[AId];
+    if (Result = '') and (GSessionToken.Values[AId] <> '') then
+      Result := 'primary';
+  finally
+    Lock.Leave;
+  end;
+end;
+
+procedure McpForgetTokenSessions(const ATokenId: string);
+var
+  Ids : TStringList;
+  I   : Integer;
+begin
+  if ATokenId = '' then Exit;
+  Ids := TStringList.Create;
+  try
+    Lock.Enter;
+    try
+      for I := 0 to GSessionToken.Count - 1 do
+        if GSessionToken.ValueFromIndex[I] = ATokenId then
+          Ids.Add(GSessionToken.Names[I]);
+    finally
+      Lock.Leave;
+    end;
+    for I := 0 to Ids.Count - 1 do
+      McpForgetSession(Ids[I]);
+  finally
+    Ids.Free;
+  end;
 end;
 
 function McpClientLabel(const AId: string): string;
@@ -170,6 +234,10 @@ begin
   try
     I := GSessions.IndexOfName(AId);
     if I >= 0 then GSessions.Delete(I);
+    I := GSessionToken.IndexOfName(AId);
+    if I >= 0 then GSessionToken.Delete(I);
+    I := GSessionVia.IndexOfName(AId);
+    if I >= 0 then GSessionVia.Delete(I);
     { The client is gone; its session is no longer driven by anyone.  The
       watchdog stops it once the lease is free and nobody claims it. }
     if GOwner = AId then
@@ -459,11 +527,15 @@ end;
 initialization
   GLock     := TCriticalSection.Create;
   GSessions := TStringList.Create;
+  GSessionToken := TStringList.Create;
+  GSessionVia   := TStringList.Create;
 
 finalization
   McpFinalizeLease;
   FreeAndNil(GReadOnly);
   FreeAndNil(GSessions);
+  FreeAndNil(GSessionToken);
+  FreeAndNil(GSessionVia);
   FreeAndNil(GLock);
 
 end.
