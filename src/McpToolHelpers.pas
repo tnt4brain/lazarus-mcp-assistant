@@ -24,9 +24,14 @@ function McpRunLazbuild(const LpkPath: string; out IsError: Boolean;
 function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean;
   AClean: Boolean = False): string;
 
+{ '' when ASuite and AEnv of ide_run_tests are usable, else what is wrong with them. }
+function McpTestArgsError(const ASuite: string; AEnv: TJSONObject): string;
+
 { Compile and run the FPCUnit test project at ResolvedLpi (must be non-empty
-  and fully resolved by the caller). }
-function McpRunTests(const ResolvedLpi, JUnitOut: string;
+  and fully resolved by the caller).  ASuite runs one suite or test (--suite=)
+  instead of all; AEnv (name: string value) is added to the program's
+  environment.  AEnv may be nil. }
+function McpRunTests(const ResolvedLpi, JUnitOut, ASuite: string; AEnv: TJSONObject;
   out IsError: Boolean): string;
 
 type
@@ -318,7 +323,31 @@ end;
 
 { ── Test runner ──────────────────────────────────────────────────────────── }
 
-function McpRunTests(const ResolvedLpi, JUnitOut: string;
+function McpTestArgsError(const ASuite: string; AEnv: TJSONObject): string;
+var
+  I, J : Integer;
+  N    : string;
+begin
+  Result := '';
+  for I := 1 to Length(ASuite) do
+    if not (ASuite[I] in ['A'..'Z', 'a'..'z', '0'..'9', '_', '.']) then
+      Exit('suite must be a test class or Class.Test name (letters, digits, _ and .)');
+  if not Assigned(AEnv) then Exit;
+  if AEnv.Count > 32 then Exit('env: at most 32 variables');
+  for I := 0 to AEnv.Count - 1 do
+  begin
+    N := AEnv.Names[I];
+    if (N = '') or (N[1] in ['0'..'9']) then
+      Exit('env: "' + N + '" is not a variable name');
+    for J := 1 to Length(N) do
+      if not (N[J] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) then
+        Exit('env: "' + N + '" is not a variable name');
+    if AEnv.Items[I].JSONType <> jtString then
+      Exit('env: the value of ' + N + ' must be a string');
+  end;
+end;
+
+function McpRunTests(const ResolvedLpi, JUnitOut, ASuite: string; AEnv: TJSONObject;
   out IsError: Boolean): string;
 var
   LazbuildExe : string;
@@ -331,6 +360,7 @@ var
   Total, Errors, Failures, Ignored : Integer;
   Parsed      : Boolean;
   Obj         : TJSONObject;
+  I           : Integer;
 const
   BufSize = 4096;
 begin
@@ -407,7 +437,17 @@ begin
   Proc   := TProcess.Create(nil);
   try
     Proc.Executable := TestExe;
-    Proc.Parameters.Add('--all');
+    if Assigned(AEnv) and (AEnv.Count > 0) then
+    begin
+      for I := 0 to GetEnvironmentVariableCount - 1 do
+        Proc.Environment.Add(GetEnvironmentString(I + 1));
+      for I := 0 to AEnv.Count - 1 do
+        Proc.Environment.Add(AEnv.Names[I] + '=' + AEnv.Items[I].AsString);
+    end;
+    if ASuite <> '' then
+      Proc.Parameters.Add('--suite=' + ASuite)
+    else
+      Proc.Parameters.Add('--all');
     Proc.Parameters.Add('--format=plain');
     if JUnitOut <> '' then
       Proc.Parameters.Add('--junit-out=' + JUnitOut);
@@ -429,6 +469,8 @@ begin
   Obj := TJSONObject.Create;
   try
     Obj.Add('test_project', ResolvedLpi);
+    if ASuite <> '' then
+      Obj.Add('suite', ASuite);
     Obj.Add('compiled', True);
     Obj.Add('run',      True);
     if Parsed then

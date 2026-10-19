@@ -1081,6 +1081,8 @@ var
   Err         : Boolean;
   Text        : string;
   ResolvedLpi : string;
+  RunSuite    : string;
+  RunEnv      : TJSONObject;
   DirData     : TJSONData;
   PkgArgs     : TJSONObject;
   ProjDir     : string;
@@ -1203,8 +1205,17 @@ begin
       end;
     end;
     if not Err then
-      Text := McpRunTests(ResolvedLpi,
-        IfThen(Assigned(Args), Args.Get('junit_out', ''), ''), Err);
+    begin
+      RunSuite := IfThen(Assigned(Args), Args.Get('suite', ''), '');
+      RunEnv   := nil;
+      if Assigned(Args) and (Args.Find('env') is TJSONObject) then
+        RunEnv := TJSONObject(Args.Find('env'));
+      Text := McpTestArgsError(RunSuite, RunEnv);
+      Err  := Text <> '';
+      if not Err then
+        Text := McpRunTests(ResolvedLpi,
+          IfThen(Assigned(Args), Args.Get('junit_out', ''), ''), RunSuite, RunEnv, Err);
+    end;
   end
   else
   begin

@@ -236,7 +236,7 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 | `ide_get_messages` | Everything in the Messages window, all urgency levels |
 | `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
 | `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s |
-| `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML |
+| `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML; `suite` runs one class or test, `env` sets environment variables for the run (for example `MCP_DEBUG_TESTS`) |
 
 ### Git — `git_*`
 

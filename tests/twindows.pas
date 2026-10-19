@@ -50,6 +50,7 @@ type
     procedure TearDown; override;
   published
     procedure TestOpenProgramWithoutProject;
+    procedure TestRunTestsArguments;
     procedure TestDebugPreflightAndExit;
     procedure TestRunOutput;
     procedure TestRunInput;
@@ -369,6 +370,72 @@ begin
   CheckTrue(Pos('MCP Windowee', T) > 0, 'filter matches: ' + T);
 end;
 {$ENDIF}
+
+
+{ ide_run_tests passes suite and env on to the test program: a stand-in program
+  that prints what it got and a summary line in FPCUnit's format }
+procedure TTestProjectRuns.TestRunTestsArguments;
+var
+  Dir, Lpr, Lpi, T : string;
+  SL               : TStringList;
+  I                : Integer;
+begin
+  Dir := GetTempDir(False) + 'mcptestargs' + PathDelim;
+  ForceDirectories(Dir);
+  Lpr := Dir + 'argecho.lpr';
+  Lpi := Dir + 'argecho.lpi';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'program argecho;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+               'uses SysUtils;' + LineEnding + 'begin' + LineEnding +
+               '  WriteLn(''args:'', ParamStr(1));' + LineEnding +
+               '  WriteLn(''env:'', GetEnvironmentVariable(''MCP_T''));' + LineEnding +
+               '  WriteLn(''Time:00.001 N:2 E:0 F:1 I:0'');' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(Lpr);
+  finally
+    SL.Free;
+  end;
+  Call('debug_stop', '{}');
+  Call('project_set_settings', '{}');
+  try
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+    CheckFalse(IsError(T), T);
+    CheckTrue(FileExists(Lpi), '.lpi written');
+    for I := 1 to 20 do
+    begin
+      T := Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
+      if Pos('busy', T) = 0 then Break;
+      Sleep(500);
+    end;
+
+    T := Call('ide_run_tests', '{"test_project":' + JsonStr(Lpi) + '}');
+    CheckFalse(IsError(T), T);
+    CheckTrue(Pos('args:--all', JPath(T, 'output')) > 0, 'default runs all: ' + T);
+    CheckEquals('1', JPath(T, 'failures'), 'summary read: ' + T);
+    CheckEquals('', JPath(T, 'suite'), 'no suite: ' + T);
+
+    T := Call('ide_run_tests', '{"test_project":' + JsonStr(Lpi) +
+      ',"suite":"TTestX.TestY","env":{"MCP_T":"hello"}}');
+    CheckFalse(IsError(T), T);
+    CheckTrue(Pos('args:--suite=TTestX.TestY', JPath(T, 'output')) > 0, 'suite given: ' + T);
+    CheckTrue(Pos('env:hello', JPath(T, 'output')) > 0, 'env given: ' + T);
+    CheckEquals('TTestX.TestY', JPath(T, 'suite'), T);
+
+    T := Call('ide_run_tests', '{"test_project":' + JsonStr(Lpi) + ',"suite":"a b"}');
+    CheckTrue(IsError(T) and (Pos('suite must be', T) > 0), 'bad suite: ' + T);
+    T := Call('ide_run_tests', '{"test_project":' + JsonStr(Lpi) + ',"env":{"A-B":"x"}}');
+    CheckTrue(IsError(T) and (Pos('not a variable name', T) > 0), 'bad env name: ' + T);
+    T := Call('ide_run_tests', '{"test_project":' + JsonStr(Lpi) + ',"env":{"A":1}}');
+    CheckTrue(IsError(T), 'env value must be a string: ' + T);
+  finally
+    DeleteDirectory(Dir, False);
+  end;
+end;
 
 
 { A program with only a .lpr: project_open writes the .lpi next to it, and the
