@@ -436,11 +436,9 @@ ADR-007 was never assigned; no document is missing.
 
 ---
 
-## Planned
+## Help wanted
 
-For v1.0:
-
-- **macOS builds.** Never compiled or run there yet.
+- **macOS builds.** The code for launching Claude Code in Terminal.app exists but has never been compiled or run on macOS. This waits for someone who has a Mac and wants to build and test it; contributions are welcome.
 
 ---
 
