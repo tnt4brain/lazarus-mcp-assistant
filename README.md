@@ -249,6 +249,11 @@ no hard reset). `work_dir` defaults to the project directory.
 `.gitignore` if there is none). It commits nothing and refuses inside an
 existing repository.
 
+`git_clone` clones a repository into a new folder (`url`, `target_dir`; optional
+`branch` and `depth`). The user is asked in the IDE for every clone (ADR-013),
+it runs without holding the IDE, and nothing is built or opened: the result lists
+the `.lpi` and `.lpk` files found, for `project_open`.
+
 For the file open in the editor: `git_blame` (who last changed a line, and in
 which commit) defaults to the active editor's file and cursor line, and blames
 unsaved edits as uncommitted; `git_diff` with `active_file` diffs that file in

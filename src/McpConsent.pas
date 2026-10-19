@@ -29,6 +29,12 @@ function McpPackageNeedsConsent(const ALpkPath: string): Boolean;
 function McpConfirmPackageInstall(const ALpkPath, AToolName: string;
   out AReason: string): Boolean;
 
+{ git_clone (ADR-013, "Clones"): may this address be cloned into this folder?
+  Asked for every clone, with no setting to switch it off; the answer is the
+  user's in a dialog.  Otherwise AReason says why not (for the client). }
+function McpConfirmClone(const AUrl, ATargetDir, ABranch, AToolName: string;
+  ADepth: Integer; out AReason: string): Boolean;
+
 const
   { written by package_download into the package's folder; the dialog shows it }
   MCP_DOWNLOAD_MARKER = 'mcp-download.json';
@@ -49,12 +55,17 @@ type
   private
     FLeft     : Integer;
     FCountdown: TLabel;
+    FNoCaption: string;
     procedure Tick(Sender: TObject);
   public
-    constructor CreateConsent(const ATitle, ADetails: string);
+    constructor CreateConsent(const ATitle, ADetails: string;
+      const AFormCaption: string = 'MCP Assistant: install a package?';
+      const AYesCaption: string = '&Install';
+      const ANoCaption: string = 'Don''t install');
   end;
 
-constructor TMcpConsentForm.CreateConsent(const ATitle, ADetails: string);
+constructor TMcpConsentForm.CreateConsent(const ATitle, ADetails: string;
+  const AFormCaption, AYesCaption, ANoCaption: string);
 var
   Head    : TLabel;
   Memo    : TMemo;
@@ -64,7 +75,8 @@ var
   Timer   : TTimer;
 begin
   inherited CreateNew(nil);
-  Caption     := 'MCP Assistant: install a package?';
+  Caption     := AFormCaption;
+  FNoCaption  := ANoCaption;
   Position    := poScreenCenter;
   FormStyle   := fsStayOnTop;
   BorderStyle := bsDialog;
@@ -97,7 +109,7 @@ begin
   BtnNo.Align       := alRight;
   BtnNo.BorderSpacing.Around := 8;
   BtnNo.Width       := 130;
-  BtnNo.Caption     := 'Don''t install';
+  BtnNo.Caption     := ANoCaption;
   BtnNo.ModalResult := mrNo;
   BtnNo.Default     := True;   { Enter must never approve }
   BtnNo.Cancel      := True;
@@ -107,7 +119,7 @@ begin
   BtnYes.Align       := alRight;
   BtnYes.BorderSpacing.Around := 8;
   BtnYes.Width       := 130;
-  BtnYes.Caption     := '&Install';
+  BtnYes.Caption     := AYesCaption;
   BtnYes.ModalResult := mrYes;
 
   Memo := TMemo.Create(Self);
@@ -135,7 +147,7 @@ begin
     ModalResult := mrNo;   { nobody answered: no }
     Exit;
   end;
-  FCountdown.Caption := Format('No answer in %d s means "Don''t install".', [FLeft]);
+  FCountdown.Caption := Format('No answer in %d s means "%s".', [FLeft, FNoCaption]);
 end;
 
 { ── Package details ──────────────────────────────────────────────────────── }
@@ -308,6 +320,46 @@ begin
       ' (or did not answer within ' + IntToStr(CONSENT_TIMEOUT_S) + ' s). Do not retry ' +
       'unless the user asks you to.';
     LogToIDE('MCP: installing ' + ALpkPath + ' was declined.');
+  end;
+end;
+
+function McpConfirmClone(const AUrl, ATargetDir, ABranch, AToolName: string;
+  ADepth: Integer; out AReason: string): Boolean;
+var
+  Dlg     : TMcpConsentForm;
+  Details : string;
+begin
+  AReason := '';
+  Details := 'An MCP assistant (tool ' + AToolName + ') asks to clone this repository:' +
+    LineEnding + LineEnding +
+    'From:         ' + AUrl + LineEnding +
+    'Into:         ' + ATargetDir + LineEnding;
+  if ABranch <> '' then
+    Details := Details + 'Branch:       ' + ABranch + LineEnding;
+  if ADepth > 0 then
+    Details := Details + 'History:      only the last ' + IntToStr(ADepth) + ' commit(s)' + LineEnding;
+  if Pos('http://', LowerCase(AUrl)) = 1 then
+    Details := Details + LineEnding + 'NOTE: this address is plain HTTP, not encrypted.' + LineEnding;
+  Details := Details + LineEnding +
+    'Cloning downloads the repository''s files into that folder. Nothing is built, ' +
+    'run or opened. Opening a Lazarus project or package and building it can run ' +
+    'commands the project defines, so open only what you trust.';
+
+  Dlg := TMcpConsentForm.CreateConsent(
+    'An assistant wants to clone a repository onto your disk. Do you want this?',
+    Details, 'MCP Assistant: clone a repository?', '&Clone', 'Don''t clone');
+  try
+    Result := Dlg.ShowModal = mrYes;
+  finally
+    Dlg.Free;
+  end;
+  if Result then
+    LogToIDE('MCP: the user allowed cloning ' + AUrl + ' into ' + ATargetDir + '.')
+  else
+  begin
+    AReason := 'The user declined cloning ' + AUrl + ' (or did not answer within ' +
+      IntToStr(CONSENT_TIMEOUT_S) + ' s). Do not retry unless the user asks you to.';
+    LogToIDE('MCP: cloning ' + AUrl + ' was declined.');
   end;
 end;
 

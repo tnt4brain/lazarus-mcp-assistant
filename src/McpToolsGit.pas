@@ -16,7 +16,7 @@ uses
   Classes, SysUtils, DateUtils, Math, Process, FileUtil, LazFileUtils,
   LazIDEIntf, SrcEditorIntf, CodeToolManager, CodeCache, LConvEncoding,
   fpjson,
-  McpToolContext, McpIdeState, McpToolsCodeTools;
+  McpToolContext, McpIdeState, McpToolsCodeTools, McpConsent;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -99,6 +99,19 @@ const
     '"initial_branch":{"type":"string","description":"Name of the first branch (default main)"},' +
     '"gitignore":{"type":"boolean","description":"Also write a .gitignore with the usual Lazarus build output (lib/, *.exe, *.o, *.ppu, backup/ ...), unless the directory has one (default false)"}},' +
     '"required":[]}';
+
+  SCHEMA_GIT_CLONE =
+    '{"type":"object","properties":{' +
+    '"url":{"type":"string","description":"Address of the repository: https://, ssh (git@host:path), or a local path"},' +
+    '"target_dir":{"type":"string","description":"Absolute path of the folder to clone into; it must not exist yet or be empty"},' +
+    '"branch":{"type":"string","description":"Branch or tag to check out (default: the repository''s default branch)"},' +
+    '"depth":{"type":"integer","description":"Only the last N commits (shallow clone); default: the whole history"}},' +
+    '"required":["url","target_dir"]}';
+
+  { the one tool that reaches out to the network: openWorldHint }
+  MCP_ANN_CLONE = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":true}';
+
+  CLONE_TIMEOUT_MS = 30 * 60 * 1000;
 
   GITIGNORE_LAZARUS =
     '# Lazarus / Free Pascal build output' + LineEnding +
@@ -416,6 +429,253 @@ begin
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
+
+{ ── git_clone ────────────────────────────────────────────────────────────── }
+
+{ Like RunGit, for a command that may take minutes and talks to a remote:
+  runs on the MCP worker thread (so AExe is passed in, McpGitExecutable is for
+  the main thread), never asks for credentials (stdin is closed, so a prompt
+  would hang), and is stopped after ATimeoutMs. }
+function RunGitTimed(const AExe: string; const Args: array of string;
+  const WorkDir: string; ATimeoutMs: QWord; out Output: string): Boolean;
+var
+  Proc     : TProcess;
+  Buf      : string;
+  N, I     : LongInt;
+  Started  : QWord;
+  TimedOut : Boolean;
+
+  procedure Drain;
+  begin
+    while Proc.Output.NumBytesAvailable > 0 do
+    begin
+      SetLength(Buf, 4096);
+      N := Proc.Output.Read(Buf[1], 4096);
+      if N <= 0 then Break;
+      SetLength(Buf, N);
+      Output := Output + Buf;
+    end;
+  end;
+
+begin
+  Output   := '';
+  TimedOut := False;
+  Proc     := TProcess.Create(nil);
+  try
+    Proc.Executable := AExe;
+    for I := 0 to High(Args) do
+      Proc.Parameters.Add(Args[I]);
+    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
+    if WorkDir <> '' then
+      Proc.CurrentDirectory := WorkDir;
+    for I := 1 to GetEnvironmentVariableCount do
+      Proc.Environment.Add(GetEnvironmentString(I));
+    Proc.Environment.Add('GIT_TERMINAL_PROMPT=0');
+    Proc.Execute;
+    Proc.CloseInput;
+    Started := GetTickCount64;
+    while Proc.Running do
+    begin
+      Drain;
+      if GetTickCount64 - Started > ATimeoutMs then
+      begin
+        TimedOut := True;
+        Proc.Terminate(1);
+        Break;
+      end;
+      Sleep(30);
+    end;
+    Proc.WaitOnExit;
+    Drain;
+    Result := (Proc.ExitCode = 0) and not TimedOut;
+    if TimedOut then
+      Output := Output + LineEnding + 'git clone was stopped after ' +
+        IntToStr(ATimeoutMs div 60000) + ' minutes.';
+  finally
+    Proc.Free;
+  end;
+end;
+
+type
+  { main-thread part of git_clone: the git executable and the user's consent }
+  TGitCloneSync = class
+  public
+    Url, Target, Branch, ToolName : string;
+    Depth     : Integer;
+    GitExe    : string;
+    ConsentOk : Boolean;
+    ConsentMsg: string;
+    procedure Ask;
+  end;
+
+var
+  GCloneSync: TGitCloneSync = nil;
+
+procedure TGitCloneSync.Ask;
+begin
+  ConsentOk := False;
+  try
+    GitExe := McpGitExecutable;
+    if GitExe = '' then
+    begin
+      ConsentMsg := 'git executable not found on PATH; the user can set its path in ' +
+                    'Tools > Options > MCP Assistant';
+      Exit;
+    end;
+    ConsentOk := McpConfirmClone(Url, Target, Branch, ToolName, Depth, ConsentMsg);
+  except
+    { Synchronize would re-raise this in the worker thread, which then never
+      answers the request }
+    on E: Exception do
+    begin
+      ConsentOk  := False;
+      ConsentMsg := 'Could not ask the user: ' + E.ClassName + ': ' + E.Message;
+    end;
+  end;
+end;
+
+function IsEmptyDir(const ADir: string): Boolean;
+var
+  SR: TSearchRec;
+begin
+  Result := True;
+  if FindFirst(IncludeTrailingPathDelimiter(ADir) + '*', faAnyFile, SR) = 0 then
+  try
+    repeat
+      if (SR.Name <> '.') and (SR.Name <> '..') then
+      begin
+        Result := False;
+        Break;
+      end;
+    until FindNext(SR) <> 0;
+  finally
+    FindClose(SR);
+  end;
+end;
+
+{ .lpi projects and .lpk packages in the new clone, three levels deep. }
+procedure CollectLazarusFiles(const ADir: string; ALevel: Integer;
+  AProjects, APackages: TJSONArray);
+var
+  SR  : TSearchRec;
+  Ext : string;
+begin
+  if (ALevel > 3) or (AProjects.Count + APackages.Count >= 50) then Exit;
+  if FindFirst(IncludeTrailingPathDelimiter(ADir) + '*', faAnyFile, SR) <> 0 then Exit;
+  try
+    repeat
+      if (SR.Name = '.') or (SR.Name = '..') or (SR.Name = '.git') then Continue;
+      if (SR.Attr and faDirectory) <> 0 then
+        CollectLazarusFiles(IncludeTrailingPathDelimiter(ADir) + SR.Name,
+          ALevel + 1, AProjects, APackages)
+      else
+      begin
+        Ext := LowerCase(ExtractFileExt(SR.Name));
+        if Ext = '.lpi' then
+          AProjects.Add(IncludeTrailingPathDelimiter(ADir) + SR.Name)
+        else if Ext = '.lpk' then
+          APackages.Add(IncludeTrailingPathDelimiter(ADir) + SR.Name);
+      end;
+    until FindNext(SR) <> 0;
+  finally
+    FindClose(SR);
+  end;
+end;
+
+{ Runs on the MCP worker thread: a clone can take minutes and must not hold
+  the IDE.  Only the consent dialog goes to the main thread. }
+function DispatchGitBlockingTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
+var
+  Url, Target, Branch, Output : string;
+  Depth    : Integer;
+  Args     : TStringList;
+  Obj      : TJSONObject;
+  Projects, Packages : TJSONArray;
+  Ok       : Boolean;
+begin
+  Result := False;
+  if Name <> 'git_clone' then Exit;
+  Result := True;
+
+  Url := ''; Target := ''; Branch := ''; Depth := 0;
+  if Assigned(Ctx.Params) then
+  begin
+    Url    := Trim(Ctx.Params.Get('url', ''));
+    Target := Trim(Ctx.Params.Get('target_dir', ''));
+    Branch := Trim(Ctx.Params.Get('branch', ''));
+    Depth  := Ctx.Params.Get('depth', 0);
+  end;
+  if (Url = '') or (Target = '') then
+  begin
+    Ctx.Error := True; Ctx.Result := 'url and target_dir required'; Exit;
+  end;
+  { an address that starts with - would be read as an option; ext:: runs a command }
+  if (Url[1] = '-') or (Pos('ext::', LowerCase(Url)) = 1) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Not a repository address: ' + Url; Exit;
+  end;
+  if (Branch <> '') and ((Branch[1] = '-') or (Pos(' ', Branch) > 0)) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Invalid branch or tag name: ' + Branch; Exit;
+  end;
+  if Depth < 0 then
+  begin
+    Ctx.Error := True; Ctx.Result := 'depth must be 1 or more'; Exit;
+  end;
+  if not FilenameIsAbsolute(Target) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'target_dir must be an absolute path'; Exit;
+  end;
+  Target := ExcludeTrailingPathDelimiter(Target);
+  if FileExists(Target) or (DirectoryExists(Target) and not IsEmptyDir(Target)) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := Target + ' exists and is not an empty folder. Clone into a new folder.';
+    Exit;
+  end;
+
+  GCloneSync.Url      := Url;
+  GCloneSync.Target   := Target;
+  GCloneSync.Branch   := Branch;
+  GCloneSync.Depth    := Depth;
+  GCloneSync.ToolName := Name;
+  TThread.Synchronize(nil, @GCloneSync.Ask);
+  if not GCloneSync.ConsentOk then
+  begin
+    Ctx.Error := True; Ctx.Result := GCloneSync.ConsentMsg; Exit;
+  end;
+
+  Args := TStringList.Create;
+  try
+    Args.Add('-c'); Args.Add('protocol.ext.allow=never');
+    Args.Add('clone');
+    if Branch <> '' then begin Args.Add('--branch'); Args.Add(Branch); end;
+    if Depth > 0 then begin Args.Add('--depth'); Args.Add(IntToStr(Depth)); end;
+    Args.Add('--'); Args.Add(Url); Args.Add(Target);
+    Ok := RunGitTimed(GCloneSync.GitExe, Args.ToStringArray, '', CLONE_TIMEOUT_MS, Output);
+  finally
+    Args.Free;
+  end;
+
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('output', Trim(Output));
+    if Ok then
+    begin
+      Projects := TJSONArray.Create;
+      Packages := TJSONArray.Create;
+      CollectLazarusFiles(Target, 0, Projects, Packages);
+      Obj.Add('target_dir', Target);
+      Obj.Add('projects', Projects);   { open one with project_open }
+      Obj.Add('packages', Packages);
+    end
+    else
+      Ctx.Error := True;
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
 
 function DispatchGitTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
@@ -857,6 +1117,12 @@ begin
     'nothing is committed. Refused inside an existing repository. ' +
     'initial_branch defaults to main; gitignore=true adds a Lazarus .gitignore if there is none.',
     SCHEMA_GIT_INIT, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('git_clone',
+    'Clone a repository into a new folder (git clone). The user is asked in the IDE for ' +
+    'every clone and may say no; do not retry then. Runs without stopping the IDE and never ' +
+    'asks for credentials (an address that needs them fails). Returns the .lpi projects and ' +
+    '.lpk packages found in the clone; open one with project_open. Nothing is built or opened.',
+    SCHEMA_GIT_CLONE, MCP_ANN_CLONE));
   Tools.Add(MakeTool('git_reset',
     'Reset the current HEAD to target. mode=mixed (default) unstages changes ' +
     'and moves HEAD; mode=soft keeps changes staged. ' +
@@ -865,7 +1131,12 @@ begin
 end;
 
 initialization
+  GCloneSync := TGitCloneSync.Create;
   RegisterMcpGroup(@DispatchGitTool);
+  RegisterMcpBlockingGroup(@DispatchGitBlockingTool);
   RegisterMcpSchemas(@RegisterGitSchemas);
+
+finalization
+  GCloneSync.Free;
 
 end.

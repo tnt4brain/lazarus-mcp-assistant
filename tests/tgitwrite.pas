@@ -35,6 +35,7 @@ type
     procedure TestInitCreatesRepository;
     procedure TestInitKeepsExistingGitignore;
     procedure TestInitRefusedInsideRepository;
+    procedure TestCloneRefusesBadArguments;
   end;
 
 implementation
@@ -252,6 +253,29 @@ begin
   T := Tool('git_init', '');
   CheckTrue(IsError(T), 'refused in a repository: ' + T);
   CheckTrue(Pos('already inside', T) > 0, T);
+end;
+
+{ Everything git_clone refuses before it asks the user.  A clone that gets as
+  far as the consent dialog needs a human, so it is not tested here. }
+procedure TTestGitWrite.TestCloneRefusesBadArguments;
+var
+  Fresh, T : string;
+begin
+  Fresh := FDir + 'new-clone';
+  T := CallToolText('git_clone', '{"url":"-oProxyCommand=x","target_dir":' + JsonStr(Fresh) + '}', []);
+  CheckTrue(IsError(T) and (Pos('Not a repository address', T) > 0), 'option as address: ' + T);
+  T := CallToolText('git_clone', '{"url":"ext::sh -c id","target_dir":' + JsonStr(Fresh) + '}', []);
+  CheckTrue(IsError(T) and (Pos('Not a repository address', T) > 0), 'ext transport: ' + T);
+  T := CallToolText('git_clone', '{"url":' + JsonStr(FDir) + ',"target_dir":"relative/dir"}', []);
+  CheckTrue(IsError(T) and (Pos('absolute', T) > 0), 'relative target: ' + T);
+  T := CallToolText('git_clone', '{"url":' + JsonStr(FDir) + ',"target_dir":' + JsonStr(FDir) + '}', []);
+  CheckTrue(IsError(T) and (Pos('not an empty folder', T) > 0), 'target with files: ' + T);
+  T := CallToolText('git_clone', '{"url":' + JsonStr(FDir) + ',"target_dir":' + JsonStr(Fresh) +
+    ',"branch":"--upload-pack=x"}', []);
+  CheckTrue(IsError(T) and (Pos('Invalid branch', T) > 0), 'option as branch: ' + T);
+  T := CallToolText('git_clone', '{"url":' + JsonStr(FDir) + '}', []);
+  CheckTrue(IsError(T), 'target_dir is required: ' + T);
+  CheckFalse(DirectoryExists(Fresh), 'nothing was cloned');
 end;
 
 end.

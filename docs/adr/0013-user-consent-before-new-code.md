@@ -126,6 +126,38 @@ this gate unchanged. The download installs nothing, so it needs no consent.
   The user answered "Don't install". Nothing was installed, and the download was
   removed again.
 
+### Clones (v1.1)
+`git_clone` brings files from a network address (or another folder) onto the disk
+at the assistant's choice, so it gets a gate of its own, lighter than the install
+gate because nothing runs:
+
+- **A dialog for every clone** (`McpConfirmClone`, same `TMcpConsentForm` as the
+  install dialog). It shows the address, the target folder, branch and depth, and
+  a note for plain `http://`. "Don't clone" is the default and cancel button, and
+  no answer within 180 s means no.
+- **No setting.** Unlike installs there is no opt-in checkbox: the dialog is the
+  gate, and a clone into a new folder can be deleted. Remembering "trusted"
+  addresses was left out on purpose; every clone is asked.
+- **Nothing is built, run or opened.** The result lists the `.lpi` and `.lpk`
+  files found, and opening one is a separate `project_open` call by the assistant
+  (building it can run the project's own commands, as noted above).
+- **Arguments:** the target must be an absolute path that does not exist or is
+  empty (nothing is merged into existing files). An address or branch starting
+  with `-` is refused (it would be read as an option), and so is the `ext::`
+  transport (it runs a command); `protocol.ext.allow=never` is also set.
+- **Runs on the MCP worker thread** (a blocking group), with a 30 minute limit, so
+  a slow clone does not hold the IDE. `GIT_TERMINAL_PROMPT=0` is set: stdin is
+  closed, so a credential prompt would hang. Credential helpers and SSH keys still
+  work; an address that needs a typed password fails with git's message.
+- **Verified:** the arguments above are refused without a dialog
+  (`TestCloneRefusesBadArguments`). A clone of a local repository went through
+  after the user clicked Clone, and the result listed its `.lpk`. The decline
+  path and a clone over the network were not exercised.
+- **Open:** the first attempt in the session that tested this returned no answer
+  and showed no dialog, and the cause was not found. The main-thread step now
+  catches its own exceptions and returns them as the tool's error; the second
+  attempt, after the IDE was rebuilt with that change, worked.
+
 ## Alternatives considered
 
 - **MCP elicitation (`elicitation/create`).** It asks the user in the client's UI.
