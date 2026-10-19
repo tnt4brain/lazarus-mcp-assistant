@@ -34,6 +34,7 @@ type
   published
     procedure TestNoWindow;
     procedure TestImage;
+    procedure TestIdeWindow;
     {$IFDEF WINDOWS}
     procedure TestWidgetset;
     procedure TestTree;
@@ -292,6 +293,21 @@ begin
   CheckTrue(Pos('No visible window', T) > 0, 'filtered: ' + T);
 end;
 {$ENDIF}
+
+{ ide=true shows the IDE's own windows, and only the ones that are named. }
+procedure TTestWindows.TestIdeWindow;
+var
+  T : string;
+begin
+  T := Call('project_get_windows', '{"ide":true}');
+  CheckTrue(Pos('needs window', T) > 0, 'a caption is required: ' + T);
+  T := Call('project_get_windows', '{"ide":true,"window":"no such caption anywhere"}');
+  CheckTrue(Pos('No visible window', T) > 0, 'filtered: ' + T);
+  CheckTrue(Pos('open in the IDE', T) > 0, 'says it is about the IDE: ' + T);
+  T := Call('project_get_windows', '{"ide":true,"window":"lazarus"}');
+  CheckEquals(0, Pos('No visible window', T), 'the IDE''s own window is found: ' + T);
+  CheckTrue(Pos('lazarus', LowerCase(T)) > 0, T);
+end;
 
 { An image content block after the text: a PNG no larger than max_size. }
 procedure TTestWindows.TestImage;

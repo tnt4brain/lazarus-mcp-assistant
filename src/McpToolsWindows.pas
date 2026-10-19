@@ -29,21 +29,37 @@ uses
 const
   SCHEMA_GET_WINDOWS =
     '{"type":"object","properties":{' +
-    '"window":{"type":"string","description":"Only top-level windows whose caption contains this text (case-insensitive)"},' +
+    '"window":{"type":"string","description":"Only top-level windows whose caption contains this text (case-insensitive); required with ide"},' +
+    '"ide":{"type":"boolean","description":"Look at the IDE''s own windows (a form, a dialog) instead of the running project''s; needs window, so only the windows you name are shown (default false)"},' +
     '"image":{"type":"boolean","description":"Also return a PNG of each top-level window (default false)"},' +
     '"max_size":{"type":"integer","description":"Longest edge of an image in pixels; larger windows are scaled down (default 1024, 64..4096)"}}}';
 
 type
   TTargetReader = class
+    UseIde : Boolean;  { in: the IDE's own program, not the project's }
     Target : string;
     procedure Read;   { main thread }
   end;
 
 procedure TTargetReader.Read;
 begin
+  if UseIde then
+  begin
+    Target := ExpandFileName(ParamStr(0));
+    Exit;
+  end;
   Target := '$(TargetFile)';
   if not Assigned(IDEMacros) or not IDEMacros.SubstituteMacros(Target) then
     Target := '';
+end;
+
+{ What to tell when no window matched. }
+function NoWindowAdvice(AIde: Boolean): string;
+begin
+  if AIde then
+    Result := '. Is that window open in the IDE?'
+  else
+    Result := '. Start it with project_run or debug_run.';
 end;
 
 {$IFDEF WINDOWS}
@@ -413,7 +429,7 @@ begin
     begin
       Ctx.Result := 'No visible window of ' + ATarget +
                     IfThen(L.Filter <> '', ' with "' + L.Filter + '" in its caption') +
-                    '. Start it with project_run or debug_run.';
+                    NoWindowAdvice(Assigned(Ctx.Params) and Ctx.Params.Get('ide', False));
       Exit;
     end;
     Tree.Lines.Add(ATarget + ', pid ' + IntToStr(L.Pids[0]));
@@ -757,7 +773,7 @@ begin
       begin
         Ctx^.Result := 'No visible window of ' + Target +
                        IfThen(L.Filter <> '', ' with "' + L.Filter + '" in its caption') +
-                       '. Start it with project_run or debug_run.';
+                       NoWindowAdvice(Assigned(Ctx^.Params) and Ctx^.Params.Get('ide', False));
         Exit;
       end;
       Lines.Add(Target + ', pid ' + IntToStr(L.Pids[0]));
@@ -813,6 +829,14 @@ begin
   {$IF DEFINED(WINDOWS) OR DEFINED(MCP_X11)}
   Reader := TTargetReader.Create;
   try
+    Reader.UseIde := Assigned(Ctx.Params) and Ctx.Params.Get('ide', False);
+    { the IDE shows source code and more: only the windows that are named }
+    if Reader.UseIde and (Trim(Ctx.Params.Get('window', '')) = '') then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'ide=true needs window: part of the caption of the IDE window to look at';
+      Exit;
+    end;
     TThread.Synchronize(nil, @Reader.Read);
     if Reader.Target = '' then
     begin
@@ -843,7 +867,9 @@ end;
 procedure RegisterWindowsSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('project_get_windows',
-    'See the running project (started with project_run or debug_run): its ' +
+    'See the running project (started with project_run or debug_run), or with ' +
+    'ide=true and window=<part of a caption> a window of the IDE itself (a form ' +
+    'you are building, a dialog): its ' +
     'visible top-level windows as a tree, one line per windowed control: ' +
     'Class "text" x,y wxh, relative to the parent (on screen for a window). ' +
     'Controls without a window handle (TLabel, TSpeedButton, TShape, TImage, ' +
