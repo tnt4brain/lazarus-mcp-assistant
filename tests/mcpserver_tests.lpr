@@ -206,9 +206,7 @@ begin
     if GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1' then
     begin
       WindoweeSuite := TTestSuite.Create('Windowee');
-      {$IFDEF WINDOWS}
       WindoweeSuite.AddTest(TTestWindows.Suite);
-      {$ENDIF}
       WindoweeSuite.AddTest(TTestProjectRuns.Suite);
       GetTestRegistry.AddTest(TWindoweeSetup.Create(WindoweeSuite));
     end

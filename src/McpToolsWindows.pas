@@ -5,9 +5,14 @@ unit McpToolsWindows;
   project's target file), as a text tree of controls and optionally as PNG
   images.  Runs off the main thread, and sends the program no message that
   could wait: a program paused in the debugger does not answer messages, and
-  the call would wait as long.  Windows only for now. }
+  the call would wait as long.  Windows: the controls too.  X11: the top-level
+  windows only.  Not on macOS yet. }
 
 {$mode objfpc}{$H+}
+
+{$IF DEFINED(UNIX) AND NOT DEFINED(DARWIN)}
+  {$DEFINE MCP_X11}
+{$ENDIF}
 
 interface
 
@@ -15,6 +20,7 @@ implementation
 
 uses
   {$IFDEF WINDOWS} Windows, {$ENDIF}
+  {$IFDEF MCP_X11} BaseUnix, ctypes, x, xlib, xutil, xatom, {$ENDIF}
   Classes, SysUtils, SyncObjs, StrUtils, Math, base64, FPImage, FPWritePNG,
   MacroIntf, LazFileUtils,
   fpjson,
@@ -442,13 +448,369 @@ end;
 
 {$ENDIF}
 
+{$IFDEF MCP_X11}
+
+{ X11: the top-level windows of the program, found by _NET_WM_PID, with their
+  captions and a PNG of each.  No controls: X knows only the windows the toolkit
+  creates, and the LCL draws its graphic controls itself.  Runs on the main
+  thread, where the IDE's own GTK uses Xlib; asking the X server never waits for
+  the program, so a program paused in the debugger is no problem (the image is
+  what is on the screen then). }
+
+type
+  PMcpToolCall = ^TMcpToolCall;
+
+  TX11Lister = class
+    Dpy      : PDisplay;
+    Target   : string;
+    Filter   : string;
+    AtomPid  : TAtom;
+    AtomName : TAtom;
+    AtomUtf8 : TAtom;
+    Wins     : array of TWindow;
+    Pids     : array of culong;
+    Checked  : array of culong;
+    Matching : array of Boolean;
+    function  IsTargetPid(Pid: culong): Boolean;
+    procedure Consider(W: TWindow; Pid: culong);
+    procedure Collect(W: TWindow; ADepth: Integer);
+  end;
+
+  TX11Windows = class
+    Ctx    : PMcpToolCall;
+    Target : string;
+    procedure Run;   { main thread }
+  end;
+
+var
+  GXError : Boolean;
+
+{ An X error (a window closed between two calls) must not reach GDK's handler,
+  which ends the IDE. }
+function QuietXErrors(Dpy: PDisplay; Ev: PXErrorEvent): cint; cdecl;
+begin
+  GXError := True;
+  Result := 0;
+end;
+
+{ The property's data (free it with XFree), nil if the window has none. }
+function WinProperty(Dpy: PDisplay; W: TWindow; Prop, PropType: TAtom;
+  ALongs: clong; out Fmt: cint; out N: culong): pcuchar;
+var
+  ActType : TAtom;
+  After   : culong;
+begin
+  Result := nil;
+  Fmt := 0;
+  N   := 0;
+  if XGetWindowProperty(Dpy, W, Prop, 0, ALongs, False, PropType, @ActType, @Fmt,
+       @N, @After, @Result) <> Success then
+    Result := nil;
+end;
+
+function WindowPid(Dpy: PDisplay; W: TWindow; AtomPid: TAtom): culong;
+var
+  D   : pcuchar;
+  Fmt : cint;
+  N   : culong;
+begin
+  Result := 0;
+  D := WinProperty(Dpy, W, AtomPid, XA_CARDINAL, 1, Fmt, N);
+  if D = nil then Exit;
+  if (Fmt = 32) and (N >= 1) then Result := pculong(D)^;
+  XFree(D);
+end;
+
+function WindowCaption(Dpy: PDisplay; W: TWindow; AtomName, AtomUtf8: TAtom): string;
+var
+  D   : pcuchar;
+  Fmt : cint;
+  N   : culong;
+  P   : PChar;
+begin
+  Result := '';
+  D := WinProperty(Dpy, W, AtomName, AtomUtf8, 256, Fmt, N);
+  if D <> nil then
+  begin
+    if Fmt = 8 then SetString(Result, PChar(D), N);
+    XFree(D);
+  end;
+  if Result = '' then
+  begin
+    P := nil;
+    if (XFetchName(Dpy, W, @P) <> 0) and (P <> nil) then
+    begin
+      Result := P;
+      XFree(P);
+    end;
+  end;
+  if Length(Result) > 60 then Result := Copy(Result, 1, 57) + '...';
+  Result := StringReplace(StringReplace(Result, #13, '', [rfReplaceAll]),
+                          #10, '\n', [rfReplaceAll]);
+end;
+
+function WindowClass(Dpy: PDisplay; W: TWindow): string;
+var
+  H : TXClassHint;
+begin
+  Result := '';
+  FillChar(H, SizeOf(H), 0);
+  if XGetClassHint(Dpy, W, @H) = 0 then Exit;
+  if H.res_class <> nil then Result := H.res_class;
+  if H.res_name  <> nil then XFree(H.res_name);
+  if H.res_class <> nil then XFree(H.res_class);
+end;
+
+function TX11Lister.IsTargetPid(Pid: culong): Boolean;
+var
+  I : Integer;
+begin
+  for I := 0 to High(Checked) do
+    if Checked[I] = Pid then Exit(Matching[I]);
+  Result := SameFileName(fpReadLink('/proc/' + IntToStr(Pid) + '/exe'), Target);
+  SetLength(Checked, Length(Checked) + 1);
+  SetLength(Matching, Length(Matching) + 1);
+  Checked[High(Checked)]   := Pid;
+  Matching[High(Matching)] := Result;
+end;
+
+procedure TX11Lister.Consider(W: TWindow; Pid: culong);
+var
+  Attr : TXWindowAttributes;
+begin
+  if XGetWindowAttributes(Dpy, W, @Attr) = 0 then Exit;
+  if Attr.map_state <> IsViewable then Exit;
+  if not IsTargetPid(Pid) then Exit;
+  if (Filter <> '') and
+     (Pos(LowerCase(Filter), LowerCase(WindowCaption(Dpy, W, AtomName, AtomUtf8))) = 0) then Exit;
+  SetLength(Wins, Length(Wins) + 1);
+  SetLength(Pids, Length(Pids) + 1);
+  Wins[High(Wins)] := W;
+  Pids[High(Pids)] := Pid;
+end;
+
+{ The window manager's frames sit between the root and the program's window:
+  look a few levels down, and stop at a window that names its process. }
+procedure TX11Lister.Collect(W: TWindow; ADepth: Integer);
+var
+  Root, Parent : TWindow;
+  Kids         : PWindow;
+  N            : cuint;
+  I            : Integer;
+  Kid          : TWindow;
+  Pid          : culong;
+begin
+  Kids := nil;
+  N := 0;
+  if XQueryTree(Dpy, W, @Root, @Parent, @Kids, @N) = 0 then Exit;
+  try
+    for I := 0 to Integer(N) - 1 do
+    begin
+      Kid := PWindow(PByte(Kids) + I * SizeOf(TWindow))^;
+      Pid := WindowPid(Dpy, Kid, AtomPid);
+      if Pid <> 0 then
+        Consider(Kid, Pid)
+      else if ADepth < 3 then
+        Collect(Kid, ADepth + 1);
+    end;
+  finally
+    if Kids <> nil then XFree(Kids);
+  end;
+end;
+
+procedure MaskInfo(Mask: culong; out Shift: Integer; out MaxV: culong);
+begin
+  Shift := 0;
+  MaxV  := 1;
+  if Mask = 0 then Exit;
+  while ((Mask shr Shift) and 1) = 0 do Inc(Shift);
+  MaxV := Mask shr Shift;
+end;
+
+{ The window's pixels as they are on the screen (what covers the window shows),
+  scaled down to MaxSize, as a base64 PNG; '' if the server refuses. }
+function CaptureWindow(Dpy: PDisplay; W: TWindow; AWidth, AHeight, MaxSize: Integer): string;
+var
+  Src          : PXImage;
+  Img          : TFPMemoryImage;
+  Writer       : TFPWriterPNG;
+  Stream       : TStringStream;
+  Scale        : Double;
+  DW, DH       : Integer;
+  Ox, Oy       : Integer;
+  Sx, Sy       : Integer;
+  X0, X1       : Integer;
+  Y0, Y1       : Integer;
+  Cnt          : Integer;
+  Pix          : culong;
+  SumR, SumG, SumB : Int64;
+  RS, GS, BS   : Integer;
+  RM, GM, BM   : culong;
+  C            : TFPColor;
+begin
+  Result := '';
+  if (AWidth <= 0) or (AHeight <= 0) then Exit;
+  GXError := False;
+  Src := XGetImage(Dpy, W, 0, 0, AWidth, AHeight, culong(-1), ZPixmap);
+  XSync(Dpy, False);
+  if (Src = nil) or GXError then
+  begin
+    if Src <> nil then XDestroyImage(Src);
+    Exit;
+  end;
+  Img := nil;
+  try
+    MaskInfo(Src^.red_mask,   RS, RM);
+    MaskInfo(Src^.green_mask, GS, GM);
+    MaskInfo(Src^.blue_mask,  BS, BM);
+    Scale := Min(1.0, MaxSize / Max(AWidth, AHeight));
+    DW := Max(1, Round(AWidth * Scale));
+    DH := Max(1, Round(AHeight * Scale));
+    Img := TFPMemoryImage.Create(DW, DH);
+    for Oy := 0 to DH - 1 do
+    begin
+      Y0 := Oy * AHeight div DH;
+      Y1 := Max(Y0 + 1, (Oy + 1) * AHeight div DH);
+      for Ox := 0 to DW - 1 do
+      begin
+        X0 := Ox * AWidth div DW;
+        X1 := Max(X0 + 1, (Ox + 1) * AWidth div DW);
+        SumR := 0; SumG := 0; SumB := 0; Cnt := 0;
+        for Sy := Y0 to Y1 - 1 do
+          for Sx := X0 to X1 - 1 do
+          begin
+            Pix := XGetPixel(Src, Sx, Sy);
+            Inc(SumR, ((Pix and Src^.red_mask)   shr RS) * 255 div RM);
+            Inc(SumG, ((Pix and Src^.green_mask) shr GS) * 255 div GM);
+            Inc(SumB, ((Pix and Src^.blue_mask)  shr BS) * 255 div BM);
+            Inc(Cnt);
+          end;
+        C.Red   := (SumR div Cnt) * $101;
+        C.Green := (SumG div Cnt) * $101;
+        C.Blue  := (SumB div Cnt) * $101;
+        C.Alpha := alphaOpaque;
+        Img.Colors[Ox, Oy] := C;
+      end;
+    end;
+    Writer := TFPWriterPNG.Create;
+    Stream := TStringStream.Create('');
+    try
+      Writer.UseAlpha  := False;
+      Writer.Indexed   := False;
+      Writer.GrayScale := False;
+      Writer.WordSized := False;
+      Img.SaveToStream(Stream, Writer);
+      Result := EncodeStringBase64(Stream.DataString);
+    finally
+      Stream.Free;
+      Writer.Free;
+    end;
+  finally
+    Img.Free;
+    XDestroyImage(Src);
+  end;
+end;
+
+procedure TX11Windows.Run;
+var
+  L       : TX11Lister;
+  Lines   : TStringList;
+  Old     : TXErrorHandler;
+  Root    : TWindow;
+  Attr    : TXWindowAttributes;
+  Child   : TWindow;
+  I       : Integer;
+  Px, Py  : cint;
+  Cls, Cap, Png, S : string;
+  WantImg : Boolean;
+  MaxSize : Integer;
+begin
+  WantImg := False;
+  MaxSize := 1024;
+  L := TX11Lister.Create;
+  Lines := TStringList.Create;
+  Lines.LineBreak := #10;
+  try
+    L.Target := Target;
+    if Assigned(Ctx^.Params) then
+    begin
+      L.Filter := Ctx^.Params.Get('window', '');
+      WantImg  := Ctx^.Params.Get('image', False);
+      MaxSize  := EnsureRange(Ctx^.Params.Get('max_size', 1024), 64, 4096);
+    end;
+    L.Dpy := XOpenDisplay(nil);
+    if L.Dpy = nil then
+    begin
+      Ctx^.Error  := True;
+      Ctx^.Result := 'The IDE has no X display to look at (no DISPLAY; Wayland without XWayland?)';
+      Exit;
+    end;
+    GXError := False;
+    Old := XSetErrorHandler(@QuietXErrors);
+    try
+      L.AtomPid  := XInternAtom(L.Dpy, '_NET_WM_PID', False);
+      L.AtomName := XInternAtom(L.Dpy, '_NET_WM_NAME', False);
+      L.AtomUtf8 := XInternAtom(L.Dpy, 'UTF8_STRING', False);
+      Root := XDefaultRootWindow(L.Dpy);
+      L.Collect(Root, 0);
+      if Length(L.Wins) = 0 then
+      begin
+        Ctx^.Result := 'No visible window of ' + Target +
+                       IfThen(L.Filter <> '', ' with "' + L.Filter + '" in its caption') +
+                       '. Start it with project_run or debug_run.';
+        Exit;
+      end;
+      Lines.Add(Target + ', pid ' + IntToStr(L.Pids[0]));
+      for I := 0 to High(L.Wins) do
+      begin
+        if XGetWindowAttributes(L.Dpy, L.Wins[I], @Attr) = 0 then Continue;
+        { on screen: the origin of the window's own area }
+        Px := 0; Py := 0;
+        XTranslateCoordinates(L.Dpy, L.Wins[I], Root, 0, 0, @Px, @Py, @Child);
+        Cls := WindowClass(L.Dpy, L.Wins[I]);
+        if Cls = '' then Cls := 'Window';
+        Cap := WindowCaption(L.Dpy, L.Wins[I], L.AtomName, L.AtomUtf8);
+        S := Cls;
+        if Cap <> '' then S := S + ' "' + Cap + '"';
+        Lines.Add(Format('%s %d,%d %dx%d', [S, Px, Py, Attr.width, Attr.height]));
+        if WantImg then
+        begin
+          Png := CaptureWindow(L.Dpy, L.Wins[I], Attr.width, Attr.height, MaxSize);
+          if Png <> '' then
+          begin
+            SetLength(Ctx^.Images, Length(Ctx^.Images) + 1);
+            Ctx^.Images[High(Ctx^.Images)] := Png;
+            Lines.Add('(image copied from the screen: what covers the window shows)');
+          end
+          else
+            Lines.Add('(no image of this window)');
+        end;
+      end;
+      Lines.Add('(top-level windows only: the controls inside are not listed on X11)');
+      Ctx^.Result := TrimRight(Lines.Text);
+    finally
+      XSync(L.Dpy, False);
+      XSetErrorHandler(Old);
+      XCloseDisplay(L.Dpy);
+    end;
+  finally
+    Lines.Free;
+    L.Free;
+  end;
+end;
+
+{$ENDIF}
+
 function DispatchWindowsTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   Reader : TTargetReader;
+  {$IFDEF MCP_X11}
+  Runner : TX11Windows;
+  {$ENDIF}
 begin
   Result := Name = 'project_get_windows';
   if not Result then Exit;
-  {$IFDEF WINDOWS}
+  {$IF DEFINED(WINDOWS) OR DEFINED(MCP_X11)}
   Reader := TTargetReader.Create;
   try
     TThread.Synchronize(nil, @Reader.Read);
@@ -456,14 +818,25 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
     end;
+    {$IFDEF WINDOWS}
     GetWindows(Ctx, Reader.Target);
+    {$ELSE}
+    Runner := TX11Windows.Create;
+    try
+      Runner.Ctx    := @Ctx;
+      Runner.Target := Reader.Target;
+      TThread.Synchronize(nil, @Runner.Run);
+    finally
+      Runner.Free;
+    end;
+    {$ENDIF}
   finally
     Reader.Free;
   end;
   {$ELSE}
   Reader := nil;
   Ctx.Error  := True;
-  Ctx.Result := 'project_get_windows works on Windows only for now';
+  Ctx.Result := 'project_get_windows works on Windows and X11 only for now';
   {$ENDIF}
 end;
 
@@ -475,7 +848,9 @@ begin
     'Class "text" x,y wxh, relative to the parent (on screen for a window). ' +
     'Controls without a window handle (TLabel, TSpeedButton, TShape, TImage, ' +
     'TBevel, other TGraphicControls) are not in the tree; image=true adds a ' +
-    'PNG of each window, which shows them. Windows only.',
+    'PNG of each window, which shows them. On Linux (X11) only the top-level ' +
+    'windows are listed (class, caption, position on screen, size), without the ' +
+    'controls inside, and the image is copied from the screen. Not on macOS.',
     SCHEMA_GET_WINDOWS, MCP_ANN_RO));
 end;
 

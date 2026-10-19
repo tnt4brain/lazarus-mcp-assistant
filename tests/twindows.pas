@@ -1,7 +1,8 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit TWindows;
 
-{ TTestWindows — project_get_windows on tests/windowee/mcpwindowee.lpi, and
+{ TTestWindows — project_get_windows on tests/windowee/mcpwindowee.lpi (the tree on
+  Windows, the window list on X11), and
   project_set_settings' widgetset on that project (Windows only), and TTestProjectRuns, the
   generated-program tests that run on every platform.
 
@@ -31,11 +32,15 @@ type
   protected
     procedure TearDown; override;
   published
-    procedure TestWidgetset;
     procedure TestNoWindow;
-    procedure TestTree;
     procedure TestImage;
+    {$IFDEF WINDOWS}
+    procedure TestWidgetset;
+    procedure TestTree;
     procedure TestPaused;
+    {$ELSE}
+    procedure TestWindowList;
+    {$ENDIF}
   end;
 
   { Generated programs in a temp folder, on every platform: run output, debugger
@@ -60,6 +65,11 @@ implementation
 uses
   SysUtils, DateUtils, Math, base64, fpjson, jsonparser, FileUtil, LazFileUtils;
 
+const
+  { in the text of project_get_windows once the fixture's form is up: on Windows
+    the button is listed, on X11 only the window }
+  {$IFDEF WINDOWS}WindowMarker = 'Push me';{$ELSE}WindowMarker = 'MCP Windowee';{$ENDIF}
+
 var
   GSess        : string;
   GPrevProject : string;   { reopened by OneTimeTearDown; '' = leave as is }
@@ -72,7 +82,11 @@ end;
 
 function WindoweeExe: string;
 begin
+  {$IFDEF WINDOWS}
   Result := ChangeFileExt(WindoweeLpi, '.exe');
+  {$ELSE}
+  Result := ChangeFileExt(WindoweeLpi, '');
+  {$ENDIF}
 end;
 
 function Call(const ATool, AArgs: string): string;
@@ -179,7 +193,7 @@ begin
   Until_ := IncSecond(Now, 60);
   repeat
     Result := Call('project_get_windows', '{}');
-    if Pos('Push me', Result) > 0 then Exit;
+    if Pos(WindowMarker, Result) > 0 then Exit;
     Sleep(300);
   until Now > Until_;
   Fail('the fixture''s window did not appear: ' + Result);
@@ -191,7 +205,11 @@ var
 begin
   Call('debug_stop', '{}');
   if Pos('No visible window', Call('project_get_windows', '{}')) > 0 then Exit;
+  {$IFDEF WINDOWS}
   ExecuteProcess('taskkill', '/F /IM ' + ExtractFileName(WindoweeExe), []);
+  {$ELSE}
+  ExecuteProcess('/usr/bin/pkill', ['-x', ExtractFileName(WindoweeExe)]);
+  {$ENDIF}
   Until_ := IncSecond(Now, 10);
   while (Pos('No visible window', Call('project_get_windows', '{}')) = 0) and (Now < Until_) do
     Sleep(200);
@@ -216,6 +234,7 @@ end;
 
 { ── Tests ────────────────────────────────────────────────────────────────── }
 
+{$IFDEF WINDOWS}
 { Set in the build-mode matrix as the IDE does, reported back, and removed
   again without a trace: the .lpi ends byte-identical. }
 procedure TTestWindows.TestWidgetset;
@@ -243,6 +262,7 @@ begin
   CheckEquals('win32', JPath(T, 'widgetset'), T);
   CheckEquals(Before, FileText(WindoweeLpi), '.lpi restored');
 end;
+{$ENDIF}
 
 procedure TTestWindows.TestNoWindow;
 var
@@ -253,6 +273,7 @@ begin
   CheckTrue(Pos('No visible window of', T) > 0, T);
 end;
 
+{$IFDEF WINDOWS}
 { Windowed controls with their text; the TLabel has no window. }
 procedure TTestWindows.TestTree;
 var
@@ -269,6 +290,7 @@ begin
   T := Call('project_get_windows', '{"window":"no such caption"}');
   CheckTrue(Pos('No visible window', T) > 0, 'filtered: ' + T);
 end;
+{$ENDIF}
 
 { An image content block after the text: a PNG no larger than max_size. }
 procedure TTestWindows.TestImage;
@@ -305,6 +327,7 @@ begin
   CheckTrue(Min(W, H) > 20, Format('aspect kept: %dx%d', [W, H]));
 end;
 
+{$IFDEF WINDOWS}
 { Paused in the debugger the program answers no messages; the tool must not
   wait for it. }
 procedure TTestWindows.TestPaused;
@@ -325,6 +348,27 @@ begin
   CheckTrue(Pos('Button "Push me"', T) > 0, 'tree still read: ' + T);
   CheckTrue(Pos('copied from the screen', T) > 0, T);
 end;
+
+{$ELSE}
+
+{ X11 lists the top-level windows only: class, caption, position and size on
+  screen; the controls inside are not there. }
+procedure TTestWindows.TestWindowList;
+var
+  T : string;
+begin
+  T := Call('project_run', '{"wait_seconds":0}');
+  CheckEquals('True', JPath(T, 'success'), 'project_run: ' + T);
+  T := WaitForWindow;
+  CheckTrue(Pos(' "MCP Windowee" ', T) > 0, 'caption: ' + T);
+  CheckTrue(Pos('320x160', T) > 0, 'size: ' + T);
+  CheckEquals(0, Pos('Push me', T), 'no controls: ' + T);
+  T := Call('project_get_windows', '{"window":"no such caption"}');
+  CheckTrue(Pos('No visible window', T) > 0, 'filtered: ' + T);
+  T := Call('project_get_windows', '{"window":"windowee"}');
+  CheckTrue(Pos('MCP Windowee', T) > 0, 'filter matches: ' + T);
+end;
+{$ENDIF}
 
 
 { A program with only a .lpr: project_open writes the .lpi next to it, and the
