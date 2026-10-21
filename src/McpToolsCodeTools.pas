@@ -24,7 +24,7 @@ function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBu
 implementation
 
 uses
-  Classes, SysUtils, StrUtils,
+  Classes, SysUtils, StrUtils, LCLVersion,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf, MacroIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   BasicCodeTools,
@@ -629,8 +629,14 @@ begin
     OldOpen := LazarusIDE.OpenEditorsOnCodeToolChange;
     LazarusIDE.OpenEditorsOnCodeToolChange := True;
     try
+      {$IF lcl_fullversion >= 4090000}
+      { Lazarus 4.9+: DottedIdents is derived from the new name inside }
+      if not CodeToolBoss.RenameIdentifier(RefTree, Ident, NewName,
+               DeclCode, @DeclPt) then
+      {$ELSE}
       if not CodeToolBoss.RenameIdentifier(RefTree, Ident, NewName,
                DeclCode, @DeclPt, False) then
+      {$ENDIF}
       begin
         Ctx.Error  := True;
         Ctx.Result := 'RenameIdentifier failed: ' + CodeToolBoss.ErrorMessage;
