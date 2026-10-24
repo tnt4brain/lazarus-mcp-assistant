@@ -33,6 +33,9 @@ type
     procedure TestProjectCleanDryRunIsSafe;
     procedure TestGetOpenDialogsSchema;
     procedure TestGetOpenDialogsReturnsCount;
+    procedure TestAnswerDialogSchema;
+    procedure TestAnswerDialogRefusesWithoutButton;
+    procedure TestAnswerDialogNoDialogOpen;
   end;
 
 implementation
@@ -424,6 +427,55 @@ begin
   finally
     Obj.Free;
   end;
+end;
+
+procedure TTestProjectTools.TestAnswerDialogSchema;
+var
+  Tools   : TJSONArray;
+  I       : Integer;
+  ToolObj : TJSONObject;
+  Schema  : TJSONObject;
+  Props   : TJSONObject;
+begin
+  Tools := GetToolsArray;
+  try
+    ToolObj := nil;
+    for I := 0 to Tools.Count - 1 do
+      if TJSONObject(Tools[I]).Get('name', '') = 'ide_answer_dialog' then
+      begin
+        ToolObj := TJSONObject(Tools[I]);
+        Break;
+      end;
+    CheckTrue(Assigned(ToolObj), 'ide_answer_dialog must be in tools/list');
+    Schema := TJSONObject(ToolObj.Find('inputSchema'));
+    CheckTrue(Assigned(Schema), 'ide_answer_dialog must have inputSchema');
+    Props := TJSONObject(Schema.Find('properties'));
+    CheckTrue(Assigned(Props) and Assigned(Props.Find('button')),
+      'ide_answer_dialog schema must contain button');
+    CheckTrue(Assigned(Props.Find('caption')),
+      'ide_answer_dialog schema must contain caption');
+  finally
+    Tools.Free;
+  end;
+end;
+
+procedure TTestProjectTools.TestAnswerDialogRefusesWithoutButton;
+begin
+  CheckTrue(Pos('TOOL ERROR', CallToolText('ide_answer_dialog', '{}', [])) = 1,
+    'ide_answer_dialog without button must refuse');
+end;
+
+procedure TTestProjectTools.TestAnswerDialogNoDialogOpen;
+{ No IDE dialog should be open during an automated test run, so this exercises
+  the "nothing to click" refusal path without needing to raise a real one. }
+var
+  Text : string;
+begin
+  Text := CallToolText('ide_answer_dialog', '{"button":"OK"}', []);
+  CheckTrue(Pos('TOOL ERROR', Text) = 1,
+    'ide_answer_dialog must refuse when no dialog is open');
+  CheckTrue(Pos('modal', Text) > 0,
+    'the refusal should say no dialog is modal');
 end;
 
 end.

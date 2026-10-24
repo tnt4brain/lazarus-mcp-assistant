@@ -1,9 +1,10 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsProject;
 
-{ Project lifecycle tools: ide_ping, ide_get_open_dialogs, project_get_directory,
-  project_get_settings, project_set_settings, get_lazarus_reference, project_add_file,
-  project_remove_file, project_clean, form_create, project_list_templates, project_create.
+{ Project lifecycle tools: ide_ping, ide_get_open_dialogs, ide_answer_dialog,
+  project_get_directory, project_get_settings, project_set_settings,
+  get_lazarus_reference, project_add_file, project_remove_file, project_clean,
+  form_create, project_list_templates, project_create.
   Also owns KnowledgeText and IsDescriptorInteractive. }
 
 {$mode objfpc}{$H+}
@@ -19,7 +20,7 @@ implementation
 uses
   Classes, SysUtils,
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil, CompOptsIntf,
-  MacroIntf, Controls, Forms, IDEDialogs, LCLPlatformDef, StrUtils,
+  MacroIntf, Controls, Forms, StdCtrls, IDEDialogs, LCLPlatformDef, StrUtils,
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson,
@@ -39,6 +40,15 @@ const
 
   SCHEMA_GET_OPEN_DIALOGS =
     '{"type":"object","properties":{}}';
+
+  SCHEMA_ANSWER_DIALOG =
+    '{"type":"object","properties":{' +
+    '"button":{"type":"string","description":"Caption of the button to click, as shown ' +
+    'by ide_get_open_dialogs buttons field (accelerator markers and case ignored)."},' +
+    '"caption":{"type":"string","description":"Optional: the dialog''s caption from ' +
+    'ide_get_open_dialogs, checked before clicking so a race (a different dialog took ' +
+    'its place) is caught instead of clicking the wrong one."}},' +
+    '"required":["button"]}';
 
   SCHEMA_GET_PROJECT_DIRECTORY =
     '{"type":"object","properties":{}}';
@@ -561,6 +571,125 @@ begin
     end;
   finally
     Found.Free;
+  end;
+end;
+
+{ ── ide_answer_dialog helper ─────────────────────────────────────────────── }
+
+{ Strips the '&' accelerator marker and trims, so "&Yes" matches "yes". }
+function NormalizeButtonCaption(const S: string): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(S) do
+    if S[I] <> '&' then
+      Result := Result + S[I];
+  Result := Trim(Result);
+end;
+
+{ Recurses into AParent's controls (TButtonPanel and friends nest the actual
+  buttons a level or two down) collecting every button's caption into
+  AAvailable, and the first one matching AWanted into AFound.  TCustomButton
+  only -- clicking a TCheckBox/TRadioButton (also TButtonControl) wouldn't
+  close the dialog, since only TCustomButton sets the parent form's
+  ModalResult (see TCustomButton.Click in LCL's buttons.inc). }
+procedure FindModalButton(AParent: TWinControl; const AWanted: string;
+  var AFound: TCustomButton; AAvailable: TStringList);
+var
+  I   : Integer;
+  C   : TControl;
+  Cap : string;
+begin
+  for I := 0 to AParent.ControlCount - 1 do
+  begin
+    C := AParent.Controls[I];
+    if C is TCustomButton then
+    begin
+      Cap := NormalizeButtonCaption(TCustomButton(C).Caption);
+      if Cap <> '' then AAvailable.Add(Cap);
+      if (AFound = nil) and SameText(Cap, NormalizeButtonCaption(AWanted)) then
+        AFound := TCustomButton(C);
+    end;
+    if C is TWinControl then
+      FindModalButton(TWinControl(C), AWanted, AFound, AAvailable);
+  end;
+end;
+
+procedure DoAnswerDialog(var Ctx: TMcpToolCall);
+var
+  Wanted, ExpectCaption, DialogCaption, AvailStr : string;
+  Modal  : TCustomForm;
+  Found  : TCustomButton;
+  Avail  : TStringList;
+  Obj    : TJSONObject;
+  I      : Integer;
+begin
+  Wanted := '';
+  ExpectCaption := '';
+  if Assigned(Ctx.Params) then
+  begin
+    Wanted := Trim(Ctx.Params.Get('button', ''));
+    ExpectCaption := Ctx.Params.Get('caption', '');
+  end;
+  if Wanted = '' then
+  begin
+    Ctx.Error := True; Ctx.Result := 'button is required'; Exit;
+  end;
+
+  { Any currently-modal LCL form, found or bespoke (TDiskDiffsDlg included) --
+    the same object Screen.OnActiveFormChanged already sees in
+    McpIdeListeners.pas, just read on demand instead of matched by class. }
+  Modal := Screen.GetCurrentModalForm;
+  if not Assigned(Modal) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'No LCL dialog is currently modal. A native Windows dialog, if any, ' +
+      'cannot be answered from here -- see ide_get_open_dialogs.';
+    Exit;
+  end;
+
+  DialogCaption := Modal.Caption;
+  if (ExpectCaption <> '') and not SameText(Trim(DialogCaption), Trim(ExpectCaption)) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := Format('The open dialog is "%s", not "%s" -- re-check with ' +
+      'ide_get_open_dialogs before answering.', [DialogCaption, ExpectCaption]);
+    Exit;
+  end;
+
+  Found := nil;
+  Avail := TStringList.Create;
+  try
+    FindModalButton(Modal, Wanted, Found, Avail);
+    if not Assigned(Found) then
+    begin
+      AvailStr := '';
+      for I := 0 to Avail.Count - 1 do
+      begin
+        if AvailStr <> '' then AvailStr := AvailStr + ', ';
+        AvailStr := AvailStr + Avail[I];
+      end;
+      Ctx.Error := True;
+      Ctx.Result := Format('No button "%s" on "%s". Available: %s',
+        [Wanted, DialogCaption, AvailStr]);
+      Exit;
+    end;
+    { Same path a real click takes: sets the form's ModalResult, then fires
+      OnClick, exactly as TCustomButton.Click does for a mouse click. }
+    Found.Click;
+  finally
+    Avail.Free;
+  end;
+
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('answered', True);
+    Obj.Add('dialog', DialogCaption);
+    Obj.Add('button', Wanted);
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
   end;
 end;
 
@@ -1119,6 +1248,12 @@ begin
   begin
     Result := True;
     DoProjectClean(Ctx);
+  end
+
+  else if Name = 'ide_answer_dialog' then
+  begin
+    Result := True;
+    DoAnswerDialog(Ctx);
   end;
 end;
 
@@ -1167,6 +1302,13 @@ begin
     'output pointed at the wrong directory. Defaults to the active project; pass ' +
     'package_name or lpk_path to target a package instead. dry_run defaults to true.',
     SCHEMA_CLEAN_PROJECT, MCP_ANN_DEST_IDEM));
+  Tools.Add(MakeTool('ide_answer_dialog',
+    'Click a button on the LCL dialog currently blocking the IDE''s main thread ' +
+    '(see ide_get_open_dialogs for what''s open and its button captions). Only LCL ' +
+    'dialogs can be answered this way -- a native Windows dialog has no form to click ' +
+    'into. Pass caption too to guard against answering a different dialog than the one ' +
+    'you saw.',
+    SCHEMA_ANSWER_DIALOG, MCP_ANN_DEST));
   Tools.Add(MakeTool('form_create',
     'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +
     'both added to the active project and opened in the editor. The IDE names ' +
