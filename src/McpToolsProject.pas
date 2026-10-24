@@ -24,7 +24,7 @@ uses
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson,
-  McpToolContext, McpToolsPackages, McpDialogWatch;
+  McpToolContext, McpToolsPackages, McpDialogWatch, McpIdeListeners;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -576,46 +576,6 @@ end;
 
 { ── ide_answer_dialog helper ─────────────────────────────────────────────── }
 
-{ Strips the '&' accelerator marker and trims, so "&Yes" matches "yes". }
-function NormalizeButtonCaption(const S: string): string;
-var
-  I: Integer;
-begin
-  Result := '';
-  for I := 1 to Length(S) do
-    if S[I] <> '&' then
-      Result := Result + S[I];
-  Result := Trim(Result);
-end;
-
-{ Recurses into AParent's controls (TButtonPanel and friends nest the actual
-  buttons a level or two down) collecting every button's caption into
-  AAvailable, and the first one matching AWanted into AFound.  TCustomButton
-  only -- clicking a TCheckBox/TRadioButton (also TButtonControl) wouldn't
-  close the dialog, since only TCustomButton sets the parent form's
-  ModalResult (see TCustomButton.Click in LCL's buttons.inc). }
-procedure FindModalButton(AParent: TWinControl; const AWanted: string;
-  var AFound: TCustomButton; AAvailable: TStringList);
-var
-  I   : Integer;
-  C   : TControl;
-  Cap : string;
-begin
-  for I := 0 to AParent.ControlCount - 1 do
-  begin
-    C := AParent.Controls[I];
-    if C is TCustomButton then
-    begin
-      Cap := NormalizeButtonCaption(TCustomButton(C).Caption);
-      if Cap <> '' then AAvailable.Add(Cap);
-      if (AFound = nil) and SameText(Cap, NormalizeButtonCaption(AWanted)) then
-        AFound := TCustomButton(C);
-    end;
-    if C is TWinControl then
-      FindModalButton(TWinControl(C), AWanted, AFound, AAvailable);
-  end;
-end;
-
 procedure DoAnswerDialog(var Ctx: TMcpToolCall);
 var
   Wanted, ExpectCaption, DialogCaption, AvailStr : string;
@@ -661,7 +621,7 @@ begin
   Found := nil;
   Avail := TStringList.Create;
   try
-    FindModalButton(Modal, Wanted, Found, Avail);
+    FindButtonByCaption(Modal, Wanted, Found, Avail);
     if not Assigned(Found) then
     begin
       AvailStr := '';
