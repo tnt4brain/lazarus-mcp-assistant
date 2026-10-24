@@ -1,8 +1,8 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsProject;
 
-{ Project lifecycle tools: ide_ping, project_get_directory, project_get_settings,
-  project_set_settings, get_lazarus_reference, project_add_file,
+{ Project lifecycle tools: ide_ping, ide_get_open_dialogs, project_get_directory,
+  project_get_settings, project_set_settings, get_lazarus_reference, project_add_file,
   project_remove_file, project_clean, form_create, project_list_templates, project_create.
   Also owns KnowledgeText and IsDescriptorInteractive. }
 
@@ -23,7 +23,7 @@ uses
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson,
-  McpToolContext, McpToolsPackages;
+  McpToolContext, McpToolsPackages, McpDialogWatch;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -35,6 +35,9 @@ const
 
 const
   SCHEMA_PING =
+    '{"type":"object","properties":{}}';
+
+  SCHEMA_GET_OPEN_DIALOGS =
     '{"type":"object","properties":{}}';
 
   SCHEMA_GET_PROJECT_DIRECTORY =
@@ -693,6 +696,22 @@ begin
     end;
   end
 
+  else if Name = 'ide_get_open_dialogs' then
+  begin
+    Result := True;
+    Arr := McpOpenDialogs;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('count', Arr.Count);
+      if Arr.Count > 0 then
+        Obj.Add('summary', McpDescribeDialogs(Arr));
+      Obj.Add('dialogs', Arr);  { ownership moves to Obj }
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
   else if Name = 'project_get_directory' then
   begin
     Result := True;
@@ -1113,6 +1132,12 @@ begin
     '"anonymous"). After ide_rebuild, wait with the returned poll_command; ' +
     'this then confirms the server is back.',
     SCHEMA_PING, MCP_ANN_RO));
+  Tools.Add(MakeTool('ide_get_open_dialogs',
+    'List modal dialogs currently blocking the IDE''s main thread: caption, text and ' +
+    'buttons for each (a short "summary" line too, when any are open). While one is ' +
+    'open, no other tool call can make progress on the main thread -- ask the user to ' +
+    'close or answer it; nothing here answers a dialog for you.',
+    SCHEMA_GET_OPEN_DIALOGS, MCP_ANN_RO));
   Tools.Add(MakeTool('project_get_directory',
     'Return the root directory of the active project (directory containing the .lpi file).',
     SCHEMA_GET_PROJECT_DIRECTORY, MCP_ANN_RO));

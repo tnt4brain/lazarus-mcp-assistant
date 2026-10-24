@@ -31,6 +31,8 @@ type
     procedure TestListProjectTemplatesReturnsArray;
     procedure TestProjectCleanSchema;
     procedure TestProjectCleanDryRunIsSafe;
+    procedure TestGetOpenDialogsSchema;
+    procedure TestGetOpenDialogsReturnsCount;
   end;
 
 implementation
@@ -356,6 +358,66 @@ begin
         'project_clean must return a candidates array');
       CheckTrue(not Assigned(ResultObj.Find('deleted')),
         'a dry_run response must not include a deleted field');
+    finally
+      ResultObj.Free;
+    end;
+  finally
+    Obj.Free;
+  end;
+end;
+
+procedure TTestProjectTools.TestGetOpenDialogsSchema;
+var
+  Tools   : TJSONArray;
+  I       : Integer;
+  ToolObj : TJSONObject;
+begin
+  Tools := GetToolsArray;
+  try
+    ToolObj := nil;
+    for I := 0 to Tools.Count - 1 do
+      if TJSONObject(Tools[I]).Get('name', '') = 'ide_get_open_dialogs' then
+      begin
+        ToolObj := TJSONObject(Tools[I]);
+        Break;
+      end;
+    CheckTrue(Assigned(ToolObj), 'ide_get_open_dialogs must be in tools/list');
+    CheckTrue(Assigned(ToolObj.Find('inputSchema')),
+      'ide_get_open_dialogs must have inputSchema');
+  finally
+    Tools.Free;
+  end;
+end;
+
+procedure TTestProjectTools.TestGetOpenDialogsReturnsCount;
+{ Live call — no IDE dialog should be open during an automated test run, so
+  this only checks the shape: count present, dialogs an array, and no
+  "summary" when count is 0 (mirroring project_clean's dry_run contract). }
+var
+  R         : THttpResult;
+  Obj       : TJSONObject;
+  Res       : TJSONObject;
+  Content   : TJSONArray;
+  ResultObj : TJSONObject;
+begin
+  R := CallTool('ide_get_open_dialogs', '{}');
+  CheckEquals(200, R.Code, 'ide_get_open_dialogs must return HTTP 200');
+  Obj := ParseJSON(R.Body);
+  try
+    Res := TJSONObject(Obj.Find('result'));
+    CheckTrue(Assigned(Res), 'ide_get_open_dialogs must return a result');
+    Content := TJSONArray(Res.Find('content'));
+    CheckTrue(Assigned(Content) and (Content.Count > 0),
+      'ide_get_open_dialogs result must have content');
+    ResultObj := TJSONObject(GetJSON(TJSONObject(Content[0]).Get('text', '{}')));
+    try
+      CheckTrue(Assigned(ResultObj.Find('count')),
+        'ide_get_open_dialogs must return a count');
+      CheckTrue(Assigned(ResultObj.Find('dialogs')),
+        'ide_get_open_dialogs must return a dialogs array');
+      if ResultObj.Get('count', 0) = 0 then
+        CheckTrue(not Assigned(ResultObj.Find('summary')),
+          'no summary field when no dialog is open');
     finally
       ResultObj.Free;
     end;
