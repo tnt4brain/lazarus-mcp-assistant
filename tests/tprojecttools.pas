@@ -29,6 +29,8 @@ type
     procedure TestGetMessagesReturnsStructure;
     procedure TestCreateProjectSchema;
     procedure TestListProjectTemplatesReturnsArray;
+    procedure TestProjectCleanSchema;
+    procedure TestProjectCleanDryRunIsSafe;
   end;
 
 implementation
@@ -291,6 +293,74 @@ begin
       'project_create schema must contain project_type');
   finally
     Tools.Free;
+  end;
+end;
+
+procedure TTestProjectTools.TestProjectCleanSchema;
+var
+  Tools   : TJSONArray;
+  I       : Integer;
+  ToolObj : TJSONObject;
+  Schema  : TJSONObject;
+  Props   : TJSONObject;
+begin
+  Tools := GetToolsArray;
+  try
+    ToolObj := nil;
+    for I := 0 to Tools.Count - 1 do
+      if TJSONObject(Tools[I]).Get('name', '') = 'project_clean' then
+      begin
+        ToolObj := TJSONObject(Tools[I]);
+        Break;
+      end;
+    CheckTrue(Assigned(ToolObj), 'project_clean must be in tools/list');
+    Schema := TJSONObject(ToolObj.Find('inputSchema'));
+    CheckTrue(Assigned(Schema), 'project_clean must have inputSchema');
+    Props := TJSONObject(Schema.Find('properties'));
+    CheckTrue(Assigned(Props), 'project_clean inputSchema must have properties');
+    CheckTrue(Assigned(Props.Find('dry_run')),
+      'project_clean schema must contain dry_run');
+    CheckTrue(Assigned(Props.Find('package_name')),
+      'project_clean schema must contain package_name');
+    CheckTrue(Assigned(Props.Find('lpk_path')),
+      'project_clean schema must contain lpk_path');
+  finally
+    Tools.Free;
+  end;
+end;
+
+procedure TTestProjectTools.TestProjectCleanDryRunIsSafe;
+{ Live call — dry_run defaults true, so this only lists, never deletes;
+  safe to call against whatever project is open in the IDE. }
+var
+  R         : THttpResult;
+  Obj       : TJSONObject;
+  Res       : TJSONObject;
+  Content   : TJSONArray;
+  ResultObj : TJSONObject;
+begin
+  R := CallTool('project_clean', '{}');
+  CheckEquals(200, R.Code, 'project_clean must return HTTP 200');
+  Obj := ParseJSON(R.Body);
+  try
+    Res := TJSONObject(Obj.Find('result'));
+    CheckTrue(Assigned(Res), 'project_clean must return a result');
+    Content := TJSONArray(Res.Find('content'));
+    CheckTrue(Assigned(Content) and (Content.Count > 0),
+      'project_clean result must have content');
+    ResultObj := TJSONObject(GetJSON(TJSONObject(Content[0]).Get('text', '{}')));
+    try
+      CheckTrue(ResultObj.Get('dry_run', False),
+        'project_clean with no arguments must default to dry_run true');
+      CheckTrue(Assigned(ResultObj.Find('candidates')),
+        'project_clean must return a candidates array');
+      CheckTrue(not Assigned(ResultObj.Find('deleted')),
+        'a dry_run response must not include a deleted field');
+    finally
+      ResultObj.Free;
+    end;
+  finally
+    Obj.Free;
   end;
 end;
 

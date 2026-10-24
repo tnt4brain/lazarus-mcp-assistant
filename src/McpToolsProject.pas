@@ -3,7 +3,7 @@ unit McpToolsProject;
 
 { Project lifecycle tools: ide_ping, project_get_directory, project_get_settings,
   project_set_settings, get_lazarus_reference, project_add_file,
-  project_remove_file, form_create, project_list_templates, project_create.
+  project_remove_file, project_clean, form_create, project_list_templates, project_create.
   Also owns KnowledgeText and IsDescriptorInteractive. }
 
 {$mode objfpc}{$H+}
@@ -21,8 +21,9 @@ uses
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil, CompOptsIntf,
   MacroIntf, Controls, Forms, IDEDialogs, LCLPlatformDef, StrUtils,
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
+  PackageDefs,
   fpjson,
-  McpToolContext;
+  McpToolContext, McpToolsPackages;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -78,6 +79,14 @@ const
     '"project_dir":{"type":"string","description":"Absolute path for the project directory; created if absent"},' +
     '"project_name":{"type":"string","description":"Project name (becomes the .lpi filename without extension)"}},' +
     '"required":["project_dir","project_name"]}';
+
+  SCHEMA_CLEAN_PROJECT =
+    '{"type":"object","properties":{' +
+    '"package_name":{"type":"string","description":"Clean this loaded package''s source ' +
+    'directory instead of the active project''s"},' +
+    '"lpk_path":{"type":"string","description":"Or a package by its .lpk path"},' +
+    '"dry_run":{"type":"boolean","description":"List the stray files without deleting them ' +
+    '(default true); pass false to actually delete"}}}';
 
   SCHEMA_OPEN_PROJECT =
     '{"type":"object","properties":{' +
@@ -437,6 +446,118 @@ begin
     Src.SaveToFile(Result);
   finally
     Src.Free;
+  end;
+end;
+
+{ ── project_clean helper ─────────────────────────────────────────────────── }
+
+{ Expands macros in a (possibly relative, possibly macro-laden) unit output
+  directory and resolves it against BaseDir, the way the IDE's own build
+  does -- so files genuinely inside it are never offered for deletion. }
+function ResolveOutputDir(RawOutputDir, BaseDir: string): string;
+begin
+  Result := RawOutputDir;
+  if Result = '' then Exit;
+  if Assigned(IDEMacros) then
+    IDEMacros.SubstituteMacros(Result);
+  Result := TrimFilename(CreateAbsolutePath(Result, BaseDir));
+end;
+
+{ Stray .ppu/.o files left directly in a project's or package's own source
+  directory (not its configured unit output directory) trip the IDE's
+  "Ambiguous unit found" dialog on the next compile -- hit repeatedly while
+  debugging a standalone fpc compile that wrote its output there by mistake
+  (2026-10-24). dry_run (default true) only lists them. }
+procedure DoProjectClean(var Ctx: TMcpToolCall);
+var
+  Pkg        : TLazPackage;
+  Err        : string;
+  SrcDir     : string;
+  OutDir     : string;
+  DryRun     : Boolean;
+  Found      : TStringList;
+  Candidates : TJSONArray;
+  Deleted    : TJSONArray;
+  Failed     : TJSONArray;
+  Obj        : TJSONObject;
+  I          : Integer;
+  F          : string;
+begin
+  DryRun := True;
+  if Assigned(Ctx.Params) then
+    DryRun := Ctx.Params.Get('dry_run', True);
+
+  if Assigned(Ctx.Params) and
+     ((Ctx.Params.Find('package_name') <> nil) or (Ctx.Params.Find('lpk_path') <> nil)) then
+  begin
+    if not TargetPackage(Ctx.Params, Pkg, Err, False) then
+    begin
+      Ctx.Error := True; Ctx.Result := Err; Exit;
+    end;
+    SrcDir := ExtractFilePath(Pkg.Filename);
+    if Assigned(Pkg.CompilerOptions) then
+      OutDir := ResolveOutputDir(Pkg.CompilerOptions.UnitOutputDirectory, SrcDir);
+  end
+  else
+  begin
+    if not Assigned(LazarusIDE) or not Assigned(LazarusIDE.ActiveProject) or
+       (LazarusIDE.ActiveProject.ProjectInfoFile = '') then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'No active (saved) project, and no package_name/lpk_path given';
+      Exit;
+    end;
+    SrcDir := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile);
+    if Assigned(LazarusIDE.ActiveProject.LazCompilerOptions) then
+      OutDir := ResolveOutputDir(
+        LazarusIDE.ActiveProject.LazCompilerOptions.UnitOutputDirectory, SrcDir);
+  end;
+
+  Found := FindAllFiles(SrcDir, '*.ppu;*.o', True);
+  try
+    Candidates := TJSONArray.Create;
+    Deleted    := TJSONArray.Create;
+    Failed     := TJSONArray.Create;
+    try
+      for I := 0 to Found.Count - 1 do
+      begin
+        F := Found[I];
+        { Inside the real output directory: that is where these belong. }
+        if (OutDir <> '') and (CompareFilenames(ExtractFilePath(ExcludeTrailingPathDelimiter(F)),
+             ExcludeTrailingPathDelimiter(OutDir)) = 0) then Continue;
+        if (OutDir <> '') and AnsiStartsText(AppendPathDelim(OutDir), F) then Continue;
+        Candidates.Add(F);
+        if not DryRun then
+        begin
+          if DeleteFile(F) then
+            Deleted.Add(F)
+          else
+            Failed.Add(F);
+        end;
+      end;
+
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('directory', SrcDir);
+        Obj.Add('output_dir', OutDir);
+        Obj.Add('dry_run', DryRun);
+        Obj.Add('candidates', Candidates.Clone as TJSONArray);
+        if not DryRun then
+        begin
+          Obj.Add('deleted', Deleted.Clone as TJSONArray);
+          Obj.Add('failed', Failed.Clone as TJSONArray);
+        end;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    finally
+      Candidates.Free;
+      Deleted.Free;
+      Failed.Free;
+    end;
+  finally
+    Found.Free;
   end;
 end;
 
@@ -973,6 +1094,12 @@ begin
     finally
       Obj.Free;
     end;
+  end
+
+  else if Name = 'project_clean' then
+  begin
+    Result := True;
+    DoProjectClean(Ctx);
   end;
 end;
 
@@ -1007,6 +1134,14 @@ begin
     'Remove a source file from the active project without deleting it from disk. ' +
     'Saves the project afterwards.',
     SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE_IDEM));
+  Tools.Add(MakeTool('project_clean',
+    'Find (and, unless dry_run, delete) stray .ppu/.o files left directly in a ' +
+    'project''s or package''s own source directory outside its configured unit ' +
+    'output directory -- the files that trip the IDE''s "Ambiguous unit found" dialog ' +
+    'on the next compile, typically left by a standalone fpc compile run with its ' +
+    'output pointed at the wrong directory. Defaults to the active project; pass ' +
+    'package_name or lpk_path to target a package instead. dry_run defaults to true.',
+    SCHEMA_CLEAN_PROJECT, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('form_create',
     'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +
     'both added to the active project and opened in the editor. The IDE names ' +
