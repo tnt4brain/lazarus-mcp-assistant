@@ -180,3 +180,26 @@ What changed is that they are now **seen and reported**:
 Not done: reading a `TTaskDialog`'s text (it lives in DirectUI controls that
 `GetWindowText` can't read; the dialog's own Ctrl+C copies it). Its title and buttons
 are reported.
+
+## Amendment (2026-10-25): `ide_answer_dialog` clicks native TaskDialogs too
+
+Root cause for why `ide_answer_dialog` could see a dialog (`ide_get_open_dialogs`
+lists it) but not answer it: on Windows, `MessageDlg`/`IDEMessageDialog` goes through
+`TWin32WidgetSet.PromptUser` (`lcl/interfaces/win32/win32lclintf.inc`), which on
+Vista+ with a themed comctl32 calls `TaskDialogIndirect` directly. No `TCustomForm`
+is ever created, so `Screen.GetCurrentModalForm` and the `Screen.OnFormAdded`/
+`OnActiveFormChanged` handlers `McpIdeListeners.pas` relies on all correctly report
+nothing -- there is no LCL form to find. Confirmed live with a synthetic dialog hook
+(`McpTestHooks.pas`, `MCP_TEST_HOOKS=1` only) and diagnostics on both handlers.
+
+Decision 1 above rejected posting `BM_CLICK` as the *general, proactive* mechanism
+for suppressing dialogs before they're seen (timing depends on the modal loop, the
+window class depends on the widgetset, the dialog may not even exist yet when
+deciding), keeping it only as a manual testing aid. `ide_answer_dialog` is a
+different case than the one that decision warns about: the caller has already
+confirmed, via `ide_get_open_dialogs`, exactly which dialog is open and already
+named the exact button to press -- there is no guessing. `McpNativeDialog.pas`
+(Windows only) now does what the manual aid did, as a real fallback: when no LCL
+form is modal, it finds the `#32770` dialog window (matched by caption), finds the
+child `Button` control whose text matches the requested button, and sends it
+`BM_CLICK`. Covered by `TTestDialogHooks` (`tests/tdialoghooks.pas`).

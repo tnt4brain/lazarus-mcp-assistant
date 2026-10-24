@@ -22,7 +22,7 @@ uses
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
   TCodeRename, TWindows, TFindDeclaration, TGitWrite, TTokens,
-  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport;
+  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -197,6 +197,12 @@ begin
     GetTestRegistry.AddTest(TTestFindDeclaration.Suite);
     GetTestRegistry.AddTest(TTestGitWrite.Suite);
     GetTestRegistry.AddTest(TTestCodeRename.Suite);
+    { opt-in: needs MCP_TEST_HOOKS=1 in the IDE's own environment too, or
+      every call the suite makes is refused there }
+    if GetEnvironmentVariable('MCP_TEST_HOOKS') = '1' then
+      GetTestRegistry.AddTest(TTestDialogHooks.Suite)
+    else
+      WriteLn('Dialog hook tests skipped (set MCP_TEST_HOOKS=1 for the IDE and this test run).');
     { opt-in: they switch the IDE's project and take about half a minute }
     if (GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1') or DebuggeeIsActive then
       GetTestRegistry.AddTest(TDebuggeeSetup.Create(TTestDebugger.Suite))

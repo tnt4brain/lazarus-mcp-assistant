@@ -25,7 +25,7 @@ uses
   PackageDefs,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpToolsPackages, McpDialogWatch, McpIdeListeners,
-  McpSessionLog, McpToolLog, McpReport, McpConsent;
+  McpSessionLog, McpToolLog, McpReport, McpConsent, McpNativeDialog;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -936,7 +936,7 @@ end;
 
 procedure DoAnswerDialog(var Ctx: TMcpToolCall);
 var
-  Wanted, ExpectCaption, DialogCaption, AvailStr : string;
+  Wanted, ExpectCaption, DialogCaption, AvailStr, NativeErr : string;
   Modal  : TCustomForm;
   Found  : TCustomButton;
   Avail  : TStringList;
@@ -961,9 +961,27 @@ begin
   Modal := Screen.GetCurrentModalForm;
   if not Assigned(Modal) then
   begin
+    { Not an LCL form: on Windows, IDEMessageDialog/MessageDlg often raises a
+      native TaskDialog instead (TWin32WidgetSet.PromptUser calling
+      TaskDialogIndirect directly -- see McpNativeDialog.pas), which never
+      creates a TCustomForm for Screen to find. Try answering that instead
+      of just reporting it. }
+    if TryAnswerNativeDialog(ExpectCaption, Wanted, DialogCaption, NativeErr) then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('answered', True);
+        Obj.Add('dialog', DialogCaption);
+        Obj.Add('button', Wanted);
+        Obj.Add('native', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+      Exit;
+    end;
     Ctx.Error := True;
-    Ctx.Result := 'No LCL dialog is currently modal. A native Windows dialog, if any, ' +
-      'cannot be answered from here -- see ide_get_open_dialogs.';
+    Ctx.Result := 'No LCL dialog is currently modal. ' + NativeErr;
     Exit;
   end;
 
