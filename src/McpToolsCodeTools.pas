@@ -664,7 +664,9 @@ begin
     LazarusIDE.OpenEditorsOnCodeToolChange := True;
     try
       {$IF lcl_fullversion >= 4090000}
-      { Lazarus 4.9+: DottedIdents is derived from the new name inside }
+      { Lazarus 5.0 and development builds since 2025-01-02 (4.99, lcl_fullversion
+        4990000) have no DottedIdents parameter: it is derived from the names
+        inside (Lazarus commits ed2a217e45, f6b5cd0a9d). 4.8 is 4080000. }
       if not CodeToolBoss.RenameIdentifier(RefTree, Ident, NewName,
                DeclCode, @DeclPt) then
       {$ELSE}
