@@ -73,6 +73,14 @@ clients, timing, refusals, a call that never returned).
 8. **Setting:** on/off, in `mcpassistantoptions.xml` and on the options page, effective at
    the next call. No limit by listen address (ADR-020). Error texts can hold paths and user
    names; the options page says so.
+9. **Assistants are told:** a bullet in `system_prompt.inc` (neither log is mentioned there
+   now) and `ide_ping` reporting both log paths and whether `mcp-tools.log` is on, so the
+   path is known before a hang, when no tool answers. Then the assistant reads the files
+   itself: after a stall, a crash or a restart, the last `begin` without an `end` (by
+   `seq_id`) is the call that was running; `mcp-sessions.log` has what the server saw around
+   it, including the stack of an access violation. It is told to ask the user before
+   enabling the log, and that an `end` line with a long `duration_ms` or the "dialog open"
+   error points at a modal dialog.
 
 ## Alternatives considered
 
