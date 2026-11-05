@@ -808,9 +808,7 @@ begin
   { What it asked for, when that is not what we settled on: a client that asks
     for a newer revision than ours and then behaves by another one's rules
     (sessions, say) can only be told from a plain bug by this }
-  AskedNote := '';
-  if Asked <> ProtoVer then
-    AskedNote := Format(' (client asked for %s)', [IfThen(Asked = '', 'none', Asked)]);
+  AskedNote := McpAskedNote(Asked, ProtoVer);
 
   { A new MCP session: its id identifies this client from now on (ADR-012) }
   ANewSession := McpNewSessionId;

@@ -19,7 +19,7 @@
         <PackageName Value="LazUtils"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="26">
+    <Units Count="27">
       <Unit0>
         <Filename Value="mcpserver_tests.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -124,6 +124,10 @@
         <Filename Value="tprojectguard.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit25>
+      <Unit26>
+        <Filename Value="tsessionlog.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit26>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
