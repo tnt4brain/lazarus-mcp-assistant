@@ -599,18 +599,22 @@ const
     them dereferences the project (TProject.GetMainFilename, PrepareForCompile)
     and raises an access violation when none is open, as after Close Project
     (or fails with nothing to say for it, as project_build does). }
-  ProjectNeededTools : array[0..16] of string = (
+  ProjectNeededTools : array[0..20] of string = (
     'editor_open', 'editor_edit_text', 'editor_replace_range', 'editor_close',
     'code_add_to_class', 'code_replace_procedure_body', 'code_insert_in_procedure',
     'code_add_uses', 'code_format', 'code_rename_identifier', 'code_goto_declaration',
-    'project_build', 'project_run', 'debug_run', 'editor_save', 'editor_revert',
-    'editor_set_cursor');
+    'code_complete', 'project_build', 'project_run', 'project_create_unit',
+    'debug_run', 'debug_run_to_line', 'debug_set_breakpoint',
+    'editor_save', 'editor_revert', 'editor_set_cursor');
 
 function NeedsOpenProject(const AToolName: string): Boolean;
 var
   I : Integer;
 begin
   Result := False;
+  { Every form_* tool opens or creates a unit; only the palette search does not. }
+  if (Copy(AToolName, 1, 5) = 'form_') and (AToolName <> 'form_search_palette') then
+    Exit(True);
   for I := Low(ProjectNeededTools) to High(ProjectNeededTools) do
     if ProjectNeededTools[I] = AToolName then Exit(True);
 end;
