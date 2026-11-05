@@ -205,6 +205,41 @@ begin
            '. Save them (editor_save) or ask the user before ' + AAction + '.');
 end;
 
+{ After File > Close Project the IDE runs its "Project Wizard" modally
+  (TMainIDE.DoNoProjectWizard) and keeps it up until it is answered.  A tool
+  call runs inside that dialog's message loop, so project_create succeeds and
+  the wizard stays on screen, blocking the user.  Closing it any plain way
+  (Cancel, Escape) returns tpws_closeIDE, and the IDE would then quit.  So end
+  it the way a user would: "open recent" with the project that is now open.
+  The IDE re-opens that saved project once the dialog returns.  Does nothing
+  when no wizard is up.  Looked up by class name, as for TIDEExceptionDlg. }
+procedure DismissProjectWizard(const AProjectFile: string);
+var
+  I  : Integer;
+  F  : TCustomForm;
+  Cb : TComponent;
+begin
+  for I := 0 to Screen.CustomFormCount - 1 do
+  begin
+    F := Screen.CustomForms[I];
+    if not (F.ClassNameIs('TProjectWizardDialog') and (fsModal in F.FormState)) then
+      Continue;
+    Cb := F.FindComponent('cbRecentProjects');
+    if (Cb is TComboBox) and Assigned(TComboBox(Cb).OnSelect) then
+    begin
+      { csDropDownList: Text only takes a string that is an item }
+      with TComboBox(Cb) do
+      begin
+        ItemIndex := Items.IndexOf(AProjectFile);
+        if ItemIndex < 0 then
+          ItemIndex := Items.Add(AProjectFile);
+        OnSelect(Cb);   { sets the wizard's result, ModalResult := mrOK }
+      end;
+    end;
+    Exit;
+  end;
+end;
+
 { ── Widgetset ────────────────────────────────────────────────────────────── }
 
 { A project chooses its widgetset per build mode with an IDE-macro option
@@ -729,7 +764,8 @@ begin
       NewName := Proj.ProjectInfoFile;
       if CompareFilenames(NewName, FilePath) = 0 then
       begin
-        Ctx.Result := '{"project_file":"' + StringToJSONString(FilePath) +
+        DismissProjectWizard(FilePath);  { a wizard left over from before }
+        Ctx.Result :='{"project_file":"' + StringToJSONString(FilePath) +
                       '","already_open":true}';
         Exit;
       end;
@@ -749,6 +785,9 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not open ' + FilePath; Exit;
     end;
+    { the Project Wizard (shown after Close Project) stays up otherwise }
+    if Assigned(LazarusIDE.ActiveProject) then
+      DismissProjectWizard(LazarusIDE.ActiveProject.ProjectInfoFile);
     Obj := TJSONObject.Create;
     try
       if Assigned(LazarusIDE.ActiveProject) then
@@ -1194,6 +1233,7 @@ begin
                     'unsaved project.';
       Exit;
     end;
+    DismissProjectWizard(Proj.ProjectInfoFile);
     Obj := TJSONObject.Create;
     try
       Obj.Add('project_file', Proj.ProjectInfoFile);
