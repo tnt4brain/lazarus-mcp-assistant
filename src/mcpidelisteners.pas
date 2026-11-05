@@ -46,11 +46,84 @@ var
 procedure InitializeIdeHooks;
 procedure FinalizeIdeHooks;
 
+{ Shared button-finding, used both by the automatic path below (matched by
+  ModalResult -- language-independent, since this fires with nobody at the
+  keyboard to read a caption) and by ide_answer_dialog in McpToolsProject.pas
+  (matched by caption -- what the caller actually read via
+  ide_get_open_dialogs). Recurses into AParent's controls (TButtonPanel and
+  friends nest the actual buttons a level or two down). TCustomButton only --
+  clicking a TCheckBox/TRadioButton (also TButtonControl) wouldn't close the
+  dialog, since only TCustomButton sets the parent form's ModalResult (see
+  TCustomButton.Click in LCL's buttons.inc). }
+
+{ Strips the '&' accelerator marker and trims, so "&Yes" matches "yes". }
+function NormalizeButtonCaption(const S: string): string;
+
+{ Collects every button's caption into AAvailable (may be nil), and the
+  first one whose caption matches AWanted into AFound. }
+procedure FindButtonByCaption(AParent: TWinControl; const AWanted: string;
+  var AFound: TCustomButton; AAvailable: TStringList);
+
+{ The first button whose ModalResult property equals AResult. }
+function FindButtonByModalResult(AParent: TWinControl; AResult: TModalResult): TCustomButton;
+
 implementation
 
 uses
   LazLogger,
   McpDebugGuard;  { GMcpDriven }
+
+function NormalizeButtonCaption(const S: string): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(S) do
+    if S[I] <> '&' then
+      Result := Result + S[I];
+  Result := Trim(Result);
+end;
+
+procedure FindButtonByCaption(AParent: TWinControl; const AWanted: string;
+  var AFound: TCustomButton; AAvailable: TStringList);
+var
+  I   : Integer;
+  C   : TControl;
+  Cap : string;
+begin
+  for I := 0 to AParent.ControlCount - 1 do
+  begin
+    C := AParent.Controls[I];
+    if C is TCustomButton then
+    begin
+      Cap := NormalizeButtonCaption(TCustomButton(C).Caption);
+      if Assigned(AAvailable) and (Cap <> '') then AAvailable.Add(Cap);
+      if (AFound = nil) and SameText(Cap, NormalizeButtonCaption(AWanted)) then
+        AFound := TCustomButton(C);
+    end;
+    if C is TWinControl then
+      FindButtonByCaption(TWinControl(C), AWanted, AFound, AAvailable);
+  end;
+end;
+
+function FindButtonByModalResult(AParent: TWinControl; AResult: TModalResult): TCustomButton;
+var
+  I : Integer;
+  C : TControl;
+begin
+  Result := nil;
+  for I := 0 to AParent.ControlCount - 1 do
+  begin
+    C := AParent.Controls[I];
+    if (C is TCustomButton) and (TCustomButton(C).ModalResult = AResult) then
+      Exit(TCustomButton(C));
+    if C is TWinControl then
+    begin
+      Result := FindButtonByModalResult(TWinControl(C), AResult);
+      if Assigned(Result) then Exit;
+    end;
+  end;
+end;
 
 constructor TMcpIdeHookManager.Create;
 begin
@@ -111,13 +184,25 @@ type
   end;
 
 procedure TMcpAutoAnswer.Apply(Data: PtrInt);
+var
+  Btn : TCustomButton;
 begin
   { The form may have been closed meanwhile; only touch it if still alive. }
   if (Screen.CustomFormIndex(Form) >= 0) and (fsModal in Form.FormState) then
   begin
     DebugLn(['[MCP Assistant] auto-answered ', Form.ClassName, ' (', Form.Caption,
              ') with modal result ', Answer]);
-    Form.ModalResult := Answer;
+    { Same path ide_answer_dialog takes for a real click, found by
+      ModalResult rather than caption: a caption changes with the IDE's
+      locale, a ModalResult doesn't. Falls back to the old direct poke if
+      the dialog has no button wired to this result (shouldn't happen for
+      the two classes handled here, but this path must never leave the
+      dialog stuck). }
+    Btn := FindButtonByModalResult(Form, Answer);
+    if Assigned(Btn) then
+      Btn.Click
+    else
+      Form.ModalResult := Answer;
   end;
   Free;
 end;

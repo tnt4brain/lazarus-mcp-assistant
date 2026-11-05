@@ -130,7 +130,7 @@ const
 { Open and immediately close a TCP connection to 127.0.0.1:APort.
   Used to unblock accept() after StopAccepting(False) sets the flag. }
 const
-  McpServerVersion = '1.0';
+  McpServerVersion = '1.1';
 
 procedure MakeDummyConnect(APort: Word; const AHost: string);
 var
@@ -599,6 +599,17 @@ var
   Handled : Boolean;
 begin
   McpNoteToolCall(ToolName);
+  { No project: the IDE shows its modal Project Wizard, and so only the
+    wizard's own actions (new, open, open recent) are served. }
+  if McpToolNeedsProject(ToolName) and Assigned(LazarusIDE) and
+     (LazarusIDE.ActiveProject = nil) then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := ToolName + ' is not available: no project is open, and the IDE ' +
+                  'shows its Project Wizard. Like the wizard, only project_open and ' +
+                  'project_create work now; use one of them first.';
+    Exit;
+  end;
   try
     McpDispatch(ToolName, Ctx, Handled);
     if not Handled then
@@ -611,6 +622,17 @@ begin
     begin
       Ctx.Error  := True;
       Ctx.Result := E.Message;
+      { A bare "Access violation" says nothing about where: keep the stack in
+        the session log, and give the caller its top frames (the code that
+        faulted is IDE code or ours, never something the caller can fix) }
+      if E is EAccessViolation then
+      begin
+        McpLogSession(ToolName + ' raised ' + E.ClassName + ': ' + E.Message +
+                      LineEnding + McpExceptionTrace);
+        Ctx.Result := E.Message + ' in ' + ToolName + '; stack: ' +
+                      StringReplace(Trim(McpExceptionTrace), LineEnding, ' <- ',
+                                    [rfReplaceAll]);
+      end;
     end;
   end;
   { Calls from a client can follow each other without the IDE going idle in

@@ -43,6 +43,17 @@ type
 procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);
 procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
 
+{ True when a tool must be refused while no project is open.  With none, the
+  IDE sits in its modal Project Wizard (File > Close Project), which offers
+  exactly: New project, Open project, Open recent project.  The same goes for
+  tools: only project_create and project_open (which also covers "recent")
+  pass, plus ide_ping, the liveness probe that the restart poll relies on and
+  that never touches the IDE.  Everything else is refused, so a tool added
+  later is safe by default instead of raising an access violation inside the
+  IDE (TProject.GetMainFilename, PrepareForCompile, ... all dereference the
+  missing project). }
+function McpToolNeedsProject(const AToolName: string): Boolean;
+
 { Called by SyncCallTool and HandleToolsList respectively. }
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 procedure McpRegisterSchemas(Tools: TJSONArray);
@@ -97,6 +108,12 @@ var
   GSchemaGroups    : array of TMcpSchemaReg;
   GBlockingGroups  : array of TMcpGroupDispatch;
   GResourceEntries : array of TMcpResourceEntry;
+
+function McpToolNeedsProject(const AToolName: string): Boolean;
+begin
+  Result := not ((AToolName = 'project_create') or (AToolName = 'project_open') or
+                 (AToolName = 'ide_ping'));
+end;
 
 procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);
 begin

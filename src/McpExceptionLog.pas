@@ -33,6 +33,10 @@ procedure McpNoteToolCall(const ATool: string);
   without showing it. }
 procedure McpLogException(E: Exception);
 
+{ The stack of the exception being handled (in an except block), one frame
+  per line: where it was raised, then the callers. }
+function McpExceptionTrace: string;
+
 implementation
 
 uses
@@ -81,7 +85,7 @@ begin
     Result := AppendPathDelim(LazarusIDE.GetPrimaryConfigPath) + LOG_NAME;
 end;
 
-function CurrentTrace: string;
+function McpExceptionTrace: string;
 var
   Frames : PCodePointer;
   I      : Integer;
@@ -132,7 +136,7 @@ begin
     X.At         := Now;
     X.ExcClass   := E.ClassName;
     X.Msg        := E.Message;
-    X.Trace      := CurrentTrace;
+    X.Trace      := McpExceptionTrace;
     X.LastTool   := GLastTool;
     X.ToolAgoMs  := 0;
     if GLastToolAt > 0 then

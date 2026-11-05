@@ -1,9 +1,10 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpToolsProject;
 
-{ Project lifecycle tools: ide_ping, project_get_directory, project_get_settings,
-  project_set_settings, get_lazarus_reference, project_add_file,
-  project_remove_file, form_create, project_list_templates, project_create.
+{ Project lifecycle tools: ide_ping, ide_get_open_dialogs, ide_answer_dialog,
+  project_get_directory, project_get_settings, project_set_settings,
+  get_lazarus_reference, project_add_file, project_remove_file, project_clean,
+  form_create, project_list_templates, project_create.
   Also owns KnowledgeText and IsDescriptorInteractive. }
 
 {$mode objfpc}{$H+}
@@ -19,10 +20,11 @@ implementation
 uses
   Classes, SysUtils,
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil, CompOptsIntf,
-  MacroIntf, Controls, Forms, IDEDialogs, LCLPlatformDef, StrUtils,
+  MacroIntf, Controls, Forms, StdCtrls, IDEDialogs, LCLPlatformDef, StrUtils, MenuIntf, ExtCtrls,
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
+  PackageDefs,
   fpjson,
-  McpToolContext;
+  McpToolContext, McpToolsPackages, McpDialogWatch, McpIdeListeners;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -35,6 +37,18 @@ const
 const
   SCHEMA_PING =
     '{"type":"object","properties":{}}';
+
+  SCHEMA_GET_OPEN_DIALOGS =
+    '{"type":"object","properties":{}}';
+
+  SCHEMA_ANSWER_DIALOG =
+    '{"type":"object","properties":{' +
+    '"button":{"type":"string","description":"Caption of the button to click, as shown ' +
+    'by ide_get_open_dialogs buttons field (accelerator markers and case ignored)."},' +
+    '"caption":{"type":"string","description":"Optional: the dialog''s caption from ' +
+    'ide_get_open_dialogs, checked before clicking so a race (a different dialog took ' +
+    'its place) is caught instead of clicking the wrong one."}},' +
+    '"required":["button"]}';
 
   SCHEMA_GET_PROJECT_DIRECTORY =
     '{"type":"object","properties":{}}';
@@ -68,6 +82,8 @@ const
     '"directory":{"type":"string","description":"Directory for the new files; defaults to the active project directory"}},' +
     '"required":["unit_name"]}';
 
+  SCHEMA_CLOSE_PROJECT = '{"type":"object","properties":{}}';
+
   SCHEMA_LIST_PROJECT_TEMPLATES =
     '{"type":"object","properties":{' +
     '"visible_only":{"type":"boolean","description":"If true (default), return only templates shown in the New Project dialog. Pass false to include hidden/internal templates."}}}';
@@ -78,6 +94,14 @@ const
     '"project_dir":{"type":"string","description":"Absolute path for the project directory; created if absent"},' +
     '"project_name":{"type":"string","description":"Project name (becomes the .lpi filename without extension)"}},' +
     '"required":["project_dir","project_name"]}';
+
+  SCHEMA_CLEAN_PROJECT =
+    '{"type":"object","properties":{' +
+    '"package_name":{"type":"string","description":"Clean this loaded package''s source ' +
+    'directory instead of the active project''s"},' +
+    '"lpk_path":{"type":"string","description":"Or a package by its .lpk path"},' +
+    '"dry_run":{"type":"boolean","description":"List the stray files without deleting them ' +
+    '(default true); pass false to actually delete"}}}';
 
   SCHEMA_OPEN_PROJECT =
     '{"type":"object","properties":{' +
@@ -181,6 +205,109 @@ begin
     if SourceEditorManagerIntf.SourceEditors[I].Modified then
       Exit('Unsaved changes in ' + SourceEditorManagerIntf.SourceEditors[I].FileName +
            '. Save them (editor_save) or ask the user before ' + AAction + '.');
+end;
+
+{ After File > Close Project the IDE runs its "Project Wizard" modally
+  (TMainIDE.DoNoProjectWizard) and keeps it up until it is answered.  A tool
+  call runs inside that dialog's message loop, so project_create succeeds and
+  the wizard stays on screen, blocking the user.  Closing it any plain way
+  (Cancel, Escape) returns tpws_closeIDE, and the IDE would then quit.  So end
+  it the way a user would: "open recent" with the project that is now open.
+  The IDE re-opens that saved project once the dialog returns.  Does nothing
+  when no wizard is up.  Looked up by class name, as for TIDEExceptionDlg. }
+procedure DismissProjectWizard(const AProjectFile: string);
+var
+  I  : Integer;
+  F  : TCustomForm;
+  Cb : TComponent;
+begin
+  for I := 0 to Screen.CustomFormCount - 1 do
+  begin
+    F := Screen.CustomForms[I];
+    if not (F.ClassNameIs('TProjectWizardDialog') and (fsModal in F.FormState)) then
+      Continue;
+    Cb := F.FindComponent('cbRecentProjects');
+    if (Cb is TComboBox) and Assigned(TComboBox(Cb).OnSelect) then
+    begin
+      { csDropDownList: Text only takes a string that is an item }
+      with TComboBox(Cb) do
+      begin
+        ItemIndex := Items.IndexOf(AProjectFile);
+        if ItemIndex < 0 then
+          ItemIndex := Items.Add(AProjectFile);
+        OnSelect(Cb);   { sets the wizard's result, ModalResult := mrOK }
+      end;
+    end;
+    Exit;
+  end;
+end;
+
+{ project_close: the IDE's own File > Close Project, so the IDE ends up as it
+  does for the user: no project, and the Project Wizard up (project_create and
+  project_open then dismiss it).  The menu item's handler ends in the
+  wizard's modal loop, so it must not run inside the tool call (which would
+  never return): a one-shot timer runs it after the call is answered.  Not
+  Application.QueueAsyncCall: the server runs Application.Idle before it
+  answers, and that drains the async queue, so the click would run, and sit in
+  the wizard, inside the call (the call timed out, 2026-11-05). }
+type
+  TMcpCloseProjectClick = class
+  private
+    FTimer: TTimer;
+    procedure Fire(Sender: TObject);
+  public
+    Item: TIDEMenuItem;
+    procedure Arm;
+    destructor Destroy; override;
+  end;
+
+var
+  GCloseProjectClick : TMcpCloseProjectClick = nil;
+
+procedure TMcpCloseProjectClick.Arm;
+begin
+  if FTimer = nil then
+  begin
+    FTimer := TTimer.Create(nil);
+    FTimer.Enabled  := False;
+    FTimer.Interval := 200;
+    FTimer.OnTimer  := @Fire;
+  end;
+  FTimer.Enabled := True;
+end;
+
+procedure TMcpCloseProjectClick.Fire(Sender: TObject);
+begin
+  FTimer.Enabled := False;
+  if Assigned(Item) and Assigned(Item.MenuItem) then
+    Item.MenuItem.Click;
+end;
+
+destructor TMcpCloseProjectClick.Destroy;
+begin
+  FTimer.Free;
+  inherited Destroy;
+end;
+
+{ The item named AName anywhere below ASection (the IDE names its menu items,
+  e.g. itmProjectClose). }
+function FindMenuItemByName(ASection: TIDEMenuSection; const AName: string): TIDEMenuItem;
+var
+  I : Integer;
+  C : TIDEMenuItem;
+begin
+  Result := nil;
+  if ASection = nil then Exit;
+  for I := 0 to ASection.Count - 1 do
+  begin
+    C := ASection.Items[I];
+    if SameText(C.Name, AName) then Exit(C);
+    if C is TIDEMenuSection then
+    begin
+      Result := FindMenuItemByName(TIDEMenuSection(C), AName);
+      if Assigned(Result) then Exit;
+    end;
+  end;
 end;
 
 { ── Widgetset ────────────────────────────────────────────────────────────── }
@@ -440,6 +567,197 @@ begin
   end;
 end;
 
+{ ── project_clean helper ─────────────────────────────────────────────────── }
+
+{ Expands macros in a (possibly relative, possibly macro-laden) unit output
+  directory and resolves it against BaseDir, the way the IDE's own build
+  does -- so files genuinely inside it are never offered for deletion. }
+function ResolveOutputDir(RawOutputDir, BaseDir: string): string;
+begin
+  Result := RawOutputDir;
+  if Result = '' then Exit;
+  if Assigned(IDEMacros) then
+    IDEMacros.SubstituteMacros(Result);
+  Result := TrimFilename(CreateAbsolutePath(Result, BaseDir));
+end;
+
+{ Stray .ppu/.o files left directly in a project's or package's own source
+  directory (not its configured unit output directory) trip the IDE's
+  "Ambiguous unit found" dialog on the next compile -- hit repeatedly while
+  debugging a standalone fpc compile that wrote its output there by mistake
+  (2026-10-24). dry_run (default true) only lists them. }
+procedure DoProjectClean(var Ctx: TMcpToolCall);
+var
+  Pkg        : TLazPackage;
+  Err        : string;
+  SrcDir     : string;
+  OutDir     : string;
+  DryRun     : Boolean;
+  Found      : TStringList;
+  Candidates : TJSONArray;
+  Deleted    : TJSONArray;
+  Failed     : TJSONArray;
+  Obj        : TJSONObject;
+  I          : Integer;
+  F          : string;
+begin
+  DryRun := True;
+  if Assigned(Ctx.Params) then
+    DryRun := Ctx.Params.Get('dry_run', True);
+
+  if Assigned(Ctx.Params) and
+     ((Ctx.Params.Find('package_name') <> nil) or (Ctx.Params.Find('lpk_path') <> nil)) then
+  begin
+    if not TargetPackage(Ctx.Params, Pkg, Err, False) then
+    begin
+      Ctx.Error := True; Ctx.Result := Err; Exit;
+    end;
+    SrcDir := ExtractFilePath(Pkg.Filename);
+    if Assigned(Pkg.CompilerOptions) then
+      OutDir := ResolveOutputDir(Pkg.CompilerOptions.UnitOutputDirectory, SrcDir);
+  end
+  else
+  begin
+    if not Assigned(LazarusIDE) or not Assigned(LazarusIDE.ActiveProject) or
+       (LazarusIDE.ActiveProject.ProjectInfoFile = '') then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'No active (saved) project, and no package_name/lpk_path given';
+      Exit;
+    end;
+    SrcDir := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile);
+    if Assigned(LazarusIDE.ActiveProject.LazCompilerOptions) then
+      OutDir := ResolveOutputDir(
+        LazarusIDE.ActiveProject.LazCompilerOptions.UnitOutputDirectory, SrcDir);
+  end;
+
+  Found := FindAllFiles(SrcDir, '*.ppu;*.o', True);
+  try
+    Candidates := TJSONArray.Create;
+    Deleted    := TJSONArray.Create;
+    Failed     := TJSONArray.Create;
+    try
+      for I := 0 to Found.Count - 1 do
+      begin
+        F := Found[I];
+        { Inside the real output directory: that is where these belong. }
+        if (OutDir <> '') and (CompareFilenames(ExtractFilePath(ExcludeTrailingPathDelimiter(F)),
+             ExcludeTrailingPathDelimiter(OutDir)) = 0) then Continue;
+        if (OutDir <> '') and AnsiStartsText(AppendPathDelim(OutDir), F) then Continue;
+        Candidates.Add(F);
+        if not DryRun then
+        begin
+          if DeleteFile(F) then
+            Deleted.Add(F)
+          else
+            Failed.Add(F);
+        end;
+      end;
+
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('directory', SrcDir);
+        Obj.Add('output_dir', OutDir);
+        Obj.Add('dry_run', DryRun);
+        Obj.Add('candidates', Candidates.Clone as TJSONArray);
+        if not DryRun then
+        begin
+          Obj.Add('deleted', Deleted.Clone as TJSONArray);
+          Obj.Add('failed', Failed.Clone as TJSONArray);
+        end;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    finally
+      Candidates.Free;
+      Deleted.Free;
+      Failed.Free;
+    end;
+  finally
+    Found.Free;
+  end;
+end;
+
+{ ── ide_answer_dialog helper ─────────────────────────────────────────────── }
+
+procedure DoAnswerDialog(var Ctx: TMcpToolCall);
+var
+  Wanted, ExpectCaption, DialogCaption, AvailStr : string;
+  Modal  : TCustomForm;
+  Found  : TCustomButton;
+  Avail  : TStringList;
+  Obj    : TJSONObject;
+  I      : Integer;
+begin
+  Wanted := '';
+  ExpectCaption := '';
+  if Assigned(Ctx.Params) then
+  begin
+    Wanted := Trim(Ctx.Params.Get('button', ''));
+    ExpectCaption := Ctx.Params.Get('caption', '');
+  end;
+  if Wanted = '' then
+  begin
+    Ctx.Error := True; Ctx.Result := 'button is required'; Exit;
+  end;
+
+  { Any currently-modal LCL form, found or bespoke (TDiskDiffsDlg included) --
+    the same object Screen.OnActiveFormChanged already sees in
+    McpIdeListeners.pas, just read on demand instead of matched by class. }
+  Modal := Screen.GetCurrentModalForm;
+  if not Assigned(Modal) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'No LCL dialog is currently modal. A native Windows dialog, if any, ' +
+      'cannot be answered from here -- see ide_get_open_dialogs.';
+    Exit;
+  end;
+
+  DialogCaption := Modal.Caption;
+  if (ExpectCaption <> '') and not SameText(Trim(DialogCaption), Trim(ExpectCaption)) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := Format('The open dialog is "%s", not "%s" -- re-check with ' +
+      'ide_get_open_dialogs before answering.', [DialogCaption, ExpectCaption]);
+    Exit;
+  end;
+
+  Found := nil;
+  Avail := TStringList.Create;
+  try
+    FindButtonByCaption(Modal, Wanted, Found, Avail);
+    if not Assigned(Found) then
+    begin
+      AvailStr := '';
+      for I := 0 to Avail.Count - 1 do
+      begin
+        if AvailStr <> '' then AvailStr := AvailStr + ', ';
+        AvailStr := AvailStr + Avail[I];
+      end;
+      Ctx.Error := True;
+      Ctx.Result := Format('No button "%s" on "%s". Available: %s',
+        [Wanted, DialogCaption, AvailStr]);
+      Exit;
+    end;
+    { Same path a real click takes: sets the form's ModalResult, then fires
+      OnClick, exactly as TCustomButton.Click does for a mouse click. }
+    Found.Click;
+  finally
+    Avail.Free;
+  end;
+
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('answered', True);
+    Obj.Add('dialog', DialogCaption);
+    Obj.Add('button', Wanted);
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 function DispatchProjectTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -516,7 +834,8 @@ begin
       NewName := Proj.ProjectInfoFile;
       if CompareFilenames(NewName, FilePath) = 0 then
       begin
-        Ctx.Result := '{"project_file":"' + StringToJSONString(FilePath) +
+        DismissProjectWizard(FilePath);  { a wizard left over from before }
+        Ctx.Result :='{"project_file":"' + StringToJSONString(FilePath) +
                       '","already_open":true}';
         Exit;
       end;
@@ -536,6 +855,9 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not open ' + FilePath; Exit;
     end;
+    { the Project Wizard (shown after Close Project) stays up otherwise }
+    if Assigned(LazarusIDE.ActiveProject) then
+      DismissProjectWizard(LazarusIDE.ActiveProject.ProjectInfoFile);
     Obj := TJSONObject.Create;
     try
       if Assigned(LazarusIDE.ActiveProject) then
@@ -544,6 +866,47 @@ begin
         Obj.Add('project_file', FilePath);
       Obj.Add('previous_project', NewName);
       if CreatedLpi then Obj.Add('created_project_file', True);
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
+  else if Name = 'project_close' then
+  begin
+    Result := True;
+    Proj := LazarusIDE.ActiveProject;
+    if Proj = nil then
+    begin
+      { unreachable through the server (no project: refused up front), but a
+        direct caller should not dereference nil }
+      Ctx.Error  := True;
+      Ctx.Result := 'No project is open.';
+      Exit;
+    end;
+    { the IDE would ask about a running debugger or build and about unsaved
+      changes in a dialog; refuse those cases as project_open does }
+    Ctx.Result := ProjectCloseRefusal('closing the project');
+    if Ctx.Result <> '' then
+    begin
+      Ctx.Error := True; Exit;
+    end;
+    if GCloseProjectClick = nil then
+      GCloseProjectClick := TMcpCloseProjectClick.Create;
+    GCloseProjectClick.Item := FindMenuItemByName(mnuMain, 'itmProjectClose');
+    if GCloseProjectClick.Item = nil then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'The IDE''s Close Project menu item was not found.';
+      Exit;
+    end;
+    GCloseProjectClick.Arm;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('closing', True);
+      Obj.Add('previous_project', Proj.ProjectInfoFile);
+      Obj.Add('note', 'The IDE shows its Project Wizard now, as for File > Close ' +
+                      'Project; project_create or project_open dismisses it.');
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -566,6 +929,22 @@ begin
       { and which token it came with (ADR-021) }
       if McpSessionTokenName(Ctx.ClientId) <> '' then
         Obj.Add('token', McpSessionTokenName(Ctx.ClientId));
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
+  else if Name = 'ide_get_open_dialogs' then
+  begin
+    Result := True;
+    Arr := McpOpenDialogs;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('count', Arr.Count);
+      if Arr.Count > 0 then
+        Obj.Add('summary', McpDescribeDialogs(Arr));
+      Obj.Add('dialogs', Arr);  { ownership moves to Obj }
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -965,6 +1344,7 @@ begin
                     'unsaved project.';
       Exit;
     end;
+    DismissProjectWizard(Proj.ProjectInfoFile);
     Obj := TJSONObject.Create;
     try
       Obj.Add('project_file', Proj.ProjectInfoFile);
@@ -973,6 +1353,18 @@ begin
     finally
       Obj.Free;
     end;
+  end
+
+  else if Name = 'project_clean' then
+  begin
+    Result := True;
+    DoProjectClean(Ctx);
+  end
+
+  else if Name = 'ide_answer_dialog' then
+  begin
+    Result := True;
+    DoAnswerDialog(Ctx);
   end;
 end;
 
@@ -986,6 +1378,12 @@ begin
     '"anonymous"). After ide_rebuild, wait with the returned poll_command; ' +
     'this then confirms the server is back.',
     SCHEMA_PING, MCP_ANN_RO));
+  Tools.Add(MakeTool('ide_get_open_dialogs',
+    'List modal dialogs currently blocking the IDE''s main thread: caption, text and ' +
+    'buttons for each (a short "summary" line too, when any are open). While one is ' +
+    'open, no other tool call can make progress on the main thread -- ask the user to ' +
+    'close or answer it; nothing here answers a dialog for you.',
+    SCHEMA_GET_OPEN_DIALOGS, MCP_ANN_RO));
   Tools.Add(MakeTool('project_get_directory',
     'Return the root directory of the active project (directory containing the .lpi file).',
     SCHEMA_GET_PROJECT_DIRECTORY, MCP_ANN_RO));
@@ -1007,6 +1405,21 @@ begin
     'Remove a source file from the active project without deleting it from disk. ' +
     'Saves the project afterwards.',
     SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE_IDEM));
+  Tools.Add(MakeTool('project_clean',
+    'Find (and, unless dry_run, delete) stray .ppu/.o files left directly in a ' +
+    'project''s or package''s own source directory outside its configured unit ' +
+    'output directory -- the files that trip the IDE''s "Ambiguous unit found" dialog ' +
+    'on the next compile, typically left by a standalone fpc compile run with its ' +
+    'output pointed at the wrong directory. Defaults to the active project; pass ' +
+    'package_name or lpk_path to target a package instead. dry_run defaults to true.',
+    SCHEMA_CLEAN_PROJECT, MCP_ANN_DEST_IDEM));
+  Tools.Add(MakeTool('ide_answer_dialog',
+    'Click a button on the LCL dialog currently blocking the IDE''s main thread ' +
+    '(see ide_get_open_dialogs for what''s open and its button captions). Only LCL ' +
+    'dialogs can be answered this way -- a native Windows dialog has no form to click ' +
+    'into. Pass caption too to guard against answering a different dialog than the one ' +
+    'you saw.',
+    SCHEMA_ANSWER_DIALOG, MCP_ANN_DEST));
   Tools.Add(MakeTool('form_create',
     'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +
     'both added to the active project and opened in the editor. The IDE names ' +
@@ -1018,6 +1431,12 @@ begin
     'default project open), so build, run and debug work on it. Refused while ' +
     'debugging or building, or with unsaved changes. Clears the Messages window.',
     SCHEMA_OPEN_PROJECT, MCP_ANN_WRITE_IDEM));
+  Tools.Add(MakeTool('project_close',
+    'Close the current project, like File > Close Project: the IDE is left with no ' +
+    'project and shows its Project Wizard, which project_create or project_open ' +
+    'dismisses. Refused while debugging or building, or with unsaved changes. Returns ' +
+    'at once; the close happens right after.',
+    SCHEMA_CLOSE_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_list_templates',
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
     'of {name, localized_name, description}. Pass the name to project_create as ' +
@@ -1048,5 +1467,8 @@ initialization
     'Describes available tools, recommended workflows, and common gotchas.',
     'text/plain',
     @GetSystemPromptText);
+
+finalization
+  FreeAndNil(GCloseProjectClick);
 
 end.
