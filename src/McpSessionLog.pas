@@ -2,8 +2,9 @@
 unit McpSessionLog;
 
 { A short trail of how MCP sessions come and go: initialize (who, which
-  protocol, whether it still carried an old session id), requests refused with
-  404 because their session id is unknown (after an IDE restart, ADR-012), DELETE,
+  protocol we settled on and, when different, the one it asked for), requests
+  refused with 404 because their session id is unknown (after an IDE restart,
+  ADR-012; with the MCP-Protocol-Version the client sent), DELETE,
   server start.  Appended to mcp-sessions.log in the IDE's config folder; the
   file stays below about 200 KB.  For working out why a client gave up on the
   server after a restart: it says what the client sent and what we answered.
