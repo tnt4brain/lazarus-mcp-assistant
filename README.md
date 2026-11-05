@@ -201,6 +201,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_run_input` | Sends text to the stdin of that program (`project_run` with `stdin` or `keep_stdin_open`), or closes it; returns the answer |
 | `project_get_windows` | The running program's visible windows (Windows: a tree of windowed controls, `Class "text" x,y wxh`, about 20 tokens a line. Linux (X11): the top-level windows only, found by process id, without the controls inside); `image` adds a PNG of each window (scaled to `max_size`), which also shows controls without a handle such as `TLabel`. Never waits for the program, so it also works while the program is paused in the debugger (the image is then copied from the screen). `ide=true` with `window` looks at the IDE's own windows instead (a form being built, a dialog); `window` is required then, so only the windows you name are shown |
 | `project_open` | Open a `.lpi` (or a program's `.lpr`, for which the `.lpi` is written next to it), closing the current project; refused while debugging or building, or with unsaved changes |
+| `project_close` | Close the current project like File > Close Project: the IDE shows its Project Wizard, which `project_create` / `project_open` dismiss; refused while debugging or building, or with unsaved changes |
 | `project_list_templates` / `project_create` | Project templates; create a project from one |
 
 ### Packages — `package_*`

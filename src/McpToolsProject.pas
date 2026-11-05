@@ -20,7 +20,7 @@ implementation
 uses
   Classes, SysUtils,
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil, CompOptsIntf,
-  MacroIntf, Controls, Forms, StdCtrls, IDEDialogs, LCLPlatformDef, StrUtils,
+  MacroIntf, Controls, Forms, StdCtrls, IDEDialogs, LCLPlatformDef, StrUtils, MenuIntf, ExtCtrls,
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson,
@@ -81,6 +81,8 @@ const
     '"kind":{"type":"string","enum":["form","datamodule","frame"],"description":"What to create (default form)"},' +
     '"directory":{"type":"string","description":"Directory for the new files; defaults to the active project directory"}},' +
     '"required":["unit_name"]}';
+
+  SCHEMA_CLOSE_PROJECT = '{"type":"object","properties":{}}';
 
   SCHEMA_LIST_PROJECT_TEMPLATES =
     '{"type":"object","properties":{' +
@@ -237,6 +239,74 @@ begin
       end;
     end;
     Exit;
+  end;
+end;
+
+{ project_close: the IDE's own File > Close Project, so the IDE ends up as it
+  does for the user: no project, and the Project Wizard up (project_create and
+  project_open then dismiss it).  The menu item's handler ends in the
+  wizard's modal loop, so it must not run inside the tool call (which would
+  never return): a one-shot timer runs it after the call is answered.  Not
+  Application.QueueAsyncCall: the server runs Application.Idle before it
+  answers, and that drains the async queue, so the click would run, and sit in
+  the wizard, inside the call (the call timed out, 2026-11-05). }
+type
+  TMcpCloseProjectClick = class
+  private
+    FTimer: TTimer;
+    procedure Fire(Sender: TObject);
+  public
+    Item: TIDEMenuItem;
+    procedure Arm;
+    destructor Destroy; override;
+  end;
+
+var
+  GCloseProjectClick : TMcpCloseProjectClick = nil;
+
+procedure TMcpCloseProjectClick.Arm;
+begin
+  if FTimer = nil then
+  begin
+    FTimer := TTimer.Create(nil);
+    FTimer.Enabled  := False;
+    FTimer.Interval := 200;
+    FTimer.OnTimer  := @Fire;
+  end;
+  FTimer.Enabled := True;
+end;
+
+procedure TMcpCloseProjectClick.Fire(Sender: TObject);
+begin
+  FTimer.Enabled := False;
+  if Assigned(Item) and Assigned(Item.MenuItem) then
+    Item.MenuItem.Click;
+end;
+
+destructor TMcpCloseProjectClick.Destroy;
+begin
+  FTimer.Free;
+  inherited Destroy;
+end;
+
+{ The item named AName anywhere below ASection (the IDE names its menu items,
+  e.g. itmProjectClose). }
+function FindMenuItemByName(ASection: TIDEMenuSection; const AName: string): TIDEMenuItem;
+var
+  I : Integer;
+  C : TIDEMenuItem;
+begin
+  Result := nil;
+  if ASection = nil then Exit;
+  for I := 0 to ASection.Count - 1 do
+  begin
+    C := ASection.Items[I];
+    if SameText(C.Name, AName) then Exit(C);
+    if C is TIDEMenuSection then
+    begin
+      Result := FindMenuItemByName(TIDEMenuSection(C), AName);
+      if Assigned(Result) then Exit;
+    end;
   end;
 end;
 
@@ -802,6 +872,44 @@ begin
     end;
   end
 
+  else if Name = 'project_close' then
+  begin
+    Result := True;
+    Proj := LazarusIDE.ActiveProject;
+    if Proj = nil then
+    begin
+      Ctx.Result := '{"closed":true,"already_closed":true}';
+      Exit;
+    end;
+    { the IDE would ask about a running debugger or build and about unsaved
+      changes in a dialog; refuse those cases as project_open does }
+    Ctx.Result := ProjectCloseRefusal('closing the project');
+    if Ctx.Result <> '' then
+    begin
+      Ctx.Error := True; Exit;
+    end;
+    if GCloseProjectClick = nil then
+      GCloseProjectClick := TMcpCloseProjectClick.Create;
+    GCloseProjectClick.Item := FindMenuItemByName(mnuMain, 'itmProjectClose');
+    if GCloseProjectClick.Item = nil then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'The IDE''s Close Project menu item was not found.';
+      Exit;
+    end;
+    GCloseProjectClick.Arm;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('closing', True);
+      Obj.Add('previous_project', Proj.ProjectInfoFile);
+      Obj.Add('note', 'The IDE shows its Project Wizard now, as for File > Close ' +
+                      'Project; project_create or project_open dismisses it.');
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
   else if Name = 'ide_ping' then
   begin
     Result := True;
@@ -1320,6 +1428,12 @@ begin
     'default project open), so build, run and debug work on it. Refused while ' +
     'debugging or building, or with unsaved changes. Clears the Messages window.',
     SCHEMA_OPEN_PROJECT, MCP_ANN_WRITE_IDEM));
+  Tools.Add(MakeTool('project_close',
+    'Close the current project, like File > Close Project: the IDE is left with no ' +
+    'project and shows its Project Wizard, which project_create or project_open ' +
+    'dismisses. Refused while debugging or building, or with unsaved changes. Returns ' +
+    'at once; the close happens right after.',
+    SCHEMA_CLOSE_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_list_templates',
     'List all registered Lazarus project templates (descriptors). Returns an array ' +
     'of {name, localized_name, description}. Pass the name to project_create as ' +
@@ -1350,5 +1464,8 @@ initialization
     'Describes available tools, recommended workflows, and common gotchas.',
     'text/plain',
     @GetSystemPromptText);
+
+finalization
+  FreeAndNil(GCloseProjectClick);
 
 end.

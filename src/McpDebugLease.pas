@@ -298,6 +298,7 @@ begin
   Result := IsDebugTool(AName) or
             (AName = 'project_build') or (AName = 'project_run') or
             (AName = 'project_create') or (AName = 'project_open') or
+            (AName = 'project_close') or
             (AName = 'ide_rebuild') or
             (AName = 'package_install') or (AName = 'package_uninstall');
 end;
