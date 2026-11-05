@@ -878,7 +878,10 @@ begin
     Proj := LazarusIDE.ActiveProject;
     if Proj = nil then
     begin
-      Ctx.Result := '{"closed":true,"already_closed":true}';
+      { unreachable through the server (no project: refused up front), but a
+        direct caller should not dereference nil }
+      Ctx.Error  := True;
+      Ctx.Result := 'No project is open.';
       Exit;
     end;
     { the IDE would ask about a running debugger or build and about unsaved

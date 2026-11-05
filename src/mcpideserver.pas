@@ -594,43 +594,20 @@ begin
   if Release then Free;   { nobody waits for this result any more }
 end;
 
-const
-  { Tools that open a file in the editor, build or run: the IDE code behind
-    them dereferences the project (TProject.GetMainFilename, PrepareForCompile)
-    and raises an access violation when none is open, as after Close Project
-    (or fails with nothing to say for it, as project_build does). }
-  ProjectNeededTools : array[0..20] of string = (
-    'editor_open', 'editor_edit_text', 'editor_replace_range', 'editor_close',
-    'code_add_to_class', 'code_replace_procedure_body', 'code_insert_in_procedure',
-    'code_add_uses', 'code_format', 'code_rename_identifier', 'code_goto_declaration',
-    'code_complete', 'project_build', 'project_run', 'project_create_unit',
-    'debug_run', 'debug_run_to_line', 'debug_set_breakpoint',
-    'editor_save', 'editor_revert', 'editor_set_cursor');
-
-function NeedsOpenProject(const AToolName: string): Boolean;
-var
-  I : Integer;
-begin
-  Result := False;
-  { Every form_* tool opens or creates a unit; only the palette search does not. }
-  if (Copy(AToolName, 1, 5) = 'form_') and (AToolName <> 'form_search_palette') then
-    Exit(True);
-  for I := Low(ProjectNeededTools) to High(ProjectNeededTools) do
-    if ProjectNeededTools[I] = AToolName then Exit(True);
-end;
-
 procedure TMcpMainCall.Run;
 var
   Handled : Boolean;
 begin
   McpNoteToolCall(ToolName);
-  if NeedsOpenProject(ToolName) and Assigned(LazarusIDE) and
+  { No project: the IDE shows its modal Project Wizard, and so only the
+    wizard's own actions (new, open, open recent) are served. }
+  if McpToolNeedsProject(ToolName) and Assigned(LazarusIDE) and
      (LazarusIDE.ActiveProject = nil) then
   begin
     Ctx.Error  := True;
-    Ctx.Result := ToolName + ' needs an open project, and none is open (the IDE shows ' +
-                  'its Project Wizard). Open or create one with project_open or ' +
-                  'project_create first.';
+    Ctx.Result := ToolName + ' is not available: no project is open, and the IDE ' +
+                  'shows its Project Wizard. Like the wizard, only project_open and ' +
+                  'project_create work now; use one of them first.';
     Exit;
   end;
   try
