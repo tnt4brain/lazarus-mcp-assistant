@@ -65,7 +65,8 @@ clients, timing, refusals, a call that never returned).
    are logged as sent; failures before a tool name is known (bad `params`, unknown method)
    are not tool calls and stay out.
 6. **Writing:** own lock, append and close per line like `McpLogSession`, on the calling
-   thread; never raises. After five failures in a row the log switches itself off for the
+   thread; never raises. `end` is written from a `finally`, so a tool that raises still
+   gets one. After five failures in a row the log switches itself off for the
    run, with one line in `mcp-sessions.log`. Two IDE instances sharing a config folder are
    not supported.
 7. **Rotation:** at 4 MB (size kept in memory) the file becomes `.1`, `.1` becomes `.2`, `.2`
@@ -78,8 +79,9 @@ clients, timing, refusals, a call that never returned).
    path is known before a hang, when no tool answers. Then the assistant reads the files
    itself: after a stall, a crash or a restart, the last `begin` without an `end` (by
    `seq_id`) is the call that was running; `mcp-sessions.log` has what the server saw around
-   it, including the stack of an access violation. It is told to ask the user before
-   enabling the log, and that an `end` line with a long `duration_ms` or the "dialog open"
+   it, including the stack of an access violation; `mcp-exceptions.log` (also in the config
+   folder, what `ide_get_exceptions` reads) has the IDE's own exceptions. It is told to ask
+   the user before enabling the log, and that an `end` line with a long `duration_ms` or the "dialog open"
    error points at a modal dialog.
 
 ## Alternatives considered
@@ -98,8 +100,11 @@ clients, timing, refusals, a call that never returned).
 ## Tests and acceptance
 
 No IDE needed: serializer (key order, escapes, `{}`), redaction (nested, `env`, case),
-rotation, failure switch-off. Cost: 200 `ide_ping` calls with the log on and off, median
-difference under 5 ms (a guess; the first run fixes the figure).
+rotation, failure switch-off, and that `end` is written when the tool raises. Cost: 200
+`ide_ping` calls with the log on and off, median difference under 5 ms. Measured beforehand
+(2026-11-06, this Windows machine, 2,000 appends of a 330-byte line, open/append/close each
+time): median 0.11 ms, 99th percentile 0.28 ms, worst 4 ms; SHA-1 of 1 MB of arguments 2.5 ms.
+Two appends per call are far below the limit; the worst single append is not.
 
 ## Consequences
 
