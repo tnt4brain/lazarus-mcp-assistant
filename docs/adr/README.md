@@ -26,3 +26,4 @@ ADR-007 was never assigned; no document is missing.
 | [0019](0019-debug-attach-without-the-ide-dialog.md) | # ADR-019 — debug_attach: the IDE's attach path without its dialog |
 | [0020](0020-listen-address-is-a-setting.md) | # ADR-020 — The listen address is a setting, the loopback is the default |
 | [0021](0021-named-client-tokens.md) | # ADR-021 — Named client tokens, stored as tagged hashes |
+| [0022](0022-tool-call-log.md) | # ADR-022 — A tool-call log (`mcp-tools.log`) as evidence for bug reports |
