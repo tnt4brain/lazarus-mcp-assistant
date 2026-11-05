@@ -18,17 +18,24 @@ protocol revision 2026-07-28 drops (issue #5).
    `mcp-sessions.log` (200 KB; a line per call would push the connection history out within
    minutes). Not the Messages pane yet: `McpCompilerMessages` takes the last view as the
    compiler's, `ide_get_messages` returns every view, `project_open` clears the pane.
-2. **JSON Lines, one object per finished call:** `t`, `seq`, `caller` (`client` as
-   "name version", `token` name, `session` short id if any), `tool`, `ms`, `ok`, `project`
-   (file name or empty), `args_hash`, the error text on failure, and at Replay `args` and
-   `result`. A `session` record at each `initialize`: plugin version, protocol settled on and
-   asked for, Lazarus, FPC, OS.
-3. **Levels:** Off (default), Calls (all of the above except `args` and `result`), Replay
-   (adds them). Calls first: no privacy cost. Replay in a later change, once the redaction
-   below has tests.
+2. **JSON Lines, one object per finished call:** `timestamp` (ISO 8601 UTC, milliseconds),
+   `seq_id` (per-process counter, restarts at 1 with the IDE), `caller` (`client` as
+   "name version", `token` name, `session` short id if any), `tool`, `duration_ms`,
+   `response` (`success`; `error` text on failure only), `project` (file name or empty),
+   `args_hash`. At Replay also `args` (the arguments object) and, on success,
+   `response.result`. A success carries no text at Calls: results can hold code and paths.
+   A `session` record at each `initialize` and a `start` record at server start: plugin
+   version, protocol settled on and asked for, Lazarus, FPC, OS.
+
+   ```json
+   {"timestamp":"2026-11-05T20:51:45.196Z","seq_id":42,"caller":{"client":"claude-code 2.1","token":"laptop","session":"d97f7ac2"},"tool":"project_build","duration_ms":8120,"response":{"success":false,"error":"Compilation failed"},"project":"mcpserver_tests.lpi","args_hash":"3fa9c01b77de"}
+   ```
+3. **Levels:** Off (default), Calls (the record above), Replay (adds `args` and
+   `response.result`). Calls first: no privacy cost. Replay in a later change, once the
+   redaction below has tests.
 4. **`args_hash`:** first 12 hex characters of the SHA-1 (the `sha1` unit, as ADR-021) of the
    canonical JSON of the `arguments` object alone: keys sorted, no insignificant whitespace,
-   values as received, so `a/b` and `a\b` differ (different inputs). Not hashed: `seq`, time,
+   values as received, so `a/b` and `a\b` differ (different inputs). Not hashed: `seq_id`, time,
    session, JSON-RPC `id`, tool name, `_meta`. Computed after redaction, so it cannot confirm
    a guessed secret.
 5. **Hook:** `TMcpServerThread.CallOnMain`, which every call passes: refused calls, calls the
