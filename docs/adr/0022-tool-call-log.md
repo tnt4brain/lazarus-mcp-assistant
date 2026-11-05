@@ -35,11 +35,21 @@ identity model (the session id) is not the only possible one: the protocol revis
    rest: plugin version, protocol revision settled on and asked for, Lazarus and FPC
    versions, OS.
 3. **Levels: Off (default), Calls, Replay.** Calls writes everything above except `args`
-   and `result`, and instead `args_hash` (a short hash of the argument JSON, so repeated or
-   equal calls can be seen without their content) and, for an error, its text. Replay adds
-   `args` and `result`. Calls is implemented first: it answers "what happened, in which
-   order, how long, with what outcome" with no privacy cost. Replay follows with its own
-   change, after the redaction rules below have tests.
+   and `result`, and instead `args_hash` and, for an error, its text. Replay adds `args`
+   and `result`. Calls is implemented first: it answers "what happened, in which order,
+   how long, with what outcome" with no privacy cost. Replay follows with its own change,
+   after the redaction rules below have tests.
+   `args_hash` lets repeated or equal calls be seen without their content, so it must
+   depend on the arguments and on nothing else: the first 12 hex characters of the SHA-1
+   (the `sha1` unit ADR-021 already uses; a fingerprint, not a security measure) of the
+   **canonical JSON of the `arguments` object only**. Not hashed: `seq`, the time, the
+   session, the JSON-RPC `id`, the tool name, `_meta`. Canonical means keys sorted by their
+   bytes at every level, no insignificant whitespace, strings and numbers as received, so
+   two clients that send the same arguments in a different key order get the same hash. It
+   is computed **after** the redaction of rule 5, so a hash cannot be used to guess a short
+   secret. Paths are hashed as received, not normalized: one file named with `/` and with
+   `\` gives two hashes, a known limit. 48 bits are enough for a log (a collision among
+   10,000 distinct calls is about one in five million).
 4. **Where it is written.** In `TMcpServerThread.CallOnMain`: the one place every tool call
    passes, so calls refused before they start (open dialog, schema check) and calls the
    caller gave up on (they finish later, the line carries the real duration) are all
