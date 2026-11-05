@@ -17,11 +17,13 @@ and `client` is what the client claimed (only `token` is authenticated).
 
 1. **Own file, off by default:** `mcp-tools.log` next to `mcp-sessions.log`. Not that file
    (200 KB; a line per call would push the connection history out within minutes). Not the
-   Messages pane yet: `McpCompilerMessages` takes the last view as the compiler's,
-   `ide_get_messages` returns every view, `project_open` clears the pane.
+   Messages pane yet: `McpCompilerMessages` reads the pane's last view as the compiler's
+   output, so extra lines there may be taken for it; untested, so a later view over this file.
 2. **JSON Lines, every line has an `event`:**
    - `begin`, written when a `tools/call` arrives: `timestamp`, `seq_id`, `caller`, `tool`.
-     It is what remains if the call hangs or takes the IDE down.
+     It is what remains if the call hangs or takes the IDE down. For every tool: any call can
+     stall (a modal dialog, the debugger lock, a stuck main thread), and writing it only
+     after some seconds would miss a crash in the first ones.
    - `end`, written when the call returns to the client: `timestamp`, `seq_id`, `caller`,
      `tool`, `duration_ms`, `response` (`success`; `error` on failure only, cut to 300
      characters), `project`, `args_hash`.
@@ -52,9 +54,12 @@ and `client` is what the client claimed (only `token` is authenticated).
    `arguments` object *as received*, redacted per 6 but not truncated. `HandleToolsCall`
    rewrites the arguments in place (`McpNormalizePathArgs`, `McpRenameLegacyFileArg`), so the
    hook serializes them before that, and only when the level is not Off. Different inputs
-   hash differently, `a/b` and `a\b` included. Serialization is RFC 8785 (JCS), written as
-   our own small unit with tests (FPC's `AsJSON` neither sorts keys nor is stable across
-   versions). No arguments hash as `{}`. Not hashed: `seq_id`, time, session, JSON-RPC `id`,
+   hash differently, `a/b` and `a\b` included. Serialization is our own small unit (FPC's
+   `AsJSON` does not sort keys): keys sorted by their UTF-8 bytes, no whitespace, strings
+   escaped minimally (`"`, `\`, control characters as `\u00XX`), integers and booleans as
+   usual, a float in FPC's invariant shortest round-trip form, which is stable for one build
+   and not promised across versions (the `start` record names the format). No arguments hash
+   as `{}`. Not hashed: `seq_id`, time, session, JSON-RPC `id`,
    tool name, `_meta`. Twelve hex digits are enough to compare runs (about one collision in
    five million among 10,000 calls). Redaction hides a changed secret: two calls differing
    only in a password hash alike.
@@ -77,12 +82,17 @@ and `client` is what the client claimed (only `token` is authenticated).
 7. **Writing:** own lock, append and close per line like `McpLogSession`, on the calling
    thread. It never raises. After five failures in a row (full disk, a share that went away)
    the log is switched off for this run and one line says so in `mcp-sessions.log`. Cost is
-   measured, not assumed: acceptance is a repeated `ide_ping` with the log on and off.
+   measured, not assumed: acceptance is 200 `ide_ping` calls with the log on and off, a
+   median difference under 5 ms (the figure is a guess; the test fixes it from the first run).
    Two IDE instances sharing one config folder are not supported.
+   Tests (no IDE needed): the serializer (key order, escapes, `{}`, an unchanged hash for
+   `a/b` against the same text), redaction (nested, `env`, case), the record cap, rotation,
+   and the failure switch-off.
 8. **Rotation:** at 4 MB (size kept in memory, not read per write) `mcp-tools.log` becomes
    `.1`, `.1` becomes `.2`, `.2` becomes `.3`, the old `.3` is dropped (16 MB at most).
 9. **Setting:** the level, in `mcpassistantoptions.xml` and on the options page; effective at
-   the next call. No limit by listen address (ADR-020): the file is on the IDE's machine
+   the next call. Choosing Replay shows what it records ("source code and tool output") and
+   where the file is. No limit by listen address (ADR-020): the file is on the IDE's machine
    either way, as exposed as the sources it describes.
 
 ## Alternatives considered
