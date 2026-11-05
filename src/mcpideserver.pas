@@ -130,7 +130,7 @@ const
 { Open and immediately close a TCP connection to 127.0.0.1:APort.
   Used to unblock accept() after StopAccepting(False) sets the flag. }
 const
-  McpServerVersion = '1.0';
+  McpServerVersion = '1.1';
 
 procedure MakeDummyConnect(APort: Word; const AHost: string);
 var
