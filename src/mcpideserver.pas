@@ -594,11 +594,41 @@ begin
   if Release then Free;   { nobody waits for this result any more }
 end;
 
+const
+  { Tools that open a file in the editor, build or run: the IDE code behind
+    them dereferences the project (TProject.GetMainFilename, PrepareForCompile)
+    and raises an access violation when none is open, as after Close Project
+    (or fails with nothing to say for it, as project_build does). }
+  ProjectNeededTools : array[0..16] of string = (
+    'editor_open', 'editor_edit_text', 'editor_replace_range', 'editor_close',
+    'code_add_to_class', 'code_replace_procedure_body', 'code_insert_in_procedure',
+    'code_add_uses', 'code_format', 'code_rename_identifier', 'code_goto_declaration',
+    'project_build', 'project_run', 'debug_run', 'editor_save', 'editor_revert',
+    'editor_set_cursor');
+
+function NeedsOpenProject(const AToolName: string): Boolean;
+var
+  I : Integer;
+begin
+  Result := False;
+  for I := Low(ProjectNeededTools) to High(ProjectNeededTools) do
+    if ProjectNeededTools[I] = AToolName then Exit(True);
+end;
+
 procedure TMcpMainCall.Run;
 var
   Handled : Boolean;
 begin
   McpNoteToolCall(ToolName);
+  if NeedsOpenProject(ToolName) and Assigned(LazarusIDE) and
+     (LazarusIDE.ActiveProject = nil) then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := ToolName + ' needs an open project, and none is open (the IDE shows ' +
+                  'its Project Wizard). Open or create one with project_open or ' +
+                  'project_create first.';
+    Exit;
+  end;
   try
     McpDispatch(ToolName, Ctx, Handled);
     if not Handled then
@@ -611,6 +641,17 @@ begin
     begin
       Ctx.Error  := True;
       Ctx.Result := E.Message;
+      { A bare "Access violation" says nothing about where: keep the stack in
+        the session log, and give the caller its top frames (the code that
+        faulted is IDE code or ours, never something the caller can fix) }
+      if E is EAccessViolation then
+      begin
+        McpLogSession(ToolName + ' raised ' + E.ClassName + ': ' + E.Message +
+                      LineEnding + McpExceptionTrace);
+        Ctx.Result := E.Message + ' in ' + ToolName + '; stack: ' +
+                      StringReplace(Trim(McpExceptionTrace), LineEnding, ' <- ',
+                                    [rfReplaceAll]);
+      end;
     end;
   end;
   { Calls from a client can follow each other without the IDE going idle in

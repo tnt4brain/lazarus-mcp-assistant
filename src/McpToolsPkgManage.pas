@@ -515,6 +515,31 @@ begin
   Name := Trim(AParams.Get('package_name', ''));
   Lpk  := Trim(AParams.Get('lpk_path', ''));
   Pkg  := nil;
+  { With no project open the IDE's package compile dereferences the missing
+    project (TMainIDE.PrepareForCompile, an access violation).  lazbuild does
+    not need one; it wants the .lpk, which a loaded package knows. }
+  if LazarusIDE.ActiveProject = nil then
+  begin
+    if Method = 'ide' then
+    begin
+      AErr := 'The IDE cannot compile a package while no project is open. Open or ' +
+              'create a project (project_open, project_create), or leave method on ' +
+              'auto or lazbuild.';
+      Exit;
+    end;
+    if (Lpk = '') and (Name <> '') then
+    begin
+      Pkg := PackageGraph.FindPackageWithName(Name, nil);
+      if Assigned(Pkg) and (Pkg.Filename <> '') then
+      begin
+        if AParams.IndexOfName('lpk_path') >= 0 then
+          AParams.Delete('lpk_path');
+        AParams.Add('lpk_path', Pkg.Filename);
+      end;
+    end;
+    Result := '{"use_lazbuild":true}';
+    Exit;
+  end;
   if Lpk <> '' then
     Pkg := PackageGraph.FindPackageWithFilename(Lpk)
   else if Name <> '' then
