@@ -368,7 +368,10 @@ end;
 
 procedure TMdForm.WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
 begin
-  CloseAction := caFree;       { closing the window discards every document }
+  { Closing discards every document, but the form itself is kept hidden: freeing it makes the
+    IDE forget where it was docked, and the next one opens floating. }
+  while FPages.PageCount > 0 do FPages.Pages[0].Free;
+  CloseAction := caHide;
 end;
 
 { ── Window layout (docking) ──────────────────────────────────────────────── }
@@ -386,7 +389,8 @@ end;
 procedure RegisterMarkdownWindow;
 begin
   if Assigned(IDEWindowCreators) then
-    IDEWindowCreators.Add(MD_FORM_ID, @CreateMarkdownForm, nil, '', '', '', '', '', alNone, False);
+    IDEWindowCreators.Add(MD_FORM_ID, @CreateMarkdownForm, nil, '', '', '', '',
+      'SourceNotebook', alRight, False);   { where a new window docks until the user moves it }
 end;
 
 { The IDE's window layout may put a new window on the primary monitor.  A floating window goes
@@ -439,7 +443,7 @@ begin
     Tab.SetDocument(AMarkdown);
     GForm.Pages.ActivePage := Tab;
     { shown, not activated: the user keeps typing where they were (ADR-011) }
-    if not GForm.Visible then
+    if not (GForm.Visible and (GetParentForm(GForm) <> nil) and GetParentForm(GForm).Visible) then
     begin
       { Show activates the form; give the focus back to the IDE form that had it }
       Prev := Screen.ActiveCustomForm;
