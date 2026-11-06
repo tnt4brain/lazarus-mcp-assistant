@@ -93,6 +93,12 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
   raise was needed. The text limit counts the document without the Base64 of `data:` images
   (`MdTextSize`). A UNC image path is refused (Windows would log on to the named host). Link
   hints come from IPro (`ShowHints`); a click reaches `OnHotClick`, which opens only `http(s)`.
+- **Docking.** The window is registered with `IDEWindowCreators` (`McpMarkdownFormID`, as the
+  chat window is) and created and shown through it, so in the IDE's docking layout the user can
+  dock it next to the source editor, and the IDE remembers where it was; the floating layout is
+  unchanged. A window restored at IDE start has no documents and closes itself. A docked window
+  behind another tab is not brought forward by a new document; the user clicks its tab.
+  Not a page of the editor's own notebook: the IDE offers no way to add one.
 - The window is shown by the plain LCL `Show`, with no platform code: the active IDE form is
   remembered and focused again afterwards. If another program had the focus (a terminal), LCL
   cannot know it, and the window may take the focus then. (`ShowWindow(SW_SHOWNOACTIVATE)`

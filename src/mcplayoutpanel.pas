@@ -34,7 +34,7 @@ implementation
 uses
   LazLogger, Clipbrd,
   McpToolsProject, McpDebugGuard, McpLauncher, McpOptions, McpTokensOptions, McpRefKeeper,
-  McpExceptionLog;
+  McpExceptionLog, McpMarkdownView;
 
 { Called from the menu: makes a named token for a client on another machine and puts
   the config for it on the clipboard (ADR-021).  The primary token is never copied. }
@@ -215,6 +215,7 @@ begin
     InitializeRefKeeper;
     InitializeExceptionLog;
     RegisterChatPanel;
+    RegisterMarkdownWindow;
     RegisterIDECloseHook;
     // Defer auto-start (and the debugger guard) until after the IDE message
     // loop is running

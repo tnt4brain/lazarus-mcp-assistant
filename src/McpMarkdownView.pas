@@ -25,12 +25,20 @@ const
 function McpMarkdownShow(const AMarkdown, ATitle, ATab, ABaseDir: string;
   out ATabId, AError: string): Boolean;
 
+{ Make the window known to the IDE's window layout, so that with the docking layout the user
+  can dock it beside the source editor, and the IDE remembers where it was.  Called from the
+  package's Register. }
+procedure RegisterMarkdownWindow;
+
 implementation
 
 uses
   Forms, Controls, Graphics, ComCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
-  LCLIntf, LazFileUtils, base64,
+  LCLIntf, LazFileUtils, base64, IDEWindowIntf,
   McpMarkdown, McpImageInfo;
+
+const
+  MD_FORM_ID = 'McpMarkdownFormID';
 
 type
   { One document: its panel, its images, the handlers of its panel }
@@ -59,6 +67,8 @@ type
     procedure WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
   public
     constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
+    procedure CloseIfEmpty(Data: PtrInt);
     function FindTab(const AId: string): TMdTab;
     function NewTab: TMdTab;
     property Pages: TPageControl read FPages;
@@ -266,7 +276,7 @@ var
 begin
   inherited CreateNew(AOwner);
   Caption := 'MCP Assistant: document';
-  Name := 'McpMarkdownFormID';
+  Name := MD_FORM_ID;
   FPages := TPageControl.Create(Self);
   FPages.Parent := Self;
   FPages.Align := alClient;
@@ -283,6 +293,20 @@ begin
   if H > 900 then H := 900;
   Position := poDesigned;
   SetBounds(R.Left + (R.Right - R.Left - W) div 2, R.Top + (R.Bottom - R.Top - H) div 2, W, H);
+end;
+
+destructor TMdForm.Destroy;
+begin
+  if GForm = Self then GForm := nil;
+  Application.RemoveAsyncCalls(Self);
+  inherited Destroy;
+end;
+
+{ The IDE re-creates its windows at start when they were open at exit; documents are not
+  kept, so a window that comes back empty goes away again. }
+procedure TMdForm.CloseIfEmpty(Data: PtrInt);
+begin
+  if FPages.PageCount = 0 then Close;
 end;
 
 function TMdForm.FindTab(const AId: string): TMdTab;
@@ -318,7 +342,24 @@ end;
 procedure TMdForm.WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
 begin
   CloseAction := caFree;       { closing the window discards every document }
-  GForm := nil;
+end;
+
+{ ── Window layout (docking) ──────────────────────────────────────────────── }
+
+procedure CreateMarkdownForm(Sender: TObject; aFormName: string;
+  var AForm: TCustomForm; DoDisableAutoSizing: boolean);
+begin
+  if CompareText(aFormName, MD_FORM_ID) <> 0 then Exit;
+  IDEWindowCreators.CreateForm(AForm, TMdForm, DoDisableAutoSizing, Application);
+  AForm.Name := aFormName;
+  GForm := TMdForm(AForm);
+  Application.QueueAsyncCall(@GForm.CloseIfEmpty, 0);
+end;
+
+procedure RegisterMarkdownWindow;
+begin
+  if Assigned(IDEWindowCreators) then
+    IDEWindowCreators.Add(MD_FORM_ID, @CreateMarkdownForm, nil, '', '', '', '', '', alNone, False);
 end;
 
 function McpMarkdownShow(const AMarkdown, ATitle, ATab, ABaseDir: string;
@@ -327,12 +368,19 @@ var
   Tab : TMdTab;
   Title : string;
   Prev : TCustomForm;
+  Registered : Boolean;
 begin
   Result := False;
   ATabId := '';
   AError := '';
   try
-    if GForm = nil then GForm := TMdForm.Create(Application);
+    Registered := Assigned(IDEWindowCreators) and
+                  (IDEWindowCreators.FindWithName(MD_FORM_ID) <> nil);
+    if GForm = nil then
+    begin
+      if Registered then IDEWindowCreators.GetForm(MD_FORM_ID, True);   { sets GForm }
+      if GForm = nil then GForm := TMdForm.Create(Application);
+    end;
     Tab := GForm.FindTab(ATab);
     if Tab = nil then Tab := GForm.NewTab;
     Title := Trim(ATitle);
@@ -346,7 +394,10 @@ begin
     begin
       { Show activates the form; give the focus back to the IDE form that had it }
       Prev := Screen.ActiveCustomForm;
-      GForm.Show;
+      if Registered then
+        IDEWindowCreators.ShowForm(GForm, False)    { floating or docked, as the layout says }
+      else
+        GForm.Show;
       if Assigned(Prev) and (Prev <> GForm) and Prev.Visible and Prev.CanFocus then
         Prev.SetFocus;
     end;
