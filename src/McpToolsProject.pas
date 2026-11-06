@@ -24,7 +24,8 @@ uses
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson,
-  McpToolContext, McpToolsPackages, McpDialogWatch, McpIdeListeners;
+  McpToolContext, McpToolsPackages, McpDialogWatch, McpIdeListeners,
+  McpSessionLog, McpToolLog;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -769,6 +770,7 @@ var
   PF         : TLazProjectFile;
   AlreadyIn  : Boolean;
   IDEPkg     : TIDEPackage;
+  Logs       : TJSONObject;
   Descriptor : TProjectDescriptor;
   FilePath   : string;
   NewName    : string;
@@ -929,6 +931,13 @@ begin
       { and which token it came with (ADR-021) }
       if McpSessionTokenName(Ctx.ClientId) <> '' then
         Obj.Add('token', McpSessionTokenName(Ctx.ClientId));
+      { where to read when the IDE stops answering (ADR-022): known before it does }
+      Logs := TJSONObject.Create;
+      Logs.Add('sessions', McpSessionLogPath);
+      Logs.Add('exceptions', ExtractFilePath(McpSessionLogPath) + 'mcp-exceptions.log');
+      Logs.Add('tools', McpToolLogPath);
+      Logs.Add('tools_enabled', McpToolLogEnabled);
+      Obj.Add('logs', Logs);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -1373,9 +1382,11 @@ end;
 procedure RegisterProjectSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('ide_ping',
-    'Returns {"status":"ok","version":"x.y","client":"<id>"} immediately: client ' +
+    'Returns {"status":"ok","version":"x.y","client":"<id>","logs":{...}} immediately: client ' +
     'is the identity the server sees for this caller (its session id, or ' +
-    '"anonymous"). After ide_rebuild, wait with the returned poll_command; ' +
+    '"anonymous"); logs gives the paths of mcp-sessions.log, mcp-exceptions.log and ' +
+    'mcp-tools.log (and whether the last is on), to read as files when the IDE stops ' +
+    'answering. After ide_rebuild, wait with the returned poll_command; ' +
     'this then confirms the server is back.',
     SCHEMA_PING, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_get_open_dialogs',

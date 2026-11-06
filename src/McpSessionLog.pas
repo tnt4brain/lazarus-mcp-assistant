@@ -19,6 +19,9 @@ procedure McpSetSessionLogDir(const ADir: string);
 
 procedure McpLogSession(const AMsg: string);
 
+{ Where the log is, '' before McpSetSessionLogDir. }
+function McpSessionLogPath: string;
+
 { The first 8 characters of a session id, for log lines and messages. }
 function McpShortId(const AId: string): string;
 
@@ -46,6 +49,16 @@ begin
   GLock.Enter;
   try
     GPath := IncludeTrailingPathDelimiter(ADir) + LOG_NAME;
+  finally
+    GLock.Leave;
+  end;
+end;
+
+function McpSessionLogPath: string;
+begin
+  GLock.Enter;
+  try
+    Result := GPath;
   finally
     GLock.Leave;
   end;

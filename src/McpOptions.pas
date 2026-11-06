@@ -34,6 +34,9 @@ type
     FTerminal        : TEdit;
     FGitPath         : TFileNameEdit;
     FAllowInstall    : TCheckBox;
+    FDiagGroup       : TGroupBox;
+    FToolLog         : TCheckBox;
+    FToolLogNote     : TLabel;
     FServerGroup     : TGroupBox;
     FListen          : TEdit;
     FListenNote      : TLabel;
@@ -68,7 +71,7 @@ implementation
 
 uses
   FileUtil,
-  McpIdeState, McpLauncher, McpIdeServer, McpUtils, McpTokensOptions;
+  McpIdeState, McpLauncher, McpIdeServer, McpUtils, McpTokensOptions, McpToolLog;
 
 { TMcpOptionsGroup }
 
@@ -163,6 +166,13 @@ begin
                            '(each install is still shown to you for confirmation)';
   Place(FAllowInstall, FSecurityGroup, 2);
 
+  FDiagGroup := AddGroup('Diagnostics');
+  FToolLog := TCheckBox.Create(Self);
+  FToolLog.Caption := 'Log every tool call to mcp-tools.log (tool, caller, time, outcome, ' +
+                      'argument names and a hash of them; no argument values or results)';
+  Place(FToolLog, FDiagGroup, 2);
+  FToolLogNote := AddLabel(FDiagGroup, '');
+
   FFileLabel := TLabel.Create(Self);
   FFileLabel.Align := alTop;
   FFileLabel.Top   := FTop;
@@ -248,6 +258,9 @@ begin
   FTerminal.Text       := McpSettings.TerminalCommand;
   FGitPath.Text        := McpSettings.GitPath;
   FAllowInstall.Checked := McpSettings.AllowPackageInstall;
+  FToolLog.Checked     := McpSettings.ToolCallLog;
+  FToolLogNote.Caption := 'File: ' + McpToolLogPath + '. Error texts in it can hold file ' +
+                          'paths and user names; look before you post it.';
   FListen.Text         := McpSettings.ListenAddress;
   ListenChanged(nil);
   FFileLabel.Caption   := 'Stored in ' + McpSettings.ConfigFileName;
@@ -276,7 +289,9 @@ begin
   McpSettings.TerminalCommand     := Trim(FTerminal.Text);
   McpSettings.GitPath             := Trim(FGitPath.Text);
   McpSettings.AllowPackageInstall := FAllowInstall.Checked;
+  McpSettings.ToolCallLog         := FToolLog.Checked;
   McpSettings.SaveSettings;
+  McpApplyToolLogSetting;   { from the next call on }
   McpSyncAllowInstallMenu;
 end;
 

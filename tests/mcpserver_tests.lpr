@@ -22,7 +22,7 @@ uses
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
   TCodeRename, TWindows, TFindDeclaration, TGitWrite, TTokens,
-  TProjectGuard, TSessionLog;
+  TProjectGuard, TSessionLog, TToolLog;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 

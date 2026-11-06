@@ -37,6 +37,10 @@ type
     function  HandleToolsList(ID: TJSONData): string;
     function  HandleToolsCall(ID: TJSONData; Params: TJSONObject;
                               const AClientId: string): string;
+    { HandleToolsCall without the log; AToolErr and AToolText: what the tool said }
+    function  HandleToolsCallCore(ID: TJSONData; Params: TJSONObject;
+                                  const AClientId: string; out AToolErr: Boolean;
+                                  out AToolText: string): string;
     { Run a tool on the IDE main thread; safe to call from any request thread. }
     function  CallOnMain(const AToolName: string; AParams: TJSONObject;
                          const AClientId: string; out AErr: Boolean): string;
@@ -88,6 +92,9 @@ function  McpClientConfigJSON(const AToken: string): string;
 { A new primary token: the sessions of the old one end, the server restarts with the
   new one, and the files the IDE writes for local clients are rewritten. }
 procedure McpRegenerateServerToken;
+{ Apply McpSettings.ToolCallLog to mcp-tools.log (ADR-022): on from the next call;
+  switching it on writes a start record. }
+procedure McpApplyToolLogSetting;
 
 implementation
 
@@ -99,7 +106,7 @@ uses
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
   McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
-  McpTokens;
+  McpTokens, McpToolLog, LCLVersion;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
@@ -595,10 +602,20 @@ begin
   if Release then Free;   { nobody waits for this result any more }
 end;
 
+{ The project mcp-tools.log names (ADR-022); the IDE's state may only be read here. }
+procedure NoteProjectForLog;
+begin
+  if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
+    McpToolLogSetProject(ExtractFileName(LazarusIDE.ActiveProject.ProjectInfoFile))
+  else
+    McpToolLogSetProject('');
+end;
+
 procedure TMcpMainCall.Run;
 var
   Handled : Boolean;
 begin
+  NoteProjectForLog;
   McpNoteToolCall(ToolName);
   { No project: the IDE shows its modal Project Wizard, and so only the
     wizard's own actions (new, open, open recent) are served. }
@@ -636,6 +653,7 @@ begin
       end;
     end;
   end;
+  NoteProjectForLog;   { after project_open or project_close, the new one }
   { Calls from a client can follow each other without the IDE going idle in
     between, but the IDE finishes some work on idle: for a component added
     to a form (PropHookPersistentAdded) it keeps the designer and completes
@@ -783,6 +801,18 @@ begin
   end;
 end;
 
+{ Who is calling, for mcp-tools.log }
+function LogCaller(const AClientId: string): TMcpLogCaller;
+begin
+  Result.Client  := Trim(McpSessionClientName(AClientId));
+  Result.Token   := McpSessionTokenName(AClientId);
+  if Result.Token = '' then Result.Token := GAuthTokenName;
+  if AClientId = ANONYMOUS_CLIENT then
+    Result.Session := ANONYMOUS_CLIENT
+  else
+    Result.Session := McpShortId(AClientId);
+end;
+
 function TMcpServerThread.HandleInitialize(ID: TJSONData;
   Params: TJSONObject; const AClientId: string; out ANewSession: string): string;
 var
@@ -838,6 +868,7 @@ begin
   McpLogSession(Format('initialize: client "%s", protocol %s%s, new session %s, token %s',
     [Trim(ClientName), ProtoVer, AskedNote, McpShortId(ANewSession),
      IfThen(GAuthTokenName <> '', '"' + GAuthTokenName + '"', GAuthTokenId)]));
+  McpToolLogSession(LogCaller(ANewSession), ProtoVer, Asked);
 
   ToolsCap := TJSONObject.Create;  // empty tools capability object
   Caps := TJSONObject.Create;
@@ -1124,8 +1155,57 @@ begin
   Result := RPCResult(ID, Res);
 end;
 
-function TMcpServerThread.HandleToolsCall(ID: TJSONData;
-  Params: TJSONObject; const AClientId: string): string;
+{ mcp-tools.log (ADR-022) around the whole call: the arguments are fingerprinted
+  before HandleToolsCallCore rewrites them in place, "begin" is written on arrival
+  and "end" from a finally, so a tool that raises still gets one. }
+function TMcpServerThread.HandleToolsCall(ID: TJSONData; Params: TJSONObject;
+  const AClientId: string): string;
+var
+  ToolName : string;
+  Seq      : LongInt;
+  Print    : TMcpArgsPrint;
+  Caller   : TMcpLogCaller;
+  Started  : QWord;
+  ToolErr  : Boolean;
+  ToolText : string;
+  Returned : Boolean;
+begin
+  Seq      := 0;
+  ToolName := '';
+  ToolErr  := True;
+  ToolText := '';
+  Returned := False;
+  if Assigned(Params) and McpToolLogEnabled then
+  begin
+    ToolName := Params.Get('name', '');
+    if ToolName <> '' then
+    begin
+      Caller := LogCaller(AClientId);
+      Print  := McpArgsPrint(TJSONObject(Params.Find('arguments', jtObject)));
+      Seq    := McpToolLogBegin(ToolName, Caller);
+    end;
+  end;
+  Started := GetTickCount64;
+  try
+    Result := HandleToolsCallCore(ID, Params, AClientId, ToolErr, ToolText);
+    Returned := True;
+  finally
+    if Seq <> 0 then
+    begin
+      if not Returned then
+      begin
+        ToolErr  := True;
+        ToolText := 'the call raised an exception';
+      end;
+      McpToolLogEnd(Seq, ToolName, Caller, GetTickCount64 - Started, not ToolErr,
+                    ToolText, Print);
+    end;
+  end;
+end;
+
+function TMcpServerThread.HandleToolsCallCore(ID: TJSONData;
+  Params: TJSONObject; const AClientId: string; out AToolErr: Boolean;
+  out AToolText: string): string;
 var
   GateMsg     : string;
   ToolName    : string;
@@ -1146,6 +1226,8 @@ var
   Images      : TStringArray;
   I           : Integer;
 begin
+  AToolErr  := False;
+  AToolText := '';
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
 
@@ -1291,6 +1373,9 @@ begin
     McpGateLeave(ToolName, AClientId);
   end;
 
+  AToolErr  := Err;
+  AToolText := Text;
+
   TextNode := TJSONObject.Create;
   TextNode.Add('type', 'text');
   TextNode.Add('text', Text);
@@ -1424,6 +1509,21 @@ begin
   end;
 end;
 
+procedure McpApplyToolLogSetting;
+var
+  Was : Boolean;
+begin
+  if not Assigned(McpSettings) then Exit;
+  Was := McpToolLogEnabled;
+  if Assigned(LazarusIDE) then
+    McpToolLogSetDir(LazarusIDE.GetPrimaryConfigPath);
+  McpToolLogSetEnabled(McpSettings.ToolCallLog);
+  if McpToolLogEnabled and not Was then
+    McpToolLogStart(GetMcpVersion + ' [' + GetMcpGitHash + ']',
+      'Lazarus ' + lcl_version, 'FPC ' + {$I %FPCVERSION%},
+      {$I %FPCTARGETOS%} + '-' + {$I %FPCTARGETCPU%});
+end;
+
 procedure InitializeMcpServer;
 var
   Port    : Word;
@@ -1473,6 +1573,7 @@ begin
 
   if Assigned(LazarusIDE) then
     McpSetSessionLogDir(LazarusIDE.GetPrimaryConfigPath);
+  McpApplyToolLogSetting;
   McpLogSession(Format('server starting on %s:%d (server version %s)', [Addr, Port, McpServerVersion]));
   McpServerThread := TMcpServerThread.Create(Token, Port, Addr);
   McpServerThread.Start;

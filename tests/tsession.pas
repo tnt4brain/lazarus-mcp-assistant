@@ -24,12 +24,13 @@ type
     procedure TestDeleteEndsSession;
     procedure TestDeleteNeedsToken;
     procedure TestUnknownSessionNotFound;
+    procedure TestPingReportsLogsAndToolLogRecordsIt;
   end;
 
 implementation
 
 uses
-  Classes, SysUtils, fpjson, jsonparser;
+  Classes, SysUtils, Math, fpjson, jsonparser;
 
 const
   INIT_JSON = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{' +
@@ -156,6 +157,66 @@ begin
   { McpRequest always sends the right token; build the wrong one by hand }
   CheckEquals(401, McpRequest('DELETE', '', ['Authorization: Bearer wrong'], nil).Code,
     'DELETE without the right token is refused');
+end;
+
+{ ide_ping says where the logs are (an assistant reads them as files when the IDE
+  stops answering, ADR-022); with mcp-tools.log on, the ping is in it }
+procedure TTestSession.TestPingReportsLogsAndToolLogRecordsIt;
+var
+  D, L    : TJSONData;
+  Logs    : TJSONObject;
+  Path    : string;
+  Lines   : TStringList;
+  S       : TFileStream;
+  Last    : TJSONObject;
+  Found   : Boolean;
+  I       : Integer;
+begin
+  D := GetJSON(CallToolText('ide_ping', '{}', []));
+  try
+    Logs := TJSONObject(TJSONObject(D).Find('logs', jtObject));
+    CheckTrue(Assigned(Logs), 'ide_ping has logs');
+    CheckTrue(Pos('mcp-sessions.log', Logs.Get('sessions', '')) > 0, 'sessions log path');
+    CheckTrue(Pos('mcp-exceptions.log', Logs.Get('exceptions', '')) > 0, 'exceptions log path');
+    CheckTrue(Pos('mcp-tools.log', Logs.Get('tools', '')) > 0, 'tools log path');
+    L := Logs.Find('tools_enabled', jtBoolean);
+    CheckTrue(Assigned(L), 'tools_enabled is a boolean');
+    if not L.AsBoolean then Exit;   { off: nothing more to see }
+    Path := Logs.Get('tools', '');
+  finally
+    D.Free;
+  end;
+  CheckTrue(FileExists(Path), 'the log exists when it is on');
+  Lines := TStringList.Create;
+  try
+    S := TFileStream.Create(Path, fmOpenRead or fmShareDenyNone);
+    try
+      Lines.LoadFromStream(S);
+    finally
+      S.Free;
+    end;
+    CheckTrue(Lines.Count >= 2, 'a begin and an end line');
+    { another client's call may finish after ours: look at the last few lines }
+    Found := False;
+    for I := Lines.Count - 1 downto Max(0, Lines.Count - 20) do
+    begin
+      Last := TJSONObject(GetJSON(Lines[I]));
+      try
+        if (Last.Get('event', '') = 'end') and (Last.Get('tool', '') = 'ide_ping') then
+        begin
+          CheckTrue(Last.Objects['response'].Get('success', False));
+          CheckEquals(12, Length(Last.Get('args_hash', '')));
+          Found := True;
+        end;
+      finally
+        Last.Free;
+      end;
+      if Found then Break;
+    end;
+    CheckTrue(Found, 'the ping is in the log');
+  finally
+    Lines.Free;
+  end;
 end;
 
 end.
