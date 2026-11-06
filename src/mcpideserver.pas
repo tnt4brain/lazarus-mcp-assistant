@@ -1557,9 +1557,8 @@ begin
   if (Port = 0) and (Addr <> McpLoopback) then
   begin
     { not an address of this machine, or in use: fall back to the safe default }
-    if Assigned(IDEMessagesWindow) then
-      IDEMessagesWindow.AddCustomMessage(mluImportant,
-        'MCP Assistant: cannot listen on ' + Addr + ', using ' + McpLoopback + ' instead');
+    McpAddMessage(mluImportant,
+      'MCP Assistant: cannot listen on ' + Addr + ', using ' + McpLoopback + ' instead');
     Addr := McpLoopback;
     Port := McpSettings.ServerPort;
     if (Port = 0) or not IsPortFree(Port, Addr) then
@@ -1602,17 +1601,14 @@ begin
   { Report to IDE messages window and write stable discovery file }
   Ver     := GetMcpVersion;
   GitHash := GetMcpGitHash;
-  if Assigned(IDEMessagesWindow) then
-  begin
-    IDEMessagesWindow.AddCustomMessage(mluImportant,
-      Format('MCP Assistant %s [%s] listening on http://%s:%d/mcp',
-             [Ver, GitHash, Addr, Port]));
-    if not McpIsLoopback(Addr) then
-      IDEMessagesWindow.AddCustomMessage(mluImportant,
-        'MCP Assistant: the server is reachable from other machines (' + Addr +
-        '). Everyone who has the token can drive this IDE; the connection is not ' +
-        'encrypted. Set the address back to 127.0.0.1 in Tools > Options > MCP Assistant.');
-  end;
+  McpAddMessage(mluImportant,
+    Format('MCP Assistant %s [%s] listening on http://%s:%d/mcp',
+           [Ver, GitHash, Addr, Port]));
+  if not McpIsLoopback(Addr) then
+    McpAddMessage(mluImportant,
+      'MCP Assistant: the server is reachable from other machines (' + Addr +
+      '). Everyone who has the token can drive this IDE; the connection is not ' +
+      'encrypted. Set the address back to 127.0.0.1 in Tools > Options > MCP Assistant.');
   WriteActiveConfig(McpClientHost(Addr), Port, Ver, GitHash);
 
   if McpSettings.LastConfigPath <> '' then
