@@ -28,6 +28,7 @@ type
     FTerminalCommand: string;       { '' = auto-detect (Linux/macOS only) }
     FGitPath: string;               { '' = git on PATH }
     FAllowPackageInstall: Boolean;  { assistants may install new packages (ADR-013) }
+    FToolCallLog: Boolean;          { mcp-tools.log, one record per tool call (ADR-022) }
     FClientTokens: TMcpTokenStore;  { named tokens, as hashes (ADR-021) }
     procedure LoadDefaultSettings;
     procedure LoadTokens;
@@ -52,6 +53,7 @@ type
     property TerminalCommand: string read FTerminalCommand write FTerminalCommand;
     property GitPath: string read FGitPath write FGitPath;
     property AllowPackageInstall: Boolean read FAllowPackageInstall write FAllowPackageInstall;
+    property ToolCallLog: Boolean read FToolCallLog write FToolCallLog;
     { the named client tokens; saved with the other settings }
     property ClientTokens: TMcpTokenStore read FClientTokens;
   end;
@@ -82,6 +84,7 @@ begin
   FTerminalCommand     := '';
   FGitPath             := '';
   FAllowPackageInstall := False;
+  FToolCallLog         := False;
 end;
 
 procedure TMcpIdeSettings.LoadTokens;
@@ -160,6 +163,7 @@ begin
     FTerminalCommand  := FXmlConfig.GetValue('Claude/TerminalCommand', '');
     FGitPath          := FXmlConfig.GetValue('Tools/GitPath', '');
     FAllowPackageInstall := FXmlConfig.GetValue('Security/AllowPackageInstall', False);
+    FToolCallLog         := FXmlConfig.GetValue('Tools/ToolCallLog', False);
     LoadTokens;
   except
     LoadDefaultSettings;
@@ -180,6 +184,7 @@ begin
     FXmlConfig.SetValue('Claude/TerminalCommand',  FTerminalCommand);
     FXmlConfig.SetValue('Tools/GitPath',           FGitPath);
     FXmlConfig.SetValue('Security/AllowPackageInstall', FAllowPackageInstall);
+    FXmlConfig.SetValue('Tools/ToolCallLog',     FToolCallLog);
     SaveTokens;
     { settings of the removed API client; ApiKey was stored in plain text }
     FXmlConfig.DeleteValue('Server/ExecutablePath');

@@ -51,6 +51,8 @@ procedure McpForgetSession(const AId: string);
 function  McpSessionTokenId(const AId: string): string;
 { The name of that token ('primary' for the primary one); '' if unknown. }
 function  McpSessionTokenName(const AId: string): string;
+{ The client's "name version" as it gave it in initialize; '' if unknown. }
+function  McpSessionClientName(const AId: string): string;
 { A token was revoked: forget every session it started (each releases its lease). }
 procedure McpForgetTokenSessions(const ATokenId: string);
 
@@ -170,6 +172,16 @@ begin
     Result := GSessionVia.Values[AId];
     if (Result = '') and (GSessionToken.Values[AId] <> '') then
       Result := 'primary';
+  finally
+    Lock.Leave;
+  end;
+end;
+
+function McpSessionClientName(const AId: string): string;
+begin
+  Lock.Enter;
+  try
+    Result := GSessions.Values[AId];
   finally
     Lock.Leave;
   end;

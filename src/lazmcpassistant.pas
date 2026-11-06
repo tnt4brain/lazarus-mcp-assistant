@@ -14,7 +14,8 @@ uses
   McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent, McpLauncher, 
   McpOptions, McpSettingsFile, McpRefKeeper, McpExceptionLog, McpLineDiff, 
   McpToolsFormat, McpToolsWindows, McpToolsPkgManage, McpDialogWatch, 
-  McpSessionLog, McpRunProgram, McpTokens, McpTokensOptions, LazarusPackageIntf;
+  McpSessionLog, McpRunProgram, McpTokens, McpTokensOptions, McpToolLog, 
+  LazarusPackageIntf;
 
 implementation
 

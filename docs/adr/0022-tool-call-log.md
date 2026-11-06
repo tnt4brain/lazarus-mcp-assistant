@@ -47,8 +47,8 @@ clients, timing, refusals, a call that never returned).
    `HandleToolsCall` rewrites the arguments in place (`McpNormalizePathArgs`,
    `McpRenameLegacyFileArg`), and only when the log is on. Different inputs hash differently,
    `a/b` and `a\b` included. Canonical JSON from our own small serializer (FPC's `AsJSON`
-   does not sort keys): keys sorted by UTF-8 bytes, no whitespace, minimal escapes, floats in
-   FPC's shortest round-trip form (build-stable only; `start` names the format); no
+   does not sort keys): keys sorted by UTF-8 bytes, no whitespace, minimal escapes, floats with
+   15 digits, or 17 when 15 do not read back the same (build-stable only; `start` names the format); no
    arguments hash as `{}`. Not hashed: `seq_id`, time, session, JSON-RPC `id`, tool name,
    `_meta`. About one collision in five million among 10,000 calls. A fingerprint, not
    protection: a guessable input can be confirmed by guessing.
@@ -61,7 +61,8 @@ clients, timing, refusals, a call that never returned).
    refusals never reach it, `McpBlockingDispatch` tools bypass it, and some tools call it
    again for internal steps. Refusals are logged with the refusal as `error`. A call the
    HTTP thread abandons because a dialog blocks the main thread (`Abandoned`) gets an `end`
-   with `error` "dialog open; call still running" and the duration so far. Unknown tool names
+   with `error` the message the client was given (it names the dialog) and the duration so
+   far. Unknown tool names
    are logged as sent; failures before a tool name is known (bad `params`, unknown method)
    are not tool calls and stay out.
 6. **Writing:** own lock, append and close per line like `McpLogSession`, on the calling
@@ -75,14 +76,14 @@ clients, timing, refusals, a call that never returned).
    the next call. No limit by listen address (ADR-020). Error texts can hold paths and user
    names; the options page says so.
 9. **Assistants are told:** a bullet in `system_prompt.inc` (neither log is mentioned there
-   now) and `ide_ping` reporting both log paths and whether `mcp-tools.log` is on, so the
+   now) and `ide_ping` reporting `logs` (the paths of the three logs, and `tools_enabled`), so the
    path is known before a hang, when no tool answers. Then the assistant reads the files
    itself: after a stall, a crash or a restart, the last `begin` without an `end` (by
    `seq_id`) is the call that was running; `mcp-sessions.log` has what the server saw around
    it, including the stack of an access violation; `mcp-exceptions.log` (also in the config
    folder, what `ide_get_exceptions` reads) has the IDE's own exceptions. It is told to ask
-   the user before enabling the log, and that an `end` line with a long `duration_ms` or the "dialog open"
-   error points at a modal dialog.
+   the user before enabling the log, and that an `end` line with a long `duration_ms` or an
+   error naming a dialog points at a modal dialog.
 
 ## Alternatives considered
 
