@@ -2,8 +2,9 @@
 unit McpSessionLog;
 
 { A short trail of how MCP sessions come and go: initialize (who, which
-  protocol, whether it still carried an old session id), requests refused with
-  404 because their session id is unknown (after an IDE restart, ADR-012), DELETE,
+  protocol we settled on and, when different, the one it asked for), requests
+  refused with 404 because their session id is unknown (after an IDE restart,
+  ADR-012; with the MCP-Protocol-Version the client sent), DELETE,
   server start.  Appended to mcp-sessions.log in the IDE's config folder; the
   file stays below about 200 KB.  For working out why a client gave up on the
   server after a restart: it says what the client sent and what we answered.
@@ -20,6 +21,11 @@ procedure McpLogSession(const AMsg: string);
 
 { The first 8 characters of a session id, for log lines and messages. }
 function McpShortId(const AId: string): string;
+
+{ What to add after the protocol version in an initialize line: '' when the
+  client asked for the revision we settled on, else ' (client asked for X)',
+  with 'none' for a client that sent no version. }
+function McpAskedNote(const AAsked, ASettled: string): string;
 
 implementation
 
@@ -48,6 +54,16 @@ end;
 function McpShortId(const AId: string): string;
 begin
   Result := Copy(AId, 1, 8);
+end;
+
+function McpAskedNote(const AAsked, ASettled: string): string;
+begin
+  Result := '';
+  if AAsked = ASettled then Exit;
+  if AAsked = '' then
+    Result := ' (client asked for none)'
+  else
+    Result := ' (client asked for ' + AAsked + ')';
 end;
 
 function FileSizeOf(const AName: string): Int64;

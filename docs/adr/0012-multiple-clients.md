@@ -235,5 +235,13 @@ whole story is not proven: the client's side is not visible.
 
 `mcp-sessions.log` in the IDE's config folder records what the server saw: server
 start, `initialize` (client, protocol, new session id), requests refused with 404
-(session, method, user agent), `DELETE`. After the next time a client drops the server,
-the log shows whether it re-initialized, and when.
+(session, method, user agent, the `MCP-Protocol-Version` header the client sent),
+`DELETE`. After the next time a client drops the server, the log shows whether it
+re-initialized, and when.
+
+The `initialize` line gives the revision the server settled on and, when the client
+asked for another one (a revision newer than the server implements, or none), adds
+`(client asked for X)`. A client that asks for a newer revision and then behaves by
+another revision's rules (keeping a session id where that revision has none, say) can
+only be told from a plain bug by this. The server speaks revisions up to 2025-06-18;
+newer ones are tracked in #5.

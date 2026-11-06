@@ -349,9 +349,10 @@ begin
      ((ARequest.Method = 'DELETE') or
       (JsonRpcMethod(ARequest.Content) <> 'initialize')) then
   begin
-    McpLogSession(Format('404 %s with unknown session %s (method %s, agent "%s")',
+    McpLogSession(Format('404 %s with unknown session %s (method %s, agent "%s", ' +
+      'MCP-Protocol-Version "%s")',
       [ARequest.Method, McpShortId(ClientId), JsonRpcMethod(ARequest.Content),
-       ARequest.UserAgent]));
+       ARequest.UserAgent, ARequest.GetCustomHeader('MCP-Protocol-Version')]));
     AResponse.Code        := 404;
     AResponse.ContentType := 'application/json';
     AResponse.Content     :=
@@ -791,6 +792,8 @@ var
   SrvInfo  : TJSONObject;
   ClientInfo : TJSONObject;
   ProtoVer   : string;
+  Asked      : string;
+  AskedNote  : string;
   ClientName : string;
   Call       : TMcpMainCall;
 begin
@@ -799,8 +802,13 @@ begin
   ProtoVer := '';
   if Assigned(Params) then
     ProtoVer := Params.Get('protocolVersion', '');
+  Asked := ProtoVer;
   if AnsiIndexStr(ProtoVer, McpProtocolVersions) < 0 then
     ProtoVer := McpProtocolVersions[High(McpProtocolVersions)];
+  { What it asked for, when that is not what we settled on: a client that asks
+    for a newer revision than ours and then behaves by another one's rules
+    (sessions, say) can only be told from a plain bug by this }
+  AskedNote := McpAskedNote(Asked, ProtoVer);
 
   { A new MCP session: its id identifies this client from now on (ADR-012) }
   ANewSession := McpNewSessionId;
@@ -813,8 +821,8 @@ begin
       ClientName := ClientInfo.Get('name', '?') + ' ' + ClientInfo.Get('version', '');
       Call := TMcpMainCall.Create;
       try
-        Call.LogMsg := Format('Client "%s" connected (protocol %s, session %s%s).',
-          [Trim(ClientName), ProtoVer, Copy(ANewSession, 1, 8),
+        Call.LogMsg := Format('Client "%s" connected (protocol %s%s, session %s%s).',
+          [Trim(ClientName), ProtoVer, AskedNote, Copy(ANewSession, 1, 8),
            IfThen(GAuthTokenName <> '', ', token "' + GAuthTokenName + '"', '')]);
         { queued, not synchronized: initialize must not wait for a busy main
           thread (right after a restart, or in a modal), or a client that
@@ -827,8 +835,8 @@ begin
     end;
   end;
   McpRegisterSession(ANewSession, Trim(ClientName), GAuthTokenId, GAuthTokenName);
-  McpLogSession(Format('initialize: client "%s", protocol %s, new session %s, token %s',
-    [Trim(ClientName), ProtoVer, McpShortId(ANewSession),
+  McpLogSession(Format('initialize: client "%s", protocol %s%s, new session %s, token %s',
+    [Trim(ClientName), ProtoVer, AskedNote, McpShortId(ANewSession),
      IfThen(GAuthTokenName <> '', '"' + GAuthTokenName + '"', GAuthTokenId)]));
 
   ToolsCap := TJSONObject.Create;  // empty tools capability object
