@@ -120,6 +120,19 @@ begin
   end;
 end;
 
+{ The first monospace font among the usual ones that this system has }
+function MonospaceFont: string;
+const
+  Names : array[0..5] of string =
+    ('Consolas', 'DejaVu Sans Mono', 'Menlo', 'Liberation Mono', 'Cascadia Mono', 'Courier New');
+var
+  I : Integer;
+begin
+  for I := Low(Names) to High(Names) do
+    if Screen.Fonts.IndexOf(Names[I]) >= 0 then Exit(Names[I]);
+  Result := 'Courier New';
+end;
+
 function TMdTab.LoadImage(const AUrl: string; out AWhy: string): TPicture;
 var
   Data, Declared, Payload, Kind, Path, Ext : string;
@@ -240,6 +253,14 @@ begin
   FPanel.Parent := Self;
   FPanel.Align := alClient;
   FPanel.ShowHints := True;      { the hint shows the link's target before a click }
+  { IPro's own defaults are Times and a letter-spaced Courier: use the UI font, and a real
+    monospace font for code }
+  FPanel.DefaultTypeFace := Screen.SystemFont.Name;
+  FPanel.DefaultFontSize := Screen.SystemFont.Size + 2;
+  FPanel.FixedTypeface := MonospaceFont;
+  FPanel.FontQuality := fqCleartype;
+  FPanel.MarginWidth := 16;
+  FPanel.MarginHeight := 12;
   FProv := TIpHtmlDataProvider.Create(Self);
   FProv.OnGetImage := @GetImage;
   FProv.OnCanHandle := @CanHandle;
