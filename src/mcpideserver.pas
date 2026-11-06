@@ -116,6 +116,39 @@ threadvar
   GAuthTokenId   : string;
   GAuthTokenName : string;
 
+var
+  { one line per finished tool call in the Messages window (ADR-022, Amendment 1) }
+  GToolPane : Boolean = False;
+
+type
+  { A line for the Messages window, made on an HTTP thread and added on the main one;
+    queued, not synchronized, so a busy main thread never holds a call back. }
+  TToolPaneLine = class
+    Urgency : TMessageLineUrgency;
+    Text    : string;
+    procedure AddAsync(Data: PtrInt);
+  end;
+
+procedure TToolPaneLine.AddAsync(Data: PtrInt);
+begin
+  try
+    McpAddMessage(Urgency, Text);
+  finally
+    Free;
+  end;
+end;
+
+procedure QueuePaneLine(const ATool: string; ADurationMs: Int64; ASuccess: Boolean;
+  const AError: string);
+var
+  L : TToolPaneLine;
+begin
+  L := TToolPaneLine.Create;
+  L.Text := McpToolPaneLine(ATool, ADurationMs, ASuccess, AError);
+  if ASuccess then L.Urgency := mluProgress else L.Urgency := mluImportant;
+  Application.QueueAsyncCall(@L.AddAsync, 0);
+end;
+
 function ClientTokenStore: TMcpTokenStore;
 begin
   if Assigned(McpSettings) then
@@ -1172,36 +1205,41 @@ var
   ToolErr  : Boolean;
   ToolText : string;
   Returned : Boolean;
+  ToFile   : Boolean;
+  ToPane   : Boolean;
 begin
   Seq      := 0;
   ToolName := '';
   ToolErr  := True;
   ToolText := '';
   Returned := False;
-  if Assigned(Params) and McpToolLogEnabled then
-  begin
+  ToFile   := Assigned(Params) and McpToolLogEnabled;
+  ToPane   := Assigned(Params) and GToolPane;
+  if ToFile or ToPane then
     ToolName := Params.Get('name', '');
-    if ToolName <> '' then
-    begin
-      Caller := LogCaller(AClientId);
-      Print  := McpArgsPrint(TJSONObject(Params.Find('arguments', jtObject)));
-      Seq    := McpToolLogBegin(ToolName, Caller);
-    end;
+  if ToFile and (ToolName <> '') then
+  begin
+    Caller := LogCaller(AClientId);
+    Print  := McpArgsPrint(TJSONObject(Params.Find('arguments', jtObject)));
+    Seq    := McpToolLogBegin(ToolName, Caller);
   end;
   Started := GetTickCount64;
   try
     Result := HandleToolsCallCore(ID, Params, AClientId, ToolErr, ToolText);
     Returned := True;
   finally
-    if Seq <> 0 then
+    if (Seq <> 0) or (ToPane and (ToolName <> '')) then
     begin
       if not Returned then
       begin
         ToolErr  := True;
         ToolText := 'the call raised an exception';
       end;
-      McpToolLogEnd(Seq, ToolName, Caller, GetTickCount64 - Started, not ToolErr,
-                    ToolText, Print);
+      if Seq <> 0 then
+        McpToolLogEnd(Seq, ToolName, Caller, GetTickCount64 - Started, not ToolErr,
+                      ToolText, Print);
+      if ToPane and (ToolName <> '') then
+        QueuePaneLine(ToolName, GetTickCount64 - Started, not ToolErr, ToolText);
     end;
   end;
 end;
@@ -1520,6 +1558,8 @@ begin
   Was := McpToolLogEnabled;
   if Assigned(LazarusIDE) then
     McpToolLogSetDir(LazarusIDE.GetPrimaryConfigPath);
+  McpToolLogSetFile(McpSettings.ToolLogFile);
+  GToolPane := McpSettings.ToolLogPane;
   McpToolLogSetEnabled(McpSettings.ToolCallLog);
   if McpToolLogEnabled and not Was then
     McpToolLogStart(GetMcpVersion + ' [' + GetMcpGitHash + ']',

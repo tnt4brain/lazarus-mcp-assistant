@@ -44,6 +44,10 @@ type
     procedure TestRotation;
     procedure TestSwitchedOffAfterFailedWrites;
     procedure TestStartAndSessionRecords;
+    procedure TestPaneLineOfASuccessfulCall;
+    procedure TestPaneLineOfAFailedCallIsOneCutLine;
+    procedure TestPaneLineOfAFailureWithoutText;
+    procedure TestLogFileCanBeChosen;
   end;
 
 implementation
@@ -357,6 +361,50 @@ begin
   finally
     O.Free;
   end;
+end;
+
+procedure TTestToolLog.TestPaneLineOfASuccessfulCall;
+begin
+  CheckEquals('project_build  8120 ms', McpToolPaneLine('project_build', 8120, True, ''));
+  CheckEquals('ide_ping  0 ms', McpToolPaneLine('ide_ping', 0, True, 'ignored'));
+end;
+
+procedure TTestToolLog.TestPaneLineOfAFailedCallIsOneCutLine;
+var
+  S : string;
+begin
+  S := McpToolPaneLine('editor_edit_text', 12, False,
+         'old_string not found' + #13#10 + 'in the file ' + StringOfChar('x', 300));
+  CheckTrue(Pos('editor_edit_text  12 ms  failed: old_string not found in the file xxx', S) = 1, S);
+  CheckTrue(Pos(#10, S) = 0, 'one line');
+  CheckTrue(Pos(#13, S) = 0, 'one line');
+  CheckTrue(Length(S) < 200, 'cut');
+  CheckEquals('...', Copy(S, Length(S) - 2, 3));
+end;
+
+procedure TTestToolLog.TestPaneLineOfAFailureWithoutText;
+begin
+  CheckEquals('x  5 ms  failed', McpToolPaneLine('x', 5, False, ''));
+  CheckEquals('x  5 ms  failed', McpToolPaneLine('x', 5, False, '  '#10));
+end;
+
+procedure TTestToolLog.TestLogFileCanBeChosen;
+var
+  Own  : string;
+  Seq  : LongInt;
+  Print: TMcpArgsPrint;
+begin
+  Own := IncludeTrailingPathDelimiter(FDir) + 'elsewhere.log';
+  McpToolLogSetFile(Own);
+  CheckEquals(Own, McpToolLogPath, 'the chosen file');
+  Print := McpArgsPrint(nil);
+  Seq := McpToolLogBegin('ide_ping', Caller);
+  McpToolLogEnd(Seq, 'ide_ping', Caller, 1, True, '', Print);
+  CheckTrue(FileExists(Own), 'written to the chosen file');
+  CheckFalse(FileExists(IncludeTrailingPathDelimiter(FDir) + MCP_TOOL_LOG_NAME), 'not to the default');
+  McpToolLogSetFile('');
+  CheckEquals(IncludeTrailingPathDelimiter(FDir) + MCP_TOOL_LOG_NAME, McpToolLogPath,
+    'empty: back to the default');
 end;
 
 initialization

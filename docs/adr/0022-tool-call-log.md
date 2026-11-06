@@ -112,8 +112,8 @@ Two appends per call are far below the limit; the worst single append is not.
 A report can carry the last calls, runs can be compared, and a hang leaves its `begin` line.
 Costs: two small appends per call when on, redaction rules to maintain when a tool gains an
 argument that can hold a secret, hashes comparable only within one log format. Keyed on tool
-calls, not the session, so it survives #5. Later: a Messages-pane view; a command bundling
-both logs and the versions for an issue.
+calls, not the session, so it survives #5. The Messages-pane view and the report bundle came
+with Amendments 1 and 2.
 
 ## Amendment 1 — a report bundle (accepted and implemented, 2026-11-06)
 
@@ -146,5 +146,26 @@ them into a single Markdown file.
 7. **Tests:** the builder is plain code over strings and a few records (no IDE): section
    order, home-directory replacement, the cap, a missing log. The tool and menu item get one
    live check each.
+
+## Amendment 2 — a Logging page and a live view of calls (accepted and implemented, 2026-11-06)
+
+**Status:** Accepted and implemented
+
+1. **Page:** Tools > Options > MCP Assistant > Logging, replacing the Diagnostics group on
+   General, with three settings: log tool calls to a file, the file's path (empty: the default
+   `mcp-tools.log` in the config folder; rotated copies sit next to it), and show calls in the
+   Messages window.
+2. **Live view:** with the third setting on, each finished call adds one line to the
+   `MCP Server` view: `tool  <ms> ms`, urgency progress; a failed call adds `  failed: <error>`
+   (one line, cut at 120 characters), urgency important. At the end of the call, not the start:
+   the file keeps the `begin` line for a call that never ends.
+3. **Independent:** the file and the view work separately; either, both or neither.
+4. **Threading:** the line is made on the HTTP thread and added on the main thread through
+   `Application.QueueAsyncCall`, so a busy main thread never holds a call back. The lines carry
+   the `MCP Server` SubTool (`skip_own` on `ide_get_messages` leaves them out).
+5. **Settings keys:** `Logging/ToolCallLog`, `Logging/ToolCallLogFile`, `Logging/ToolCallPane`;
+   the old `Tools/ToolCallLog` is read once and removed on the next save.
+6. **Dropped:** recording arguments and results ("replay") is not planned; the rejected
+   alternative above stays as the reason.
 
 Related: ADR-012, ADR-020, ADR-021; issues #5, #6.

@@ -333,6 +333,9 @@ its settings.
 | Listen address (IPv4) | `127.0.0.1`: this machine only. `0.0.0.0` or a machine address lets other machines connect over plain HTTP with the token: see [ADR-020](docs/adr/0020-listen-address-is-a-setting.md) |
 | Client tokens | One named token per client on another machine: **Add token...** shows it once, masked, with an eye button and buttons to copy the token or the whole client config; only a hash is stored, so a lost token is revoked and replaced. **Revoke** cuts a client off at once and ends its sessions. The primary token (what the IDE writes for clients on this machine) is never shown; **Regenerate primary token...** replaces it. See [ADR-021](docs/adr/0021-named-client-tokens.md) |
 | Allow assistants to install packages | Off; see [ADR-013](docs/adr/0013-user-consent-before-new-code.md) |
+| Logging: tool-call log | Off. One `begin` and one `end` line per tool call (tool, caller, time, outcome, argument names and a hash of them; no argument values or results) in `mcp-tools.log`, rotated at 4 MB. See [ADR-022](docs/adr/0022-tool-call-log.md) |
+| Logging: log file | Empty: `mcp-tools.log` in the Lazarus config folder. Any other path moves the file |
+| Logging: Messages window | Off. One line per finished tool call (name, duration, and the cut error text of a failed call) in the **MCP Server** view |
 
 Settings are stored in `mcpassistantoptions.xml` in the IDE's primary config
 directory, together with the server's token and port.

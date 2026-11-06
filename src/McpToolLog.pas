@@ -37,6 +37,7 @@ const
   MCP_TOOL_LOG_MAX_ERR  = 300;               { characters of error text }
   MCP_TOOL_LOG_FAILURES = 5;                 { failed writes in a row, then off }
   MCP_TOOL_LOG_FORMAT   = 1;
+  MCP_TOOL_PANE_ERR     = 120;               { characters of error text in a Messages line }
 
 { ── The arguments ── }
 
@@ -53,6 +54,9 @@ function  McpArgsPrint(AArgs: TJSONObject): TMcpArgsPrint;
 
 { The folder of mcp-tools.log; call once, on the main thread. }
 procedure McpToolLogSetDir(const ADir: string);
+{ The log file, wherever the user wants it; '' = mcp-tools.log in the folder given to
+  McpToolLogSetDir.  The rotated files (.1 to .3) go next to it. }
+procedure McpToolLogSetFile(const AFile: string);
 procedure McpToolLogSetEnabled(AEnabled: Boolean);
 { On, and not switched off by failures. }
 function  McpToolLogEnabled: Boolean;
@@ -76,6 +80,11 @@ procedure McpToolLogEnd(ASeq: LongInt; const ATool: string;
   const ACaller: TMcpLogCaller; ADurationMs: Int64; ASuccess: Boolean;
   const AError: string; const APrint: TMcpArgsPrint);
 
+{ The line a finished call gets in the Messages window: 'tool  N ms', or
+  'tool  N ms  failed: <error>' with the error on one line, cut to MCP_TOOL_PANE_ERR. }
+function  McpToolPaneLine(const ATool: string; ADurationMs: Int64; ASuccess: Boolean;
+  const AError: string): string;
+
 implementation
 
 uses
@@ -87,6 +96,7 @@ const
 var
   GLock     : TCriticalSection;
   GDir      : string = '';
+  GFile     : string = '';   { a path the user chose; '' = GDir + MCP_TOOL_LOG_NAME }
   GPath     : string = '';
   GEnabled  : Boolean = False;
   GFailed   : Boolean = False;     { switched off after repeated write errors }
@@ -424,14 +434,36 @@ begin
                   IntToStr(MCP_TOOL_LOG_FAILURES) + ' failed writes in a row');
 end;
 
+{ GLock held }
+procedure UpdatePath;
+begin
+  if GFile <> '' then
+    GPath := GFile
+  else if GDir <> '' then
+    GPath := IncludeTrailingPathDelimiter(GDir) + MCP_TOOL_LOG_NAME
+  else
+    GPath := '';
+  GSize := -1;
+end;
+
 procedure McpToolLogSetDir(const ADir: string);
 begin
   if ADir = '' then Exit;
   GLock.Enter;
   try
-    GDir  := ADir;
-    GPath := IncludeTrailingPathDelimiter(ADir) + MCP_TOOL_LOG_NAME;
-    GSize := -1;
+    GDir := ADir;
+    UpdatePath;
+  finally
+    GLock.Leave;
+  end;
+end;
+
+procedure McpToolLogSetFile(const AFile: string);
+begin
+  GLock.Enter;
+  try
+    GFile := Trim(AFile);
+    UpdatePath;
   finally
     GLock.Leave;
   end;
@@ -580,6 +612,28 @@ begin
   end;
   Line := Line + '],"args_hash":' + JsonStr(APrint.Hash) + '}';
   WriteLine(Line);
+end;
+
+function McpToolPaneLine(const ATool: string; ADurationMs: Int64; ASuccess: Boolean;
+  const AError: string): string;
+var
+  Err : string;
+  I   : Integer;
+begin
+  Result := ATool + '  ' + IntToStr(ADurationMs) + ' ms';
+  if ASuccess then Exit;
+  Err := '';
+  for I := 1 to Length(AError) do
+    if AError[I] in [#9, #10, #13] then
+    begin
+      { a line break or a tab is one space, however many in a row }
+      if (Err = '') or (Err[Length(Err)] <> ' ') then Err := Err + ' ';
+    end
+    else
+      Err := Err + AError[I];
+  Result := Result + '  failed';
+  if Trim(Err) <> '' then
+    Result := Result + ': ' + CutText(Trim(Err), MCP_TOOL_PANE_ERR);
 end;
 
 initialization
