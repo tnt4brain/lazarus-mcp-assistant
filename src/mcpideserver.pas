@@ -160,9 +160,12 @@ end;
 const
   { MCP revisions this server implements, oldest first: the last is the one
     offered to a client asking for any other (MCP lifecycle: version
-    negotiation).  2025-06-18 brought the tool titles we send. }
-  McpProtocolVersions : array[0..2] of string =
-    ('2024-11-05', '2025-03-26', '2025-06-18');
+    negotiation).  2025-06-18 brought the tool titles we send.  2025-11-25 changes
+    nothing we use (issue #5): bad arguments were already tool errors (SEP-1303),
+    a bad Origin already gets 403, and icons, tasks, elicitation and sampling are
+    not offered. }
+  McpProtocolVersions : array[0..3] of string =
+    ('2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25');
 
 
 
