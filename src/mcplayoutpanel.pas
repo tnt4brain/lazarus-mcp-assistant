@@ -90,6 +90,8 @@ begin
     Req.ClaudeExe       := McpSettings.ClaudePath;
     Req.ExtraArgs       := McpSettings.ExtraClaudeArgs;
     Req.TerminalCommand := McpSettings.TerminalCommand;
+    Req.WinTerminal     := McpSettings.WinTerminal;
+    Req.WinCustom       := McpSettings.WinTerminalCustom;
   end;
   Req.WorkDir       := WorkDir;
   Req.McpConfigPath := ConfigPath;

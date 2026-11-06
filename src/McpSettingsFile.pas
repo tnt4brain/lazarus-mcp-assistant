@@ -26,6 +26,8 @@ type
     FWorkingDirectory: string;      { '' = project directory }
     FExtraClaudeArgs: string;
     FTerminalCommand: string;       { '' = auto-detect (Linux/macOS only) }
+    FWinTerminal: string;           { Windows: default, cmd, powershell, wt, gitbash, custom }
+    FWinTerminalCustom: string;     { Windows custom: exe plus argument template }
     FGitPath: string;               { '' = git on PATH }
     FAllowPackageInstall: Boolean;  { assistants may install new packages (ADR-013) }
     FToolCallLog: Boolean;          { mcp-tools.log, one record per tool call (ADR-022) }
@@ -53,6 +55,8 @@ type
     property WorkingDirectory: string read FWorkingDirectory write FWorkingDirectory;
     property ExtraClaudeArgs: string read FExtraClaudeArgs write FExtraClaudeArgs;
     property TerminalCommand: string read FTerminalCommand write FTerminalCommand;
+    property WinTerminal: string read FWinTerminal write FWinTerminal;
+    property WinTerminalCustom: string read FWinTerminalCustom write FWinTerminalCustom;
     property GitPath: string read FGitPath write FGitPath;
     property AllowPackageInstall: Boolean read FAllowPackageInstall write FAllowPackageInstall;
     property ToolCallLog: Boolean read FToolCallLog write FToolCallLog;
@@ -86,6 +90,8 @@ begin
   FWorkingDirectory    := '';
   FExtraClaudeArgs     := '';
   FTerminalCommand     := '';
+  FWinTerminal         := 'default';
+  FWinTerminalCustom   := '';
   FGitPath             := '';
   FAllowPackageInstall := False;
   FToolCallLog         := False;
@@ -167,6 +173,8 @@ begin
     FWorkingDirectory := FXmlConfig.GetValue('Claude/WorkingDirectory', '');
     FExtraClaudeArgs  := FXmlConfig.GetValue('Claude/ExtraArgs', '');
     FTerminalCommand  := FXmlConfig.GetValue('Claude/TerminalCommand', '');
+    FWinTerminal      := FXmlConfig.GetValue('Claude/WinTerminal', 'default');
+    FWinTerminalCustom := FXmlConfig.GetValue('Claude/WinTerminalCustom', '');
     FGitPath          := FXmlConfig.GetValue('Tools/GitPath', '');
     FAllowPackageInstall := FXmlConfig.GetValue('Security/AllowPackageInstall', False);
     { the logging section; the file switch was Tools/ToolCallLog before 1.2 }
@@ -192,6 +200,8 @@ begin
     FXmlConfig.SetValue('Claude/WorkingDirectory', FWorkingDirectory);
     FXmlConfig.SetValue('Claude/ExtraArgs',        FExtraClaudeArgs);
     FXmlConfig.SetValue('Claude/TerminalCommand',  FTerminalCommand);
+    FXmlConfig.SetValue('Claude/WinTerminal',      FWinTerminal);
+    FXmlConfig.SetValue('Claude/WinTerminalCustom', FWinTerminalCustom);
     FXmlConfig.SetValue('Tools/GitPath',           FGitPath);
     FXmlConfig.SetValue('Security/AllowPackageInstall', FAllowPackageInstall);
     FXmlConfig.SetValue('Logging/ToolCallLog',     FToolCallLog);

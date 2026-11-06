@@ -25,6 +25,18 @@ type
     procedure TestTerminalMac;
     procedure TestTerminalNoneFound;
     procedure TestTerminalAutoDetectOrder;
+    procedure TestWinToBashPath;
+    procedure TestCmdScript;
+    procedure TestPs1Script;
+    procedure TestGitBashScript;
+    procedure TestWinArgsCmd;
+    procedure TestWinArgsPowerShell;
+    procedure TestWinArgsWt;
+    procedure TestWinArgsGitBash;
+    procedure TestWinArgsNeedHost;
+    procedure TestCustomTemplate;
+    procedure TestCustomTemplateEmbedded;
+    procedure TestCustomTemplateEmpty;
   end;
 
 implementation
@@ -161,6 +173,180 @@ begin
     DeleteFile(Dir + 'xterm');
     DeleteFile(Dir + 'gnome-terminal');
     RemoveDir(Dir);
+  end;
+end;
+
+
+function Join(L: TStrings): string;
+begin
+  Result := StringReplace(Trim(L.Text), LineEnding, '|', [rfReplaceAll]);
+end;
+
+function WinReq: TMcpLaunchRequest;
+begin
+  Result := Default(TMcpLaunchRequest);
+  Result.WorkDir       := 'D:\Program Files\my proj';
+  Result.McpConfigPath := 'C:\Users\Jo Doe\100%\mcp.json';
+  Result.ExtraArgs     := '--model opus';
+end;
+
+procedure TTestLauncher.TestWinToBashPath;
+begin
+  CheckEquals('/c/Program Files/Git/bin/bash.exe',
+    McpWinToBashPath('C:\Program Files\Git\bin\bash.exe'));
+  CheckEquals('/d', McpWinToBashPath('D:'));
+  CheckEquals('rel/dir', McpWinToBashPath('rel\dir'));
+  CheckEquals('/tmp/x', McpWinToBashPath('/tmp/x'));
+  CheckEquals('', McpWinToBashPath(''));
+end;
+
+procedure TTestLauncher.TestCmdScript;
+var
+  S : string;
+begin
+  S := McpBuildCmdScript(WinReq, 'C:\Tools\claude.exe');
+  CheckTrue(Pos('cd /d "D:\Program Files\my proj"'#13#10'if errorlevel 1 exit /b 1'#13#10, S) > 0, S);
+  CheckTrue(Pos('"C:\Tools\claude.exe" --mcp-config "C:\Users\Jo Doe\100%%\mcp.json" ' +
+    '--strict-mcp-config "--model" "opus"'#13#10, S) > 0, 'percent doubled: ' + S);
+  CheckEquals(0, Pos(#10, StringReplace(S, #13#10, '', [rfReplaceAll])), 'CRLF only');
+  CheckEquals(0, Pos('cd /d', McpBuildCmdScript(Req('', ''), 'claude')), 'no cd without a work dir');
+end;
+
+procedure TTestLauncher.TestPs1Script;
+var
+  S : string;
+  R : TMcpLaunchRequest;
+begin
+  R := WinReq;
+  R.WorkDir := 'D:\it''s here';
+  S := McpBuildPs1Script(R, 'C:\Tools\claude.exe');
+  CheckEquals(1, Pos(#$EF#$BB#$BF, S), 'UTF-8 BOM first');
+  CheckTrue(Pos('Set-Location -LiteralPath ''D:\it''''s here'' -ErrorAction Stop'#13#10, S) > 0, S);
+  CheckTrue(Pos('& ''C:\Tools\claude.exe'' ''--mcp-config'' ''C:\Users\Jo Doe\100%\mcp.json'' ' +
+    '''--strict-mcp-config'' ''--model'' ''opus'''#13#10, S) > 0, S);
+end;
+
+procedure TTestLauncher.TestGitBashScript;
+var
+  S : string;
+begin
+  S := McpBuildGitBashScript(WinReq, 'C:\Tools\claude.exe');
+  CheckTrue(Pos('cd ''/d/Program Files/my proj'' || exit 1'#10, S) > 0, S);
+  CheckTrue(Pos('exec ''/c/Tools/claude.exe'' --mcp-config ''/c/Users/Jo Doe/100%/mcp.json'' ' +
+    '--strict-mcp-config ''--model'' ''opus'''#10, S) > 0, S);
+end;
+
+procedure TTestLauncher.TestWinArgsCmd;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckTrue(McpWindowsTerminalArgs('cmd', 'C:\Windows\System32\cmd.exe', 'C:\t\s.cmd', 'D:\p', '', L));
+    CheckEquals('C:\Windows\System32\cmd.exe|/k|C:\t\s.cmd', Join(L));
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestWinArgsPowerShell;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckTrue(McpWindowsTerminalArgs('powershell', 'C:\PS\pwsh.exe', 'C:\t\s.ps1', 'D:\p', '', L));
+    CheckEquals('C:\PS\pwsh.exe|-NoExit|-ExecutionPolicy|Bypass|-File|C:\t\s.ps1', Join(L));
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestWinArgsWt;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckTrue(McpWindowsTerminalArgs('wt', 'C:\wt.exe', 'C:\t\s.cmd', 'D:\my proj', '', L));
+    CheckEquals('C:\wt.exe|-d|D:\my proj|cmd.exe|/c|C:\t\s.cmd', Join(L));
+    CheckTrue(McpWindowsTerminalArgs('wt', 'C:\wt.exe', 'C:\t\s.cmd', '', '', L));
+    CheckEquals('C:\wt.exe|cmd.exe|/c|C:\t\s.cmd', Join(L), 'no -d without a directory');
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestWinArgsGitBash;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckTrue(McpWindowsTerminalArgs('gitbash', 'C:\Git\bin\bash.exe', 'C:\t\s.sh', 'D:\p', '', L));
+    CheckEquals('C:\Git\bin\bash.exe|--login|/c/t/s.sh', Join(L));
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestWinArgsNeedHost;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckFalse(McpWindowsTerminalArgs('wt', '', 'C:\s.cmd', '', '', L));
+    CheckFalse(McpWindowsTerminalArgs('default', 'x.exe', 'C:\s.cmd', '', '', L));
+    CheckFalse(McpWindowsTerminalArgs('bogus', 'x.exe', 'C:\s.cmd', '', '', L));
+    CheckEquals(0, L.Count);
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestCustomTemplate;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckTrue(McpWindowsTerminalArgs('custom', '', 'C:\t\s.cmd', 'D:\my proj',
+      'myterm.exe --cwd {dir} -- {cmd}', L));
+    CheckEquals('myterm.exe|--cwd|D:\my proj|--|cmd.exe|/c|C:\t\s.cmd', Join(L),
+      'a whole {cmd} argument is three arguments');
+    CheckTrue(McpCustomTerminalArgs('"C:\Program Files\T\t.exe" -x {script}', 'C:\s.cmd', '', L));
+    CheckEquals('C:\Program Files\T\t.exe|-x|C:\s.cmd', Join(L), 'quoted exe');
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestCustomTemplateEmbedded;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckTrue(McpCustomTerminalArgs('t.exe --title=mcp --run={cmd} --at={dir}', 'C:\a b\s.cmd', 'D:\p', L));
+    CheckEquals('t.exe|--title=mcp|--run=cmd.exe /c "C:\a b\s.cmd"|--at=D:\p', Join(L));
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestCustomTemplateEmpty;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    L.Add('stale');
+    CheckFalse(McpCustomTerminalArgs('   ', 'C:\s.cmd', '', L));
+    CheckEquals(0, L.Count);
+    CheckFalse(McpWindowsTerminalArgs('custom', '', 'C:\s.cmd', '', '', L));
+  finally
+    L.Free;
   end;
 end;
 
