@@ -33,6 +33,7 @@ type
     procedure TestWinArgsPowerShell;
     procedure TestWinArgsWt;
     procedure TestWinArgsGitBash;
+    procedure TestWinArgsWtPosition;
     procedure TestWinArgsNeedHost;
     procedure TestCustomTemplate;
     procedure TestCustomTemplateEmbedded;
@@ -345,6 +346,22 @@ begin
     CheckFalse(McpCustomTerminalArgs('   ', 'C:\s.cmd', '', L));
     CheckEquals(0, L.Count);
     CheckFalse(McpWindowsTerminalArgs('custom', '', 'C:\s.cmd', '', '', L));
+  finally
+    L.Free;
+  end;
+end;
+
+
+procedure TTestLauncher.TestWinArgsWtPosition;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    CheckTrue(McpWindowsTerminalArgs('wt', 'C:\wt.exe', 'C:\s.cmd', 'D:\p', '', L, '1980,60'));
+    CheckEquals('C:\wt.exe|--pos|1980,60|-d|D:\p|cmd.exe|/c|C:\s.cmd', Join(L));
+    CheckTrue(McpWindowsTerminalArgs('cmd', '', 'C:\s.cmd', '', '', L, '1,2'));
+    CheckEquals('cmd.exe|/k|C:\s.cmd', Join(L), 'other hosts are placed by the startup info');
   finally
     L.Free;
   end;

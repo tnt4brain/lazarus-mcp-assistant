@@ -82,6 +82,7 @@ begin
   else
     WorkDir := '';
 
+  Req := Default(TMcpLaunchRequest);
   Req.ClaudeExe       := '';
   Req.ExtraArgs       := '';
   Req.TerminalCommand := '';
@@ -94,6 +95,14 @@ begin
     Req.WinCustom       := McpSettings.WinTerminalCustom;
   end;
   Req.WorkDir       := WorkDir;
+  { Windows: open the terminal on the monitor of the IDE's main window }
+  if Assigned(Application.MainForm) and Application.MainForm.HandleAllocated then
+    with Screen.MonitorFromWindow(Application.MainForm.Handle).WorkareaRect do
+    begin
+      Req.HasPos := True;
+      Req.PosX   := Left + 60;
+      Req.PosY   := Top + 60;
+    end;
   Req.McpConfigPath := ConfigPath;
   Err := McpLaunchClaude(Req);
   if Err = '' then

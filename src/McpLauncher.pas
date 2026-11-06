@@ -30,6 +30,8 @@ type
     TerminalCommand : string;   { Unix: '' = auto-detect; e.g. 'kitty -e' }
     WinTerminal     : string;   { Windows: one of the MCP_TERM_* ids; '' = default }
     WinCustom       : string;   { Windows, MCP_TERM_CUSTOM: exe plus argument template }
+    HasPos          : Boolean;  { Windows: open the terminal at PosX, PosY (screen pixels) }
+    PosX, PosY      : Integer;
   end;
 
 const
@@ -66,9 +68,10 @@ function McpCustomTerminalArgs(const ATemplate, AScript, ADir: string;
 { The argv that opens the chosen terminal for a script already written.
   AHost: the terminal's exe (wt.exe, pwsh.exe, ...; unused for cmd/custom);
   AScript: the .cmd, .ps1 or .sh that matches AChoice.  False when AChoice
-  needs an exe and AHost is empty. }
+  needs an exe and AHost is empty.  APos ('x,y') places the Windows Terminal
+  window; the other hosts are placed through the process's startup info. }
 function McpWindowsTerminalArgs(const AChoice, AHost, AScript, ADir, ACustom: string;
-  AArgs: TStrings): Boolean;
+  AArgs: TStrings; const APos: string = ''): Boolean;
 
 { Windows: the exe for a choice ('' = not installed).  cmd needs no search. }
 function McpFindWindowsTerminal(const AChoice: string): string;
@@ -344,7 +347,7 @@ begin
 end;
 
 function McpWindowsTerminalArgs(const AChoice, AHost, AScript, ADir, ACustom: string;
-  AArgs: TStrings): Boolean;
+  AArgs: TStrings; const APos: string): Boolean;
 begin
   AArgs.Clear;
   Result := True;
@@ -369,6 +372,11 @@ begin
   end
   else if AChoice = MCP_TERM_WT then
   begin
+    if APos <> '' then
+    begin
+      AArgs.Add('--pos');
+      AArgs.Add(APos);
+    end;
     if ADir <> '' then
     begin
       AArgs.Add('-d');
@@ -495,7 +503,7 @@ var
   Argv      : TStringList;
   I         : Integer;
   {$IFDEF WINDOWS}
-  Host, Body, Ext : string;
+  Host, Body, Ext, WtPos : string;
   {$ENDIF}
 begin
   Result    := '';
@@ -543,12 +551,14 @@ begin
         Body := McpBuildCmdScript(AReq, ClaudeExe);
       end;
       Script := IncludeTrailingPathDelimiter(GetTempDir) + 'lazarus-mcp-launch' + Ext;
+      WtPos := '';
+      if AReq.HasPos then WtPos := IntToStr(AReq.PosX) + ',' + IntToStr(AReq.PosY);
       if not WriteTextFile(Script, Body) then
         Exit('Could not write ' + Script);
       Argv := TStringList.Create;
       try
         if not McpWindowsTerminalArgs(AReq.WinTerminal, Host, Script,
-             AReq.WorkDir, AReq.WinCustom, Argv) then
+             AReq.WorkDir, AReq.WinCustom, Argv, WtPos) then
           Exit('The custom terminal is empty. Enter it in Tools > Options > ' +
                'MCP Assistant, e.g. myterm.exe --cwd {dir} -- {cmd}');
         Proc.Executable := Argv[0];
@@ -560,6 +570,13 @@ begin
       if (AReq.WinTerminal = MCP_TERM_CMD) or (AReq.WinTerminal = MCP_TERM_POWERSHELL) or
          (AReq.WinTerminal = MCP_TERM_GITBASH) then
         Proc.Options := [poNewConsole];
+    end;
+    { the terminal opens on the monitor the IDE is on }
+    if AReq.HasPos and (AReq.WinTerminal <> MCP_TERM_WT) then
+    begin
+      Proc.StartupOptions := Proc.StartupOptions + [suoUsePosition];
+      Proc.WindowLeft := AReq.PosX;
+      Proc.WindowTop := AReq.PosY;
     end;
     if AReq.WorkDir <> '' then
       Proc.CurrentDirectory := AReq.WorkDir;
