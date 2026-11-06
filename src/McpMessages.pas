@@ -3,8 +3,9 @@ unit McpMessages;
 
 { Our lines in the IDE's Messages window, and telling them from the compiler's.
 
-  Our lines go to one view, captioned 'MCP Server', and carry SubToolMCPServer
-  as their SubTool, as the FPC parser's lines carry SubToolFPC.  The view has no
+  Our lines carry SubToolMCPServer as their SubTool, as the FPC parser's lines carry
+  SubToolFPC: that, and nothing else, says a line is ours.  They go to one view,
+  captioned 'MCP Server', which is only where they are put.  That view has no
   external tool behind it.  A compiler run, on the other hand, has one: its view
   is made from the tool (TExternalToolIDE.CreateView), and the tool, with its
   Data, lives as long as the view does (TAbstractExternalTool.CanFree), so a
@@ -42,14 +43,15 @@ begin
   if Assigned(Line) then Line.SubTool := SubToolMCPServer;
 end;
 
-function McpIsOwnView(AView: TExtToolView): Boolean;
-begin
-  Result := Assigned(AView) and (AView.Caption = MCP_MSG_VIEW);
-end;
-
 function McpIsOwnLine(ALine: TMessageLine): Boolean;
 begin
   Result := Assigned(ALine) and (ALine.SubTool = SubToolMCPServer);
+end;
+
+function McpIsOwnView(AView: TExtToolView): Boolean;
+begin
+  { by its lines, not by its caption: all of ours are in it, and none of the compiler's }
+  Result := Assigned(AView) and (AView.Lines.Count > 0) and McpIsOwnLine(AView.Lines.Items[0]);
 end;
 
 function IsCompileKind(const AKind: string): Boolean;
@@ -68,7 +70,6 @@ begin
   for I := IDEMessagesWindow.ViewCount - 1 downto 0 do
   begin
     View := IDEMessagesWindow.Views[I];
-    if McpIsOwnView(View) then Continue;
     if Assigned(View.Tool) and (View.Tool.Data is TIDEExternalToolData) and
        IsCompileKind(TIDEExternalToolData(View.Tool.Data).Kind) then
       Exit(View);

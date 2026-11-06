@@ -67,7 +67,7 @@ const
   SCHEMA_GET_MESSAGES =
     '{"type":"object","properties":{' +
     '"skip_own":{"type":"boolean","description":"true: leave out the lines this server ' +
-    'adds itself (view \"MCP Server\"); default false: everything, those lines marked ' +
+    'adds itself (SubTool \"MCP Server\"); default false: everything, those lines marked ' +
     '\"own\":true"}}}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
@@ -153,7 +153,7 @@ begin
           for J := 0 to MsgView.Lines.Count - 1 do
           begin
             MsgLine := MsgView.Lines.Items[J];
-            MsgOwn  := McpIsOwnView(MsgView) or McpIsOwnLine(MsgLine);
+            MsgOwn  := McpIsOwnLine(MsgLine);
             if MsgOwn and Ctx.Params.Get('skip_own', False) then Continue;
             MsgObj  := TJSONObject.Create;
             MsgObj.Add('urgency', MessageLineUrgencyNames[MsgLine.Urgency]);
