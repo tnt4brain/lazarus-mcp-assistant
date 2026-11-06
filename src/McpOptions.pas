@@ -159,9 +159,9 @@ begin
 
   FSecurityGroup := AddGroup('Security');
   FAllowInstall := TCheckBox.Create(Self);
-  FAllowInstall.Caption := 'Allow assistants to install packages ' +
-                           '(each install is still shown to you for confirmation)';
+  FAllowInstall.Caption := 'Allow assistants to install packages';
   Place(FAllowInstall, FSecurityGroup, 2);
+  AddLabel(FSecurityGroup, 'Each install is still shown to you for confirmation.');
 
   FFileLabel := TLabel.Create(Self);
   FFileLabel.Align := alTop;

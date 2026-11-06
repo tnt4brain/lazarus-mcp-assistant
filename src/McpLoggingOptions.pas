@@ -65,9 +65,10 @@ begin
   FTop := 0;
 
   FFileOn := TCheckBox.Create(Self);
-  FFileOn.Caption := 'Log every tool call to a file (tool, caller, time, outcome, ' +
-                     'argument names and a hash of them; no argument values or results)';
-  Place(FFileOn);
+  FFileOn.Caption := 'Log every tool call to a file';
+  Place(FFileOn, 2);
+  AddLabel('Tool, caller, time, outcome, argument names and a hash of them; ' +
+           'no argument values or results.').BorderSpacing.Bottom := 10;
 
   AddLabel('Log file (empty: mcp-tools.log in the Lazarus configuration folder):');
   FFileName := TFileNameEdit.Create(Self);
@@ -77,9 +78,9 @@ begin
   FFileNote.BorderSpacing.Bottom := 16;
 
   FPane := TCheckBox.Create(Self);
-  FPane.Caption := 'Show one line per finished tool call in the Messages window ' +
-                   '(view "MCP Server")';
-  Place(FPane);
+  FPane.Caption := 'Show every tool call in the Messages window';
+  Place(FPane, 2);
+  AddLabel('One line per finished call, in the "MCP Server" view.');
 end;
 
 function TMcpLoggingFrame.GetTitle: string;
