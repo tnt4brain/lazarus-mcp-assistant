@@ -1,6 +1,6 @@
 # ADR-022 — A tool-call log (`mcp-tools.log`) as evidence for bug reports
 
-**Status:** Proposed (2026-11-05)  
+**Status:** Accepted and implemented (2026-11-06)  
 **Date:** 2026-11-05
 
 ## Context
