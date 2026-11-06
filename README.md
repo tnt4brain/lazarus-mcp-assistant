@@ -283,19 +283,24 @@ started (after `ide_rebuild`, say) gets HTTP 404, and the client starts a new se
 with `initialize`. Requests without either share one identity, `anonymous`; a client
 with a cookie jar (`curl -b jar -c jar`) gets its own.
 
-Not every client starts a new session on its own, though: some keep replaying
-the dead session id, and after the IDE restarts (a rebuild, or closing and
-reopening it) every call fails with `-32001 Session not found` until the
-conversation is restarted. ZCode behaves this way (Claude Code does not).
+Not every client starts a new session on its own, though. Per the
+[Streamable HTTP session management rules](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#session-management),
+when the server no longer knows a session id, the client MUST call
+`initialize` again (this server answers a dropped id with HTTP 404; older
+revisions sent the JSON-RPC error -32001 `Session not found`). Some clients
+keep replaying the dead session id instead, so after the IDE restarts (a
+rebuild, or closing and reopening it) every call fails until the conversation
+is restarted. ZCode behaves this way (Claude Code does not).
 
 For such clients there is
 [`tools/mcp-stdio-bridge.py`](tools/mcp-stdio-bridge.py), a stdio → HTTP
-bridge (Python 3, standard library only). The client spawns it as an ordinary
+bridge (Python 3, standard library only): a workaround that does the
+re-`initialize` on the client's behalf. The client spawns it as an ordinary
 stdio MCP server; the bridge forwards every message to the IDE's HTTP
 endpoint, starts a fresh HTTP session whenever the server no longer knows the
-old one, and — by default — starts the IDE itself when the port is closed, so
-the first tool call after a cold start simply takes a minute. Configure the
-client for a stdio server instead of a `url`:
+old one, and can start the IDE itself when the port is closed
+(`LAZARUS_MCP_AUTOSTART=1`; off by default). Configure the client for a
+stdio server instead of a `url`:
 
 ```json
 {
@@ -315,11 +320,16 @@ variables: `LAZARUS_MCP_PCP` — the config directory when the IDE runs with
 `--pcp` (otherwise `%LOCALAPPDATA%\lazarus`, `~/.lazarus` and
 `~/.config/lazarus` are tried); `LAZARUS_MCP_IDE_EXE` — the IDE executable for
 auto-start (default: `<config parent>/lazarus/lazarus.exe`, i.e.
-fpcupdeluxe-style installs); `LAZARUS_MCP_AUTOSTART=0` disables auto-start;
-`LAZARUS_MCP_URL` / `LAZARUS_MCP_TOKEN` — full endpoint override. Verified
-with ZCode on Windows against Lazarus 4.8 and trunk: killing the IDE
-mid-conversation is transparent — the next tool call brings it back and
-answers.
+fpcupdeluxe-style installs); `LAZARUS_MCP_AUTOSTART=1` — enable IDE auto-start
+(off by default); `LAZARUS_MCP_URL` / `LAZARUS_MCP_TOKEN` — full endpoint
+override.
+
+Two caveats: a re-initialized session is a new client identity, so a debugger
+session the old identity held is gone with the restart; and the tool list can
+differ after a restart, which the bridge does not tell the client about — it
+recovers calls, it does not re-announce tools. Verified with ZCode on Windows
+against Lazarus 4.8 and trunk: killing the IDE mid-conversation is
+transparent — the next tool call brings it back and answers.
 
 ---
 

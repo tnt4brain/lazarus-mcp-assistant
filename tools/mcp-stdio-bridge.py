@@ -25,11 +25,12 @@ Environment variables:
   LAZARUS_MCP_IDE_EXE    IDE executable for auto-start
                          (default: <config parent>/lazarus/lazarus.exe,
                          i.e. fpcupdeluxe-style installs)
-  LAZARUS_MCP_AUTOSTART  set to 0 to disable IDE auto-start
+  LAZARUS_MCP_AUTOSTART  set to 1 to enable IDE auto-start (off by default)
   LAZARUS_MCP_URL / LAZARUS_MCP_TOKEN  full endpoint override
 """
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -40,10 +41,11 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from urllib.parse import urlsplit
 
+BRIDGE_VERSION = "1.1.0"
 HTTP_TIMEOUT = 600          # seconds; long debugger calls must survive
 BOOT_TIMEOUT = 150          # seconds to wait for a starting IDE
 STALE_CODES = (-32001,)     # "Session not found; send initialize"
-AUTOSTART = os.environ.get("LAZARUS_MCP_AUTOSTART", "1") != "0"
+AUTOSTART = os.environ.get("LAZARUS_MCP_AUTOSTART", "0") == "1"
 
 def log(msg):
     sys.stderr.write("[mcp-stdio-bridge] %s\n" % msg)
@@ -100,12 +102,13 @@ def port_open():
     except OSError:
         return False
 
-SYNTH_INIT = {
-    "jsonrpc": "2.0", "id": "bridge-init", "method": "initialize",
-    "params": {"protocolVersion": "2025-03-26", "capabilities": {},
-               "clientInfo": {"name": "mcp-stdio-bridge", "version": "1.0"}},
-}
+SYNTH_INIT_FALLBACK = {"name": "unknown", "version": "0"}
 INITIALIZED_NOTE = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+
+
+def _ua_token(value, fallback):
+    token = re.sub(r"[^A-Za-z0-9.*+/_-]", "", str(value or ""))
+    return token or fallback
 
 
 class Bridge:
@@ -113,6 +116,8 @@ class Bridge:
         self.lock = threading.Lock()
         self.session = None
         self.boot_lock = threading.Lock()
+        self.client_info = None    # clientInfo from the client's initialize
+        self.client_pv = None      # protocolVersion the client asked for
 
     def start_ide_and_wait(self):
         with self.boot_lock:
@@ -139,11 +144,27 @@ class Bridge:
                 time.sleep(2)
             log("IDE did not come up within %ds" % BOOT_TIMEOUT)
 
+    def ua_header(self):
+        name, version = "unknown", "0"
+        if isinstance(self.client_info, dict):
+            name = _ua_token(self.client_info.get("name"), "unknown")
+            version = _ua_token(self.client_info.get("version"), "0")
+        return "mcp-stdio-bridge/%s %s/%s" % (BRIDGE_VERSION, name, version)
+
+    def synth_init(self):
+        info = dict(self.client_info) if isinstance(self.client_info, dict) else {}
+        info["name"] = "%s via mcp-stdio-bridge" % info.get("name", "unknown")
+        info.setdefault("version", SYNTH_INIT_FALLBACK["version"])
+        return {"jsonrpc": "2.0", "id": "bridge-init", "method": "initialize",
+                "params": {"protocolVersion": self.client_pv or "2025-03-26",
+                           "capabilities": {}, "clientInfo": info}}
+
     def post(self, payload, with_session):
         headers = {
             "Authorization": "Bearer " + (TOKEN or ""),
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "User-Agent": self.ua_header(),
         }
         if with_session and self.session:
             headers["Mcp-Session-Id"] = self.session
@@ -179,7 +200,7 @@ class Bridge:
 
     def initialize_session(self):
         self.session = None
-        status, ctype, raw, sid = self.post(SYNTH_INIT, with_session=False)
+        status, ctype, raw, sid = self.post(self.synth_init(), with_session=False)
         if sid:
             self.session = sid
         self.post(INITIALIZED_NOTE, with_session=True)
@@ -224,6 +245,14 @@ class Bridge:
 
     def handle(self, msg):
         is_request = msg.get("id") is not None
+        if msg.get("method") == "initialize":
+            params = msg.get("params")
+            if isinstance(params, dict):
+                if isinstance(params.get("clientInfo"), dict):
+                    self.client_info = params["clientInfo"]
+                if isinstance(params.get("protocolVersion"), str) and \
+                        params["protocolVersion"]:
+                    self.client_pv = params["protocolVersion"]
         try:
             resp = self.call_upstream(msg)
         except Exception as e:
@@ -233,6 +262,12 @@ class Bridge:
                       "error": {"code": -32603,
                                 "message": "mcp-stdio-bridge: %s" % e}})
             return
+        if (msg.get("method") == "initialize" and isinstance(resp, dict)
+                and isinstance(resp.get("result"), dict)):
+            log("client %s requested protocol %s; server answered %s"
+                % (self.ua_header().split(" ", 1)[1],
+                   self.client_pv or "?",
+                   resp["result"].get("protocolVersion")))
         if is_request:
             if resp is None:
                 emit({"jsonrpc": "2.0", "id": msg["id"],
@@ -243,7 +278,6 @@ class Bridge:
 
 
 out_lock = threading.Lock()
-pending = []
 
 def emit(obj):
     with out_lock:
@@ -262,11 +296,8 @@ def main():
             continue
         if not isinstance(msg, dict):
             continue
-        t = threading.Thread(target=bridge.handle, args=(msg,), daemon=True)
-        t.start()
-        pending.append(t)
-    for t in pending:
-        t.join(timeout=HTTP_TIMEOUT + 10)
+        threading.Thread(target=bridge.handle, args=(msg,),
+                         daemon=True).start()
 
 if __name__ == "__main__":
     log("bridging stdio <-> %s (autostart=%s)" % (URL, AUTOSTART))
