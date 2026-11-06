@@ -247,6 +247,8 @@ begin
   CheckTrue(Pos('# MCP Assistant report', Text) = 1, 'heading');
   CheckTrue(Pos('## Versions', Text) > 0, 'versions');
   CheckTrue(Pos('## Plugin settings', Text) > 0, 'settings');
+  CheckTrue(Pos('- tool-call log file: ', Text) > 0, 'where the log is');
+  CheckTrue(Pos('- tool calls in the Messages window: ', Text) > 0, 'the pane switch');
   CheckTrue(Pos('## mcp-sessions.log', Text) > 0, 'sessions log');
   CheckTrue(Pos('## mcp-exceptions.log', Text) > 0, 'exceptions log');
   CheckTrue(Pos('## mcp-tools.log', Text) > 0, 'tools log section, on or off');
