@@ -27,6 +27,7 @@ type
     procedure TestRunTestsSchemaNotReplaceText;
     procedure TestSearchComponentsReturnsArray;
     procedure TestGetMessagesReturnsStructure;
+    procedure TestGetMessagesSkipOwn;
     procedure TestCreateProjectSchema;
     procedure TestListProjectTemplatesReturnsArray;
     procedure TestProjectCleanSchema;
@@ -218,6 +219,25 @@ begin
     end;
   finally
     Obj.Free;
+  end;
+end;
+
+{ skip_own leaves out the lines the server adds itself: never more than all of them }
+procedure TTestProjectTools.TestGetMessagesSkipOwn;
+var
+  All, Skipped : TJSONObject;
+begin
+  All := TJSONObject(GetJSON(CallToolText('ide_get_messages', '{}', [])));
+  Skipped := TJSONObject(GetJSON(CallToolText('ide_get_messages', '{"skip_own":true}', [])));
+  try
+    CheckEquals(All.Arrays['messages'].Count, All.Get('line_count', -1), 'line_count matches');
+    CheckEquals(Skipped.Arrays['messages'].Count, Skipped.Get('line_count', -1),
+      'line_count matches when skipping');
+    CheckTrue(Skipped.Arrays['messages'].Count <= All.Arrays['messages'].Count,
+      'skip_own never adds lines');
+  finally
+    All.Free;
+    Skipped.Free;
   end;
 end;
 

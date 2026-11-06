@@ -45,7 +45,7 @@ uses
   Classes, SysUtils, Controls, Forms, StdCtrls, ExtCtrls, Graphics,
   LazFileUtils, Laz2_XMLCfg, PackageIntf, IDEMsgIntf, IDEExternToolIntf,
   fpjson, jsonparser,
-  McpIdeState;
+  McpIdeState, McpMessages;
 
 const
   CONSENT_TIMEOUT_S = 180;
@@ -252,7 +252,7 @@ end;
 procedure LogToIDE(const AMsg: string);
 begin
   if Assigned(IDEMessagesWindow) then
-    IDEMessagesWindow.AddCustomMessage(mluImportant, AMsg, '', 0, 0, 'MCP Server');
+    McpAddMessage(mluImportant, AMsg);
 end;
 
 { ── Public ───────────────────────────────────────────────────────────────── }

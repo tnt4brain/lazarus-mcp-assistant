@@ -26,7 +26,7 @@ uses
   LazIDEIntf, PackageIntf, MacroIntf, IDEMsgIntf, IDEExternToolIntf, SrcEditorIntf,
   LazFileUtils, FileUtil, Controls, Forms,
   PackageDependencyIntf, PackageDefs, PackageSystem, PackageLinks,
-  McpToolContext, McpToolsPackages;
+  McpToolContext, McpToolsPackages, McpMessages;
 
 const
   MAX_WARNINGS = 50;
@@ -94,8 +94,9 @@ var
   I    : Integer;
   Obj  : TJSONObject;
 begin
-  if not Assigned(IDEMessagesWindow) or (IDEMessagesWindow.ViewCount = 0) then Exit;
-  View := IDEMessagesWindow.Views[IDEMessagesWindow.ViewCount - 1];
+  { the last compile's view, not the last view: ours (McpMessages) may come after it }
+  View := McpCompilerView;
+  if View = nil then Exit;
   for I := 0 to View.Lines.Count - 1 do
   begin
     Line := View.Lines.Items[I];

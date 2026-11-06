@@ -22,7 +22,7 @@ uses
   fpjson,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
-  McpToolsPkgManage, McpRunProgram;
+  McpToolsPkgManage, McpRunProgram, McpMessages;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -65,7 +65,9 @@ const
     '{"type":"object","properties":{}}';
 
   SCHEMA_GET_MESSAGES =
-    '{"type":"object","properties":{}}';
+    '{"type":"object","properties":{' +
+    '"skip_own":{"type":"boolean","description":"true: leave out the lines this server ' +
+    'adds itself (SubTool \"MCP Server\"); default false: everything"}}}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
@@ -78,6 +80,7 @@ var
   MsgArr   : TJSONArray;
   MsgView  : TExtToolView;
   MsgLine  : TMessageLine;
+  MsgOwn   : Boolean;
   MsgObj   : TJSONObject;
   I, J     : Integer;
 begin
@@ -149,6 +152,8 @@ begin
           for J := 0 to MsgView.Lines.Count - 1 do
           begin
             MsgLine := MsgView.Lines.Items[J];
+            MsgOwn  := McpIsOwnLine(MsgLine);
+            if MsgOwn and Ctx.Params.Get('skip_own', False) then Continue;
             MsgObj  := TJSONObject.Create;
             MsgObj.Add('urgency', MessageLineUrgencyNames[MsgLine.Urgency]);
             MsgObj.Add('msg',     MsgLine.Msg);
@@ -464,7 +469,8 @@ begin
     'Return the current build compiler errors and warnings.',
     SCHEMA_GET_COMPILER_ERRORS, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_get_messages',
-    'Return all messages from the IDE Messages window (build output, hints, etc.).',
+    'Return all messages from the IDE Messages window (build output, hints, etc.), ' +
+    'including the lines this server adds itself; skip_own leaves those out.',
     SCHEMA_GET_MESSAGES, MCP_ANN_RO));
 end;
 
