@@ -22,7 +22,7 @@ uses
   fpjson,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
-  McpToolsPkgManage, McpRunProgram;
+  McpToolsPkgManage, McpRunProgram, McpMessages;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -65,7 +65,10 @@ const
     '{"type":"object","properties":{}}';
 
   SCHEMA_GET_MESSAGES =
-    '{"type":"object","properties":{}}';
+    '{"type":"object","properties":{' +
+    '"skip_own":{"type":"boolean","description":"true: leave out the lines this server ' +
+    'adds itself (view \"MCP Server\"); default false: everything, those lines marked ' +
+    '\"own\":true"}}}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
@@ -78,6 +81,7 @@ var
   MsgArr   : TJSONArray;
   MsgView  : TExtToolView;
   MsgLine  : TMessageLine;
+  MsgOwn   : Boolean;
   MsgObj   : TJSONObject;
   I, J     : Integer;
 begin
@@ -149,11 +153,14 @@ begin
           for J := 0 to MsgView.Lines.Count - 1 do
           begin
             MsgLine := MsgView.Lines.Items[J];
+            MsgOwn  := McpIsOwnView(MsgView) or McpIsOwnLine(MsgLine);
+            if MsgOwn and Ctx.Params.Get('skip_own', False) then Continue;
             MsgObj  := TJSONObject.Create;
             MsgObj.Add('urgency', MessageLineUrgencyNames[MsgLine.Urgency]);
             MsgObj.Add('msg',     MsgLine.Msg);
             MsgObj.Add('file',    MsgLine.Filename);
             MsgObj.Add('line',    MsgLine.Line);
+            if MsgOwn then MsgObj.Add('own', True);   { the server's, not the compiler's }
             MsgArr.Add(MsgObj);
           end;
         end;
@@ -464,7 +471,9 @@ begin
     'Return the current build compiler errors and warnings.',
     SCHEMA_GET_COMPILER_ERRORS, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_get_messages',
-    'Return all messages from the IDE Messages window (build output, hints, etc.).',
+    'Return all messages from the IDE Messages window (build output, hints, etc.), ' +
+    'including the lines this server adds itself, marked "own":true; skip_own leaves ' +
+    'those out.',
     SCHEMA_GET_MESSAGES, MCP_ANN_RO));
 end;
 

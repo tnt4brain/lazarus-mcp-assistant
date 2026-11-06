@@ -84,7 +84,7 @@ implementation
 uses
   StrUtils, IDEMsgIntf, IDEExternToolIntf,
   BaseDebugManager, LazDebuggerIntfBaseTypes,
-  McpToolContext, McpDebugGuard;
+  McpToolContext, McpDebugGuard, McpMessages;
 
 type
   TLeaseWatchdog = class(TThread)
@@ -433,7 +433,7 @@ end;
 procedure LogToIDE(const AMsg: string);
 begin
   if Assigned(IDEMessagesWindow) then
-    IDEMessagesWindow.AddCustomMessage(mluProgress, AMsg, '', 0, 0, 'MCP Server');
+    McpAddMessage(mluProgress, AMsg);
 end;
 
 procedure McpLeaseSessionEnded;

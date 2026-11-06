@@ -106,7 +106,7 @@ uses
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
   McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
-  McpTokens, McpToolLog, LCLVersion;
+  McpTokens, McpToolLog, McpMessages, LCLVersion;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
@@ -676,7 +676,7 @@ end;
 procedure TMcpMainCall.Log;
 begin
   if Assigned(IDEMessagesWindow) then
-    IDEMessagesWindow.AddCustomMessage(mluProgress, LogMsg, '', 0, 0, 'MCP Server');
+    McpAddMessage(mluProgress, LogMsg);
 end;
 
 const
