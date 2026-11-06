@@ -259,8 +259,14 @@ begin
   FPanel.DefaultFontSize := Screen.SystemFont.Size + 2;
   FPanel.FixedTypeface := MonospaceFont;
   FPanel.FontQuality := fqCleartype;
-  FPanel.MarginWidth := 16;
-  FPanel.MarginHeight := 12;
+  { Bootstrap 5: body text #212529, links #0d6efd }
+  FPanel.TextColor := RGBToColor(33, 37, 41);
+  FPanel.LinkColor := RGBToColor(13, 110, 253);
+  FPanel.VLinkColor := RGBToColor(13, 110, 253);
+  FPanel.ALinkColor := RGBToColor(10, 88, 202);
+  FPanel.MarginWidth := 24;
+  FPanel.MarginHeight := 16;
+  FPanel.FactBAParag := 1.25;      { Bootstrap's line height of 1.5 }
   FProv := TIpHtmlDataProvider.Create(Self);
   FProv.OnGetImage := @GetImage;
   FProv.OnCanHandle := @CanHandle;
@@ -383,6 +389,28 @@ begin
     IDEWindowCreators.Add(MD_FORM_ID, @CreateMarkdownForm, nil, '', '', '', '', '', alNone, False);
 end;
 
+{ The IDE's window layout may put a new window on the primary monitor.  A floating window goes
+  to the monitor of the IDE's main window; a docked one is part of that window already. }
+procedure MoveToIdeMonitor(AForm: TCustomForm);
+var
+  Host   : TCustomForm;
+  Target : TRect;
+  W, H   : Integer;
+begin
+  if not (Assigned(Application.MainForm) and Application.MainForm.HandleAllocated) then Exit;
+  Host := GetParentForm(AForm);
+  if Host = nil then Host := AForm;
+  if Host = Application.MainForm then Exit;
+  if Host.Monitor.MonitorNum = Application.MainForm.Monitor.MonitorNum then Exit;
+  Target := Application.MainForm.Monitor.WorkareaRect;
+  W := Host.Width;
+  H := Host.Height;
+  if W > Target.Right - Target.Left then W := Target.Right - Target.Left;
+  if H > Target.Bottom - Target.Top then H := Target.Bottom - Target.Top;
+  Host.SetBounds(Target.Left + (Target.Right - Target.Left - W) div 2,
+                 Target.Top + (Target.Bottom - Target.Top - H) div 2, W, H);
+end;
+
 function McpMarkdownShow(const AMarkdown, ATitle, ATab, ABaseDir: string;
   out ATabId, AError: string): Boolean;
 var
@@ -419,6 +447,7 @@ begin
         IDEWindowCreators.ShowForm(GForm, False)    { floating or docked, as the layout says }
       else
         GForm.Show;
+      MoveToIdeMonitor(GForm);
       if Assigned(Prev) and (Prev <> GForm) and Prev.Visible and Prev.CanFocus then
         Prev.SetFocus;
     end;

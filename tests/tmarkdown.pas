@@ -126,8 +126,12 @@ begin
 end;
 
 procedure TTestMarkdown.TestEmpty;
+var
+  R : string;
 begin
-  AssertEquals('<html><body>' + #10 + '</body></html>', H(''));
+  R := H('');
+  Has(R, '<body>' + #10 + '</body></html>');
+  Has(R, '<style');                    { the margins }
 end;
 
 procedure TTestMarkdown.TestHeadings;
@@ -196,7 +200,7 @@ var
   R : string;
 begin
   R := H('```pascal' + #10 + 'if a < b then' + #10 + '  x := 1;' + #10#10 + 'end;' + #10 + '```' + #10 + 'after');
-  Has(R, 'bgcolor="#EEEEEE"');
+  Has(R, 'bgcolor="#F8F9FA"');
   Has(R, '<tt>if&nbsp;a&nbsp;&lt;&nbsp;b&nbsp;then</tt><br>');
   Has(R, '<tt>&nbsp;&nbsp;x&nbsp;:=&nbsp;1;</tt><br>');
   Has(R, '<tt>&nbsp;</tt><br>');
@@ -266,11 +270,11 @@ var
   R : string;
 begin
   R := H('> quoted **text**' + #10 + '> - item' + #10 + 'lazy');
-  Has(R, '<blockquote>');
+  Has(R, '<td width="5" bgcolor="#DEE2E6">');     { the stripe }
   Has(R, '<strong>text</strong>');
   Has(R, '<ul><li>item');
   Has(R, 'lazy');
-  Has(R, '</blockquote>');
+  HasNot(R, '<blockquote');
 end;
 
 procedure TTestMarkdown.TestTable;
@@ -278,13 +282,13 @@ var
   R : string;
 begin
   R := H('| a | b |' + #10 + '|---|---|' + #10 + '| 1 | `x|y` |' + #10 + '| 2 |' + #10 + 'after');
-  Has(R, '<table border="1"');
-  Has(R, '<th>a</th><th>b</th>');
-  Has(R, '<td>1</td>');
-  Has(R, '<td>2</td><td>&nbsp;</td>');
+  Has(R, '<table class="md" border="1"');
+  Has(R, '<th bgcolor="#F8F9FA">a</th><th bgcolor="#F8F9FA">b</th>');
+  Has(R, '<td bgcolor="#FFFFFF">1</td>');
+  Has(R, '<td bgcolor="#FFFFFF">2</td><td bgcolor="#FFFFFF">&nbsp;</td>');
   Has(R, '<p>after</p>');
   { an escaped pipe stays inside the cell }
-  Has(H('| a |' + #10 + '|---|' + #10 + '| x \| y |'), '<td>x | y</td>');
+  Has(H('| a |' + #10 + '|---|' + #10 + '| x \| y |'), '>x | y</td>');
 end;
 
 procedure TTestMarkdown.TestTableAlign;
@@ -292,10 +296,10 @@ var
   R : string;
 begin
   R := H('a | b | c' + #10 + ':-- | :-: | --:' + #10 + '1 | 2 | 3');
-  Has(R, '<th align="left">a</th>');
-  Has(R, '<th align="center">b</th>');
-  Has(R, '<th align="right">c</th>');
-  Has(R, '<td align="right">3</td>');
+  Has(R, '<th align="left" bgcolor="#F8F9FA">a</th>');
+  Has(R, '<th align="center" bgcolor="#F8F9FA">b</th>');
+  Has(R, '<th align="right" bgcolor="#F8F9FA">c</th>');
+  Has(R, '<td align="right" bgcolor="#FFFFFF">3</td>');
 end;
 
 procedure TTestMarkdown.TestHr;

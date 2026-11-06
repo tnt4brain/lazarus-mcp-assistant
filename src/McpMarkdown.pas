@@ -18,6 +18,21 @@ const
   MD_MAX_DEPTH  = 16;   { nesting of quotes, lists and emphasis }
   MD_MAX_IMAGES = 32;   { data: images lifted out of one document }
 
+  { the look of Bootstrap 5: borders, shaded areas and inline code }
+  MD_BORDER     = '#DEE2E6';
+  MD_SHADE      = '#F8F9FA';
+  MD_CODE_COLOR = '#D63384';
+
+  { IPro reads tag selectors and whole-pixel margins: Bootstrap's 1rem under a block, half
+    that under a heading }
+  MD_STYLE =
+    'h1,h2,h3,h4,h5,h6{margin-top:0px;margin-bottom:8px}' +
+    'p{margin-top:0px;margin-bottom:16px}' +
+    'ul{margin-top:0px;margin-bottom:16px}' +
+    'ol{margin-top:0px;margin-bottom:16px}' +
+    'table{margin-bottom:16px}' +
+    'table.md{border:1px solid ' + MD_BORDER + '}';
+
 type
   TMarkdownHtml = class
   private
@@ -530,7 +545,7 @@ begin
               if (Length(Inner) > 1) and (Inner[1] = ' ') and (Inner[Length(Inner)] = ' ') then
                 Inner := Copy(Inner, 2, Length(Inner) - 2);
               Inner := StringReplace(MdEscape(Inner), ' ', '&nbsp;', [rfReplaceAll]);
-              B.Append('<tt>' + Inner + '</tt>');
+              B.Append('<font color="' + MD_CODE_COLOR + '"><tt>' + Inner + '</tt></font>');
               I := P + Run;
             end
             else
@@ -649,8 +664,9 @@ var
 begin
   B := TStringBuilder.Create;
   try
-    B.Append('<table width="100%" border="0" cellpadding="6" cellspacing="0"><tr>' +
-             '<td bgcolor="#EEEEEE">');
+    { the frame's colour comes from the table.md rule of the style block }
+    B.Append('<table class="md" width="100%" border="1" cellpadding="12" cellspacing="0">' +
+             '<tr><td bgcolor="' + MD_SHADE + '">');
     for I := 0 to ALines.Count - 1 do
     begin
       L := StringReplace(MdEscape(ALines[I]), ' ', '&nbsp;', [rfReplaceAll]);
@@ -684,6 +700,8 @@ var
       if Cell = '' then Cell := '&nbsp;';
       B.Append('<' + ATag);
       if Align[C] <> '' then B.Append(' align="' + Align[C] + '"');
+      if ATag = 'th' then B.Append(' bgcolor="' + MD_SHADE + '"')
+      else B.Append(' bgcolor="#FFFFFF"');
       B.Append('>' + Cell + '</' + ATag + '>');
     end;
     B.Append('</tr>');
@@ -712,7 +730,7 @@ begin
         Align[K] := A;
       end;
     end;
-    B.Append('<table border="1" cellpadding="4" cellspacing="0">');
+    B.Append('<table class="md" border="1" cellpadding="8" cellspacing="0">');
     EmitRow(Head, 'th');
     Inc(I, 2);
     while (I < ALines.Count) and not IsBlank(ALines[I]) and (Pos('|', ALines[I]) > 0) do
@@ -759,7 +777,10 @@ begin
     end;
     Inc(FDepth);
     try
-      Result := '<blockquote>' + Blocks(Inner, False) + '</blockquote>';
+      { a stripe on the left, then the text: a quote has no border of its own in IPro }
+      Result := '<table border="0" cellpadding="0" cellspacing="0"><tr>' +
+                '<td width="5" bgcolor="' + MD_BORDER + '">&nbsp;</td>' +
+                '<td width="12">&nbsp;</td><td>' + Blocks(Inner, False) + '</td></tr></table>';
     finally
       Dec(FDepth);
     end;
@@ -993,7 +1014,8 @@ begin
     Lines.StrictDelimiter := True;
     Lines.LineBreak := #10;
     Lines.Text := S;
-    Result := '<html><body>' + #10 + Blocks(Lines, False) + '</body></html>';
+    Result := '<html><head><style type="text/css">' + MD_STYLE + '</style></head><body>' + #10 +
+              Blocks(Lines, False) + '</body></html>';
   finally
     Lines.Free;
   end;
