@@ -51,6 +51,7 @@ begin
     CheckEquals(FFile, S.ConfigFileName);
     CheckEquals('', S.ClaudePath);
     CheckEquals('', S.GitPath);
+    CheckEquals('default', S.WinTerminal, 'Windows keeps its console by default');
     CheckFalse(S.AllowPackageInstall, 'installing packages is off by default');
     CheckEquals('127.0.0.1', S.ListenAddress, 'listens on the loopback by default');
   finally
@@ -72,6 +73,8 @@ begin
     S.WorkingDirectory    := 'D:\work dir';
     S.ExtraClaudeArgs     := '--model opus "quoted arg"';
     S.TerminalCommand     := 'kitty -e';
+    S.WinTerminal         := 'wt';
+    S.WinTerminalCustom   := 'myterm.exe --cwd {dir} -- {cmd}';
     S.GitPath             := 'C:\Program Files\Git\cmd\git.exe';
     S.AllowPackageInstall := True;
     S.ListenAddress       := '192.168.1.5';
@@ -91,6 +94,8 @@ begin
     CheckEquals('D:\work dir', S.WorkingDirectory);
     CheckEquals('--model opus "quoted arg"', S.ExtraClaudeArgs);
     CheckEquals('kitty -e', S.TerminalCommand);
+    CheckEquals('wt', S.WinTerminal);
+    CheckEquals('myterm.exe --cwd {dir} -- {cmd}', S.WinTerminalCustom);
     CheckEquals('C:\Program Files\Git\cmd\git.exe', S.GitPath);
     CheckTrue(S.AllowPackageInstall);
     CheckEquals('192.168.1.5', S.ListenAddress);

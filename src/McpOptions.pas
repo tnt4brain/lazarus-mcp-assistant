@@ -31,20 +31,25 @@ type
     FClaudePath      : TFileNameEdit;
     FWorkDir         : TDirectoryEdit;
     FExtraArgs       : TEdit;
-    FTerminal        : TEdit;
-    FGitPath         : TFileNameEdit;
+    FTerminal        : TEdit;     { Unix: terminal command; Windows: custom template }
+    FWinChoice       : TComboBox; { Windows: the terminal host }
+    FWinIds          : TStringList;
+    FGitPath        : TFileNameEdit;
     FAllowInstall    : TCheckBox;
     FServerGroup     : TGroupBox;
     FListen          : TEdit;
     FListenNote      : TLabel;
     FFileLabel       : TLabel;
     procedure ListenChanged(Sender: TObject);
+    procedure WinChoiceChanged(Sender: TObject);
+    procedure FillWinChoices;
     function AddGroup(const ACaption: string): TGroupBox;
     function AddLabel(AParent: TWinControl; const ACaption: string): TLabel;
     procedure Place(AControl: TControl; AParent: TWinControl; ASpaceAfter: Integer = 8);
     procedure UpdateHints;
   public
     constructor Create(AOwner: TComponent); override;
+    destructor Destroy; override;
     function GetTitle: string; override;
     procedure Setup(ADialog: TAbstractOptionsEditorDialog); override;
     procedure ReadSettings(AOptions: TAbstractIDEOptions); override;
@@ -132,17 +137,22 @@ begin
                          'e.g. --model claude-opus-5-5:');
   FExtraArgs := TEdit.Create(Self);
   Place(FExtraArgs, FClaudeGroup);
+  FWinIds := TStringList.Create;  { used on Windows only }
   {$IFDEF WINDOWS}
-  AddLabel(FClaudeGroup, 'Terminal (Linux/macOS only; Windows opens a new console):');
+  AddLabel(FClaudeGroup, 'Terminal (only the ones installed are listed):');
+  FWinChoice := TComboBox.Create(Self);
+  FWinChoice.Style := csDropDownList;
+  FWinChoice.OnChange := @WinChoiceChanged;
+  Place(FWinChoice, FClaudeGroup);
+  AddLabel(FClaudeGroup, 'Custom terminal: executable and arguments; {cmd} is the command ' +
+                         'to run, {dir} the working directory, {script} the launch script, ' +
+                         'e.g. myterm.exe --cwd {dir} -- {cmd}:');
   {$ELSE}
   AddLabel(FClaudeGroup, 'Terminal command, before "sh <script>" ' +
                          '(empty: detect), e.g. gnome-terminal -- or kitty -e:');
   {$ENDIF}
   FTerminal := TEdit.Create(Self);
   Place(FTerminal, FClaudeGroup);
-  {$IFDEF WINDOWS}
-  FTerminal.Enabled := False;
-  {$ENDIF}
 
   FToolsGroup := AddGroup('Tools');
   AddLabel(FToolsGroup, 'git executable (empty: git on PATH):');
@@ -169,6 +179,35 @@ begin
   FFileLabel.Parent := Self;
 end;
 
+{ Windows: list Default, Custom and whichever hosts are installed. }
+procedure TMcpOptionsFrame.FillWinChoices;
+  procedure Add(const AId, ACaption: string);
+  begin
+    FWinIds.Add(AId);
+    FWinChoice.Items.Add(ACaption);
+  end;
+begin
+  if FWinChoice = nil then Exit;
+  FWinIds.Clear;
+  FWinChoice.Items.Clear;
+  Add(MCP_TERM_DEFAULT, 'Default (claude in a new console)');
+  if McpFindWindowsTerminal(MCP_TERM_CMD) <> '' then
+    Add(MCP_TERM_CMD, 'Command Prompt');
+  if McpFindWindowsTerminal(MCP_TERM_POWERSHELL) <> '' then
+    Add(MCP_TERM_POWERSHELL, 'PowerShell');
+  if McpFindWindowsTerminal(MCP_TERM_WT) <> '' then
+    Add(MCP_TERM_WT, 'Windows Terminal');
+  if McpFindWindowsTerminal(MCP_TERM_GITBASH) <> '' then
+    Add(MCP_TERM_GITBASH, 'Git Bash');
+  Add(MCP_TERM_CUSTOM, 'Custom');
+end;
+
+procedure TMcpOptionsFrame.WinChoiceChanged(Sender: TObject);
+begin
+  FTerminal.Enabled := (FWinChoice.ItemIndex >= 0) and
+    (FWinIds[FWinChoice.ItemIndex] = MCP_TERM_CUSTOM);
+end;
+
 procedure TMcpOptionsFrame.ListenChanged(Sender: TObject);
 var
   A: string;
@@ -182,6 +221,12 @@ begin
     FListenNote.Caption := 'Warning: other machines can connect. Everyone who has the token ' +
       'can drive this IDE (edit files, run programs), and the connection is not encrypted: ' +
       'use it on a network you trust, or tunnel it (ssh -L). Applied when OK is pressed.';
+end;
+
+destructor TMcpOptionsFrame.Destroy;
+begin
+  FWinIds.Free;
+  inherited Destroy;
 end;
 
 function TMcpOptionsFrame.GetTitle: string;
@@ -216,7 +261,7 @@ begin
     FWorkDir.TextHint := 'the open project''s directory';
   FExtraArgs.TextHint := 'none';
   {$IFDEF WINDOWS}
-  FTerminal.TextHint := 'not used on Windows';
+  FTerminal.TextHint := 'myterm.exe --cwd {dir} -- {cmd}';
   {$ELSE}
   Argv := TStringList.Create;
   try
@@ -245,8 +290,17 @@ begin
   FClaudePath.Text     := McpSettings.ClaudePath;
   FWorkDir.Text        := McpSettings.WorkingDirectory;
   FExtraArgs.Text      := McpSettings.ExtraClaudeArgs;
+  {$IFDEF WINDOWS}
+  FillWinChoices;
+  { a saved choice whose terminal is gone shows as Default }
+  FWinChoice.ItemIndex := FWinIds.IndexOf(McpSettings.WinTerminal);
+  if FWinChoice.ItemIndex < 0 then FWinChoice.ItemIndex := 0;
+  FTerminal.Text       := McpSettings.WinTerminalCustom;
+  WinChoiceChanged(nil);
+  {$ELSE}
   FTerminal.Text       := McpSettings.TerminalCommand;
-  FGitPath.Text        := McpSettings.GitPath;
+  {$ENDIF}
+  FGitPath.Text       := McpSettings.GitPath;
   FAllowInstall.Checked := McpSettings.AllowPackageInstall;
   FListen.Text         := McpSettings.ListenAddress;
   ListenChanged(nil);
@@ -273,7 +327,13 @@ begin
   McpSettings.ClaudePath          := Trim(FClaudePath.Text);
   McpSettings.WorkingDirectory    := Trim(FWorkDir.Text);
   McpSettings.ExtraClaudeArgs     := Trim(FExtraArgs.Text);
+  {$IFDEF WINDOWS}
+  if FWinChoice.ItemIndex >= 0 then
+    McpSettings.WinTerminal       := FWinIds[FWinChoice.ItemIndex];
+  McpSettings.WinTerminalCustom   := Trim(FTerminal.Text);
+  {$ELSE}
   McpSettings.TerminalCommand     := Trim(FTerminal.Text);
+  {$ENDIF}
   McpSettings.GitPath             := Trim(FGitPath.Text);
   McpSettings.AllowPackageInstall := FAllowInstall.Checked;
   McpSettings.SaveSettings;
