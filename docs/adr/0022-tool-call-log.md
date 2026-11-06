@@ -115,9 +115,9 @@ argument that can hold a secret, hashes comparable only within one log format. K
 calls, not the session, so it survives #5. Later: a Messages-pane view; a command bundling
 both logs and the versions for an issue.
 
-## Amendment 1 — a report bundle (proposed, 2026-11-06)
+## Amendment 1 — a report bundle (accepted and implemented, 2026-11-06)
 
-**Status:** Proposed
+**Status:** Accepted and implemented
 
 A bug report needs the same few facts every time: versions, settings, packages, the last
 lines of the three logs. People paste them by hand and forget half. One command collects

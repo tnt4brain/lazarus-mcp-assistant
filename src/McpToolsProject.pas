@@ -25,7 +25,7 @@ uses
   PackageDefs,
   fpjson,
   McpToolContext, McpToolsPackages, McpDialogWatch, McpIdeListeners,
-  McpSessionLog, McpToolLog;
+  McpSessionLog, McpToolLog, McpReport;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -37,6 +37,9 @@ const
 
 const
   SCHEMA_PING =
+    '{"type":"object","properties":{}}';
+
+  SCHEMA_REPORT =
     '{"type":"object","properties":{}}';
 
   SCHEMA_GET_OPEN_DIALOGS =
@@ -771,6 +774,8 @@ var
   AlreadyIn  : Boolean;
   IDEPkg     : TIDEPackage;
   Logs       : TJSONObject;
+  ReportOk   : Boolean;
+  ReportPath, ReportErr : string;
   Descriptor : TProjectDescriptor;
   FilePath   : string;
   NewName    : string;
@@ -941,6 +946,37 @@ begin
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
+    end;
+  end
+
+  else if Name = 'ide_report' then
+  begin
+    Result := True;
+    if not Assigned(McpReportWriter) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'The report writer is not ready.';
+    end
+    else
+    begin
+      ReportOk := McpReportWriter(ReportPath, ReportErr);
+      if not ReportOk then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Could not write the report: ' + ReportErr;
+      end
+      else
+      begin
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('path', ReportPath);
+          Obj.Add('note', 'Markdown; read it before posting it anywhere: paths and error ' +
+                          'texts can hold names (your home folder is shown as ~).');
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+      end;
     end;
   end
 
@@ -1389,6 +1425,13 @@ begin
     'answering. After ide_rebuild, wait with the returned poll_command; ' +
     'this then confirms the server is back.',
     SCHEMA_PING, MCP_ANN_RO));
+  Tools.Add(MakeTool('ide_report',
+    'Writes a bug-report bundle to a new Markdown file in the Lazarus config folder and ' +
+    'returns {"path":...}: versions, plugin settings (token names only), the project''s ' +
+    'settings and packages, and the last 200 lines of mcp-tools.log, mcp-sessions.log and ' +
+    'mcp-exceptions.log. Works with the tool-call log off and with no project open. ' +
+    'Nothing is sent anywhere; tell the user to read the file before posting it.',
+    SCHEMA_REPORT, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_get_open_dialogs',
     'List modal dialogs currently blocking the IDE''s main thread: caption, text and ' +
     'buttons for each (a short "summary" line too, when any are open). While one is ' +

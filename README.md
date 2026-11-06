@@ -234,6 +234,7 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 | Tool | Description |
 |---|---|
 | `ide_ping` | `{"status":"ok","version":"x.y","client":"<id>"}` — confirms the server is back after `ide_rebuild` and shows the caller's identity |
+| `ide_report` | Writes versions, plugin and project settings, packages and the last 200 lines of the three logs into one Markdown file in the Lazarus config folder (`mcp-report-<UTC time>.md`, three newest kept) and returns its path; the same as Tools > MCP Assistant > Write Report. For bug reports: read it before posting |
 | `ide_get_messages` | Everything in the Messages window, all urgency levels |
 | `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
 | `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s |

@@ -25,6 +25,7 @@ type
     procedure TestDeleteNeedsToken;
     procedure TestUnknownSessionNotFound;
     procedure TestPingReportsLogsAndToolLogRecordsIt;
+    procedure TestReportWritesABundle;
   end;
 
 implementation
@@ -217,6 +218,39 @@ begin
   finally
     Lines.Free;
   end;
+end;
+
+{ ide_report writes the bundle to a new file and says where (ADR-022, Amendment 1) }
+procedure TTestSession.TestReportWritesABundle;
+var
+  D    : TJSONData;
+  Path : string;
+  SL   : TStringList;
+  Text : string;
+begin
+  D := GetJSON(CallToolText('ide_report', '{}', []));
+  try
+    Path := TJSONObject(D).Get('path', '');
+  finally
+    D.Free;
+  end;
+  CheckTrue(Path <> '', 'a path comes back');
+  CheckTrue(FileExists(Path), 'the file exists');
+  SL := TStringList.Create;
+  try
+    SL.LoadFromFile(Path);
+    Text := SL.Text;
+  finally
+    SL.Free;
+    DeleteFile(Path);       { the tool keeps three; do not push the user's out for good }
+  end;
+  CheckTrue(Pos('# MCP Assistant report', Text) = 1, 'heading');
+  CheckTrue(Pos('## Versions', Text) > 0, 'versions');
+  CheckTrue(Pos('## Plugin settings', Text) > 0, 'settings');
+  CheckTrue(Pos('## mcp-sessions.log', Text) > 0, 'sessions log');
+  CheckTrue(Pos('## mcp-exceptions.log', Text) > 0, 'exceptions log');
+  CheckTrue(Pos('## mcp-tools.log', Text) > 0, 'tools log section, on or off');
+  CheckTrue(Pos('lmcp_', Text) = 0, 'no token in it');
 end;
 
 end.
