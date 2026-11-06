@@ -15,8 +15,8 @@
     </CompilerOptions>
     <Description Value="A completely generic, brand-agnostic Model Context Protocol (MCP) IDE Assistant client for the Lazarus RAD IDE and Free Pascal ecosystem."/>
     <License Value="BSD-3-Clause"/>
-    <Version Major="1" Minor="3"/>
-    <Files Count="36">
+    <Version Major="1" Minor="4"/>
+    <Files Count="40">
       <Item1>
         <Filename Value="lazmcpassistant.pas"/>
         <UnitName Value="LazMcpAssistant"/>
@@ -162,27 +162,46 @@
         <Filename Value="McpLoggingOptions.pas"/>
         <UnitName Value="McpLoggingOptions"/>
       </Item36>
+      <Item37>
+        <Filename Value="McpMarkdown.pas"/>
+        <UnitName Value="McpMarkdown"/>
+      </Item37>
+      <Item38>
+        <Filename Value="McpImageInfo.pas"/>
+        <UnitName Value="McpImageInfo"/>
+      </Item38>
+      <Item39>
+        <Filename Value="McpMarkdownView.pas"/>
+        <UnitName Value="McpMarkdownView"/>
+      </Item39>
+      <Item40>
+        <Filename Value="McpToolsMarkdown.pas"/>
+        <UnitName Value="McpToolsMarkdown"/>
+      </Item40>
     </Files>
     <CompatibilityMode Value="True"/>
-    <RequiredPkgs Count="6">
+    <RequiredPkgs Count="7">
       <Item1>
-        <PackageName Value="jcfbase"/>
+        <PackageName Value="TurboPowerIPro"/>
       </Item1>
       <Item2>
-        <PackageName Value="SynEdit"/>
+        <PackageName Value="jcfbase"/>
       </Item2>
       <Item3>
-        <PackageName Value="IDEIntf"/>
+        <PackageName Value="SynEdit"/>
       </Item3>
       <Item4>
-        <PackageName Value="FCL"/>
+        <PackageName Value="IDEIntf"/>
       </Item4>
       <Item5>
-        <PackageName Value="CodeTools"/>
+        <PackageName Value="FCL"/>
       </Item5>
       <Item6>
-        <PackageName Value="IdeDebugger"/>
+        <PackageName Value="CodeTools"/>
       </Item6>
+      <Item7>
+        <PackageName Value="IdeDebugger"/>
+      </Item7>
     </RequiredPkgs>
     <UsageOptions>
       <UnitPath Value="$(PkgOutDir)"/>

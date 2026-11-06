@@ -54,12 +54,54 @@ type
     procedure TestHugeLine;
     procedure TestControlCharacters;
     procedure TestScheme;
+    procedure TestTextSize;
+  end;
+
+  TTestImageInfo = class(TTestCase)
+  published
+    procedure TestPng;
+    procedure TestGif;
+    procedure TestBmp;
+    procedure TestJpeg;
+    procedure TestJpegWithoutFrame;
+    procedure TestNotPictures;
+    procedure TestDeclaredKind;
+    procedure TestTooManyPixels;
+    procedure TestImpossibleSizes;
   end;
 
 implementation
 
 uses
-  McpMarkdown;
+  McpMarkdown, McpImageInfo;
+
+function Be32(V: LongWord): string;
+begin
+  Result := Chr(V shr 24) + Chr((V shr 16) and 255) + Chr((V shr 8) and 255) + Chr(V and 255);
+end;
+
+function Le16(V: Integer): string;
+begin
+  Result := Chr(V and 255) + Chr((V shr 8) and 255);
+end;
+
+function Le32(V: LongWord): string;
+begin
+  Result := Chr(V and 255) + Chr((V shr 8) and 255) + Chr((V shr 16) and 255) + Chr(V shr 24);
+end;
+
+function PngOf(W, H: LongWord): string;
+begin
+  Result := #$89'PNG'#13#10#26#10 + Be32(13) + 'IHDR' + Be32(W) + Be32(H) + #8#6#0#0#0;
+end;
+
+function JpegOf(W, H: Integer): string;
+begin
+  { SOI, an APP0 segment of 16 bytes, then SOF0: length 17, precision, height, width }
+  Result := #$FF#$D8 + #$FF#$E0 + #0#16 + StringOfChar('J', 14) +
+            #$FF#$C0 + #0#17#8 + Chr(H shr 8) + Chr(H and 255) + Chr(W shr 8) + Chr(W and 255) +
+            #3#1#$22#0#2#$11#1#3#$11#1;
+end;
 
 function TTestMarkdown.H(const AMd: string; AImages: TStrings): string;
 var
@@ -496,7 +538,132 @@ begin
   AssertEquals('javascript', MdUrlScheme('javascript:alert(1)'));
 end;
 
+procedure TTestMarkdown.TestTextSize;
+var
+  Pic : string;
+begin
+  AssertEquals(0, MdTextSize(''));
+  AssertEquals(5, MdTextSize('hello'));
+  Pic := StringOfChar('A', 5000);
+  { the payload does not count, the rest of the line does }
+  AssertEquals(Length('![p](data:image/png;base64,') + Length(') text'),
+    MdTextSize('![p](data:image/png;base64,' + Pic + ') text'));
+  { not an image URI: counted in full }
+  AssertEquals(Length('data:text/plain;base64,' + Pic), MdTextSize('data:text/plain;base64,' + Pic));
+  { no payload }
+  AssertEquals(Length('x data:image/png;base64,'), MdTextSize('x data:image/png;base64,'));
+  { two pictures }
+  AssertEquals(2 * Length('![p](data:image/gif;base64,)'),
+    MdTextSize('![p](data:image/gif;base64,' + Pic + ')![p](data:image/gif;base64,' + Pic + ')'));
+end;
+
+procedure TTestImageInfo.TestPng;
+var
+  K : string;
+  W, H : Integer;
+begin
+  AssertTrue(McpImageHeader(PngOf(160, 80), K, W, H));
+  AssertEquals('png', K);
+  AssertEquals(160, W);
+  AssertEquals(80, H);
+end;
+
+procedure TTestImageInfo.TestGif;
+var
+  K : string;
+  W, H : Integer;
+begin
+  AssertTrue(McpImageHeader('GIF89a' + Le16(300) + Le16(200) + #0#0#0, K, W, H));
+  AssertEquals('gif', K);
+  AssertEquals(300, W);
+  AssertEquals(200, H);
+end;
+
+procedure TTestImageInfo.TestBmp;
+var
+  K : string;
+  W, H : Integer;
+  Hdr : string;
+begin
+  Hdr := 'BM' + Le32(100) + Le32(0) + Le32(54) + Le32(40) + Le32(64) + Le32(48) + #1#0#24#0;
+  AssertTrue(McpImageHeader(Hdr, K, W, H));
+  AssertEquals('bmp', K);
+  AssertEquals(64, W);
+  AssertEquals(48, H);
+  { top-down: the height is negative }
+  Hdr := 'BM' + Le32(100) + Le32(0) + Le32(54) + Le32(40) + Le32(64) + Le32(LongWord(-48)) + #1#0#24#0;
+  AssertTrue(McpImageHeader(Hdr, K, W, H));
+  AssertEquals(48, H);
+end;
+
+procedure TTestImageInfo.TestJpeg;
+var
+  K : string;
+  W, H : Integer;
+begin
+  AssertTrue(McpImageHeader(JpegOf(640, 480), K, W, H));
+  AssertEquals('jpeg', K);
+  AssertEquals(640, W);
+  AssertEquals(480, H);
+end;
+
+procedure TTestImageInfo.TestJpegWithoutFrame;
+var
+  K : string;
+  W, H : Integer;
+begin
+  { cut off before the frame header, and a segment length that points nowhere }
+  AssertFalse(McpImageHeader(#$FF#$D8#$FF#$E0#0#16 + StringOfChar('J', 14), K, W, H));
+  AssertFalse(McpImageHeader(#$FF#$D8#$FF#$E0#0#1 + StringOfChar('J', 14), K, W, H));
+  AssertFalse(McpImageHeader(#$FF#$D8 + StringOfChar('x', 20), K, W, H));
+end;
+
+procedure TTestImageInfo.TestNotPictures;
+var
+  K : string;
+  W, H : Integer;
+begin
+  AssertFalse(McpImageHeader('', K, W, H));
+  AssertFalse(McpImageHeader('<svg xmlns="http://www.w3.org/2000/svg"/>', K, W, H));
+  AssertFalse(McpImageHeader('MZ' + StringOfChar(#0, 40), K, W, H));
+  AssertFalse(McpImageHeader(#$89'PNG'#13#10#26#10, K, W, H));
+  { a PNG signature without an IHDR chunk }
+  AssertFalse(McpImageHeader(#$89'PNG'#13#10#26#10 + Be32(13) + 'IDAT' + Be32(1) + Be32(1), K, W, H));
+end;
+
+procedure TTestImageInfo.TestDeclaredKind;
+var
+  K, Why : string;
+begin
+  AssertTrue(McpImageAcceptable(PngOf(10, 10), 'png', K, Why));
+  AssertTrue(McpImageAcceptable(PngOf(10, 10), '', K, Why));
+  AssertFalse(McpImageAcceptable(PngOf(10, 10), 'gif', K, Why));
+  AssertTrue(Why <> '');
+  AssertFalse(McpImageAcceptable('plain text, long enough', 'png', K, Why));
+end;
+
+procedure TTestImageInfo.TestTooManyPixels;
+var
+  K, Why : string;
+begin
+  AssertTrue(McpImageAcceptable(PngOf(4000, 4000), 'png', K, Why));      { 16 MP exactly }
+  AssertFalse(McpImageAcceptable(PngOf(4001, 4000), 'png', K, Why));
+  AssertFalse(McpImageAcceptable(PngOf(60000, 60000), 'png', K, Why));
+end;
+
+procedure TTestImageInfo.TestImpossibleSizes;
+var
+  K : string;
+  W, H : Integer;
+begin
+  AssertFalse(McpImageHeader(PngOf(0, 10), K, W, H));
+  AssertFalse(McpImageHeader(PngOf(10, 0), K, W, H));
+  AssertFalse(McpImageHeader(PngOf($FFFFFFFF, 10), K, W, H));
+  AssertFalse(McpImageHeader(PngOf(200000, 10), K, W, H));
+end;
+
 initialization
   RegisterTest(TTestMarkdown);
+  RegisterTest(TTestImageInfo);
 
 end.

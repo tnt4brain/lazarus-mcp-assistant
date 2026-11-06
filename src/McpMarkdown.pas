@@ -39,6 +39,10 @@ type
 function MdEscape(const S: string): string;
 function MdUrlScheme(const AUrl: string): string;
 
+{ The length of a document less the Base64 payload of its data:image URIs, which have their
+  own limit where a picture is decoded: the size a limit on "text" applies to. }
+function MdTextSize(const AMarkdown: string): Integer;
+
 implementation
 
 const
@@ -80,6 +84,37 @@ begin
     Inc(I);
   if (I <= Length(AUrl)) and (AUrl[I] = ':') and (I > 2) then
     Result := LowerCase(Copy(AUrl, 1, I - 1));
+end;
+
+function MdTextSize(const AMarkdown: string): Integer;
+var
+  P, Q, E, N : Integer;
+begin
+  N := Length(AMarkdown);
+  Result := N;
+  P := 1;
+  while P <= N - 11 do
+  begin
+    if (AMarkdown[P] in ['d', 'D']) and (CompareText(Copy(AMarkdown, P, 11), 'data:image/') = 0) then
+    begin
+      Q := P + 11;
+      E := Q;
+      while (E <= N) and (E < Q + 30) and (AMarkdown[E] <> ',') and (AMarkdown[E] > ' ') do
+        Inc(E);
+      if (E <= N) and (AMarkdown[E] = ',') and
+         (Pos(';base64', LowerCase(Copy(AMarkdown, Q, E - Q))) > 0) then
+      begin
+        Inc(E);
+        Q := E;
+        while (E <= N) and (AMarkdown[E] in ['A'..'Z', 'a'..'z', '0'..'9', '+', '/', '=']) do
+          Inc(E);
+        Dec(Result, E - Q);
+        P := E;
+        Continue;
+      end;
+    end;
+    Inc(P);
+  end;
 end;
 
 function IsSafeHttp(const AUrl: string): Boolean;

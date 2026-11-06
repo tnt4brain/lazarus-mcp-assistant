@@ -1,6 +1,6 @@
 # ADR-024 — `ide_show_markdown`: show a Markdown document to the user in an IDE window
 
-**Status:** Proposed  
+**Status:** Accepted and implemented (2026-11-07, v1.4.0)  
 **Date:** 2026-11-06
 
 ## Context
@@ -85,10 +85,17 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
   to stay silent is checked with the window, not assumed.
 - The tool shows what the model sends; a misleading document is possible, as in the console. Links
   need a click and show their target.
-- Open for part 2, to be tried before it is built: which image formats IPro decodes (PNG, JPEG,
-  GIF, BMP expected), how the handler hands a picture over, what a placeholder looks like, and
-  whether the HTTP server accepts a request body big enough for a 4 MB picture (Base64 is a third
-  larger); the body limit may need raising for this tool.
+- Found while building the images part: the handler hands IPro a `TPicture` and IPro owns it;
+  a placeholder is a small bordered bitmap with the alt text; a handler that answers `nil`
+  blanks the page, so it never does. The viewer decodes PNG, JPEG, GIF and BMP with the LCL
+  classes after `McpImageInfo` has checked the magic number and the header size. The HTTP server
+  has no body limit of its own: a 5.7 MB request (a 4 MB picture in Base64) was accepted, so no
+  raise was needed. The text limit counts the document without the Base64 of `data:` images
+  (`MdTextSize`). A UNC image path is refused (Windows would log on to the named host). Link
+  hints come from IPro (`ShowHints`); a click reaches `OnHotClick`, which opens only `http(s)`.
+- The window is shown by the normal LCL `Show`, and the foreground is handed back to the window
+  that had it: calling `ShowWindow(SW_SHOWNOACTIVATE)` alone left LCL thinking the form hidden,
+  and the page stayed blank.
 - Tests: the converter (headings, lists, tables, fences, escaping, images by path kind, hostile
   input such as `<script>` and `javascript:`) and the tool's schema and limits through the HTTP
   harness. The window needs a manual look on Windows.

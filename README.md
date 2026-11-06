@@ -239,6 +239,7 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 | `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
 | `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s |
 | `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML; `suite` runs one class or test, `env` sets environment variables for the run (for example `MCP_DEBUG_TESTS`) |
+| `ide_show_markdown` | Show a Markdown document to the user in an IDE window (tabs, without taking the focus), rendered by `TIpHtmlPanel`: headings, lists, tables, code, http(s) links, and images from a project-relative path or a Base64 `data:` URI. Display only; returns `{shown, tab}`; `tab` replaces that document ([ADR-024](docs/adr/0024-show-markdown-tool.md)) |
 
 ### Git — `git_*`
 
