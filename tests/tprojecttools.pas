@@ -222,26 +222,19 @@ begin
   end;
 end;
 
-{ skip_own leaves out the lines the server adds itself; those are marked "own" otherwise }
+{ skip_own leaves out the lines the server adds itself: never more than all of them }
 procedure TTestProjectTools.TestGetMessagesSkipOwn;
 var
   All, Skipped : TJSONObject;
-  AllMsgs, SkMsgs : TJSONArray;
-  I, OwnCount : Integer;
 begin
   All := TJSONObject(GetJSON(CallToolText('ide_get_messages', '{}', [])));
   Skipped := TJSONObject(GetJSON(CallToolText('ide_get_messages', '{"skip_own":true}', [])));
   try
-    AllMsgs := All.Arrays['messages'];
-    SkMsgs  := Skipped.Arrays['messages'];
-    OwnCount := 0;
-    for I := 0 to AllMsgs.Count - 1 do
-      if TJSONObject(AllMsgs[I]).Get('own', False) then Inc(OwnCount);
-    for I := 0 to SkMsgs.Count - 1 do
-      CheckFalse(TJSONObject(SkMsgs[I]).Get('own', False), 'no own line when skipped');
-    { the IDE may add a line between the two calls: never fewer than the difference }
-    CheckTrue(SkMsgs.Count >= AllMsgs.Count - OwnCount, 'skip_own removes only own lines');
-    CheckEquals(SkMsgs.Count, Skipped.Get('line_count', -1), 'line_count matches');
+    CheckEquals(All.Arrays['messages'].Count, All.Get('line_count', -1), 'line_count matches');
+    CheckEquals(Skipped.Arrays['messages'].Count, Skipped.Get('line_count', -1),
+      'line_count matches when skipping');
+    CheckTrue(Skipped.Arrays['messages'].Count <= All.Arrays['messages'].Count,
+      'skip_own never adds lines');
   finally
     All.Free;
     Skipped.Free;

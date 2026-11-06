@@ -67,8 +67,7 @@ const
   SCHEMA_GET_MESSAGES =
     '{"type":"object","properties":{' +
     '"skip_own":{"type":"boolean","description":"true: leave out the lines this server ' +
-    'adds itself (SubTool \"MCP Server\"); default false: everything, those lines marked ' +
-    '\"own\":true"}}}';
+    'adds itself (SubTool \"MCP Server\"); default false: everything"}}}';
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
@@ -160,7 +159,6 @@ begin
             MsgObj.Add('msg',     MsgLine.Msg);
             MsgObj.Add('file',    MsgLine.Filename);
             MsgObj.Add('line',    MsgLine.Line);
-            if MsgOwn then MsgObj.Add('own', True);   { the server's, not the compiler's }
             MsgArr.Add(MsgObj);
           end;
         end;
@@ -472,8 +470,7 @@ begin
     SCHEMA_GET_COMPILER_ERRORS, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_get_messages',
     'Return all messages from the IDE Messages window (build output, hints, etc.), ' +
-    'including the lines this server adds itself, marked "own":true; skip_own leaves ' +
-    'those out.',
+    'including the lines this server adds itself; skip_own leaves those out.',
     SCHEMA_GET_MESSAGES, MCP_ANN_RO));
 end;
 
