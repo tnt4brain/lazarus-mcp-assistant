@@ -115,4 +115,36 @@ argument that can hold a secret, hashes comparable only within one log format. K
 calls, not the session, so it survives #5. Later: a Messages-pane view; a command bundling
 both logs and the versions for an issue.
 
+## Amendment 1 — a report bundle (proposed, 2026-11-06)
+
+**Status:** Proposed
+
+A bug report needs the same few facts every time: versions, settings, packages, the last
+lines of the three logs. People paste them by hand and forget half. One command collects
+them into a single Markdown file.
+
+1. **Triggers:** the tool `ide_report` and a menu item Tools > MCP Assistant > Write report.
+   Both write the same file; the tool returns its path, the menu item shows it in a message.
+2. **Output:** `mcp-report-<UTC timestamp>.md` in the config folder, never overwritten; the
+   three newest are kept. Nothing is sent anywhere.
+3. **Contents:**
+   - plugin version and git hash, log format, Lazarus, FPC, OS and CPU, UTC offset, protocol
+     revisions the server speaks;
+   - plugin settings that are safe to show (listen address and port, on/off switches); tokens
+     by name only, never the value;
+   - the active project's settings and the installed and project packages (what
+     `project_get_settings`, `package_list` and `project_list_packages` return), since a
+     missing or wrong package explains many reports;
+   - the last 200 lines of `mcp-tools.log`, `mcp-sessions.log` and `mcp-exceptions.log`, each
+     under its own heading; an absent or switched-off log says so.
+4. **Redaction:** the user's home directory becomes `~`; the user name elsewhere is not
+   searched for; secrets are not in the sources (hashes are kept out of settings, tokens by
+   name). Best effort, as in decision 4: the page says to read the file before posting it.
+5. **Size:** capped at 256 KB; log sections shrink first, newest lines kept, with a line
+   saying how many were cut.
+6. **Independent of the tool-call log:** works with it off, then that section says so.
+7. **Tests:** the builder is plain code over strings and a few records (no IDE): section
+   order, home-directory replacement, the cap, a missing log. The tool and menu item get one
+   live check each.
+
 Related: ADR-012, ADR-020, ADR-021; issues #5, #6.
