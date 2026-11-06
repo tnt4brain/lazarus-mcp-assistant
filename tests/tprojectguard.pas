@@ -34,6 +34,7 @@ begin
   { wait_for_restart polls it; refusing it would hang a restart into a
     no-project IDE }
   CheckFalse(McpToolNeedsProject('ide_ping'), 'ide_ping');
+  CheckFalse(McpToolNeedsProject('ide_report'), 'ide_report');
 end;
 
 procedure TTestProjectGuard.TestEverythingElseIsRefused;

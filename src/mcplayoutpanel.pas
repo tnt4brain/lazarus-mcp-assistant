@@ -101,6 +101,18 @@ begin
       'Claude Code and terminal settings: Tools > Options > MCP Assistant.');
 end;
 
+{ Called from the menu: the bug-report bundle (ADR-022, Amendment 1), as ide_report does. }
+procedure WriteMcpReport(Sender: TObject);
+var
+  Path, Err : string;
+begin
+  if McpWriteReport(Path, Err) then
+    ShowMessage('Report written to' + LineEnding + Path + LineEnding + LineEnding +
+                'Read it before you post it: paths and error texts can hold names.')
+  else
+    ShowMessage('Could not write the report: ' + Err);
+end;
+
 { Called from the menu: the options dialog with only our pages.  The filter
   must name the group: without one the IDE filters by the frame's
   SupportedOptionsClass, which is nil here, and the dialog came up empty. }
@@ -210,6 +222,9 @@ begin
     McpAllowInstallCmd.ShowAlwaysCheckable := True;
     McpSyncAllowInstallMenu;
     RegisterMcpOptionsPage;
+    RegisterIDEMenuCommand(
+      McpMenu, 'McpWriteReport', 'Write Report',
+      nil, @WriteMcpReport);
     RegisterIDEMenuSection(McpMenu, 'McpSep2');
     RegisterIDEMenuCommand(
       McpMenu, 'CopyMcpConfig', 'Copy Server Config to Clipboard',

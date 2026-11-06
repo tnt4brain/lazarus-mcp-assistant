@@ -95,6 +95,9 @@ procedure McpRegenerateServerToken;
 { Apply McpSettings.ToolCallLog to mcp-tools.log (ADR-022): on from the next call;
   switching it on writes a start record. }
 procedure McpApplyToolLogSetting;
+{ The report bundle (ADR-022, Amendment 1): gathers the text, writes a new file in the
+  config folder.  Main thread only: it calls the tools that read IDE state. }
+function McpWriteReport(out APath, AErr: string): Boolean;
 
 implementation
 
@@ -106,12 +109,45 @@ uses
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
   McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
-  McpTokens, McpToolLog, McpMessages, LCLVersion;
+  McpTokens, McpToolLog, McpMessages, McpReport, LCLVersion, DateUtils;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
   GAuthTokenId   : string;
   GAuthTokenName : string;
+
+var
+  { one line per finished tool call in the Messages window (ADR-022, Amendment 1) }
+  GToolPane : Boolean = False;
+
+type
+  { A line for the Messages window, made on an HTTP thread and added on the main one;
+    queued, not synchronized, so a busy main thread never holds a call back. }
+  TToolPaneLine = class
+    Urgency : TMessageLineUrgency;
+    Text    : string;
+    procedure AddAsync(Data: PtrInt);
+  end;
+
+procedure TToolPaneLine.AddAsync(Data: PtrInt);
+begin
+  try
+    McpAddMessage(Urgency, Text);
+  finally
+    Free;
+  end;
+end;
+
+procedure QueuePaneLine(const ATool: string; ADurationMs: Int64; ASuccess: Boolean;
+  const AError: string);
+var
+  L : TToolPaneLine;
+begin
+  L := TToolPaneLine.Create;
+  L.Text := McpToolPaneLine(ATool, ADurationMs, ASuccess, AError);
+  if ASuccess then L.Urgency := mluProgress else L.Urgency := mluImportant;
+  Application.QueueAsyncCall(@L.AddAsync, 0);
+end;
 
 function ClientTokenStore: TMcpTokenStore;
 begin
@@ -1169,36 +1205,41 @@ var
   ToolErr  : Boolean;
   ToolText : string;
   Returned : Boolean;
+  ToFile   : Boolean;
+  ToPane   : Boolean;
 begin
   Seq      := 0;
   ToolName := '';
   ToolErr  := True;
   ToolText := '';
   Returned := False;
-  if Assigned(Params) and McpToolLogEnabled then
-  begin
+  ToFile   := Assigned(Params) and McpToolLogEnabled;
+  ToPane   := Assigned(Params) and GToolPane;
+  if ToFile or ToPane then
     ToolName := Params.Get('name', '');
-    if ToolName <> '' then
-    begin
-      Caller := LogCaller(AClientId);
-      Print  := McpArgsPrint(TJSONObject(Params.Find('arguments', jtObject)));
-      Seq    := McpToolLogBegin(ToolName, Caller);
-    end;
+  if ToFile and (ToolName <> '') then
+  begin
+    Caller := LogCaller(AClientId);
+    Print  := McpArgsPrint(TJSONObject(Params.Find('arguments', jtObject)));
+    Seq    := McpToolLogBegin(ToolName, Caller);
   end;
   Started := GetTickCount64;
   try
     Result := HandleToolsCallCore(ID, Params, AClientId, ToolErr, ToolText);
     Returned := True;
   finally
-    if Seq <> 0 then
+    if (Seq <> 0) or (ToPane and (ToolName <> '')) then
     begin
       if not Returned then
       begin
         ToolErr  := True;
         ToolText := 'the call raised an exception';
       end;
-      McpToolLogEnd(Seq, ToolName, Caller, GetTickCount64 - Started, not ToolErr,
-                    ToolText, Print);
+      if Seq <> 0 then
+        McpToolLogEnd(Seq, ToolName, Caller, GetTickCount64 - Started, not ToolErr,
+                      ToolText, Print);
+      if ToPane and (ToolName <> '') then
+        QueuePaneLine(ToolName, GetTickCount64 - Started, not ToolErr, ToolText);
     end;
   end;
 end;
@@ -1517,11 +1558,166 @@ begin
   Was := McpToolLogEnabled;
   if Assigned(LazarusIDE) then
     McpToolLogSetDir(LazarusIDE.GetPrimaryConfigPath);
+  McpToolLogSetFile(McpSettings.ToolLogFile);
+  GToolPane := McpSettings.ToolLogPane;
   McpToolLogSetEnabled(McpSettings.ToolCallLog);
   if McpToolLogEnabled and not Was then
     McpToolLogStart(GetMcpVersion + ' [' + GetMcpGitHash + ']',
       'Lazarus ' + lcl_version, 'FPC ' + {$I %FPCVERSION%},
       {$I %FPCTARGETOS%} + '-' + {$I %FPCTARGETCPU%});
+end;
+
+{ What one of the read-only tools says, as formatted JSON; they run as the main thread
+  would run them for a client. }
+function ReportToolText(const AName: string): string;
+var
+  Ctx     : TMcpToolCall;
+  Handled : Boolean;
+  J       : TJSONData;
+begin
+  Ctx := Default(TMcpToolCall);
+  Ctx.Params := TJSONObject.Create;
+  try
+    try
+      McpDispatch(AName, Ctx, Handled);
+    except
+      on E: Exception do
+      begin
+        Result := 'failed: ' + E.ClassName + ': ' + E.Message;
+        Exit;
+      end;
+    end;
+    if not Handled then Exit('not available');
+    Result := Ctx.Result;
+    if not Ctx.Error then
+      try
+        J := GetJSON(Result);
+        try
+          Result := J.FormatJSON;
+        finally
+          J.Free;
+        end;
+      except
+        { not JSON: as it is }
+      end;
+  finally
+    Ctx.Params.Free;
+  end;
+end;
+
+function ReportUtcOffset: string;
+var
+  Minutes : Integer;
+  Sign    : string;
+begin
+  Minutes := Round((Now - LocalTimeToUniversal(Now)) * 1440);
+  if Minutes < 0 then Sign := '-' else Sign := '+';
+  Minutes := Abs(Minutes);
+  Result := Sign + Format('%.2d:%.2d', [Minutes div 60, Minutes mod 60]);
+end;
+
+function ReportLogPart(const AName, APath: string; AOn: Boolean): TMcpReportPart;
+var
+  Note, Text : string;
+begin
+  Text := McpReadTail(APath, MCP_REPORT_LOG_LINES, Note);
+  if Note = 'not present' then
+  begin
+    if AOn then Note := 'on, nothing written yet'
+    else Note := 'not present';
+  end;
+  if Note <> '' then Text := '(' + Note + ')';
+  Result := McpReportPart(AName + ' (last ' + IntToStr(MCP_REPORT_LOG_LINES) + ' lines)',
+    Text, True, True);
+end;
+
+function McpWriteReport(out APath, AErr: string): Boolean;
+var
+  Parts  : TMcpReportParts;
+  Cfg    : string;
+  Info, Sett, Toks : string;
+  TokItems : TMcpClientTokens;
+  I      : Integer;
+  Proj   : Boolean;
+  Text   : string;
+
+  procedure Add(const APart: TMcpReportPart);
+  begin
+    SetLength(Parts, Length(Parts) + 1);
+    Parts[High(Parts)] := APart;
+  end;
+
+  function YesNo(AValue: Boolean): string;
+  begin
+    if AValue then Result := 'yes' else Result := 'no';
+  end;
+
+begin
+  APath := '';
+  AErr  := '';
+  Result := False;
+  if not Assigned(LazarusIDE) or not Assigned(McpSettings) then
+  begin
+    AErr := 'The IDE is not ready.';
+    Exit;
+  end;
+  Cfg  := LazarusIDE.GetPrimaryConfigPath;
+  Proj := Assigned(LazarusIDE.ActiveProject);
+  SetLength(Parts, 0);
+
+  Info := '- plugin: ' + GetMcpVersion + ' [' + GetMcpGitHash + ']' + LineEnding +
+          '- tool-call log format: ' + IntToStr(MCP_TOOL_LOG_FORMAT) + LineEnding +
+          '- Lazarus: ' + lcl_version + LineEnding +
+          '- FPC: ' + {$I %FPCVERSION%} + LineEnding +
+          '- OS: ' + {$I %FPCTARGETOS%} + '-' + {$I %FPCTARGETCPU%} + LineEnding +
+          '- UTC offset: ' + ReportUtcOffset + LineEnding +
+          '- protocol revisions: ';
+  for I := Low(McpProtocolVersions) to High(McpProtocolVersions) do
+  begin
+    if I > Low(McpProtocolVersions) then Info := Info + ', ';
+    Info := Info + McpProtocolVersions[I];
+  end;
+  Info := Info + LineEnding + '- config folder: ' + Cfg;
+  Add(McpReportPart('Versions', Info, False, False));
+
+  Toks := '';
+  TokItems := McpSettings.ClientTokens.Items;
+  for I := 0 to High(TokItems) do
+  begin
+    if Toks <> '' then Toks := Toks + ', ';
+    Toks := Toks + TokItems[I].Name;
+  end;
+  if Toks = '' then Toks := '(none)';
+  Sett := '- listen address: ' + McpSettings.ListenAddress + LineEnding +
+          '- port: ' + IntToStr(McpSettings.ServerPort) + LineEnding +
+          '- assistants may install packages: ' + YesNo(McpSettings.AllowPackageInstall) + LineEnding +
+          '- tool-call log: ' + YesNo(McpSettings.ToolCallLog) + LineEnding +
+          '- git: ' + IfThen(McpSettings.GitPath = '', '(on PATH)', McpSettings.GitPath) + LineEnding +
+          '- client tokens, by name: ' + Toks + LineEnding +
+          '- tokens themselves: never in a report';
+  Add(McpReportPart('Plugin settings', Sett, False, False));
+
+  if Proj then
+  begin
+    Add(McpReportPart('Project settings (project_get_settings)',
+      ReportToolText('project_get_settings'), True, False));
+    Add(McpReportPart('Packages the project uses (project_list_packages)',
+      ReportToolText('project_list_packages'), True, False));
+    Add(McpReportPart('Packages known to the IDE (package_list)',
+      ReportToolText('package_list'), True, False));
+  end
+  else
+    Add(McpReportPart('Project and packages', 'No project is open.', False, False));
+
+  Add(ReportLogPart('mcp-tools.log', McpToolLogPath, McpToolLogEnabled));
+  Add(ReportLogPart('mcp-sessions.log', McpSessionLogPath, True));
+  Add(ReportLogPart('mcp-exceptions.log', IncludeTrailingPathDelimiter(Cfg) + 'mcp-exceptions.log', True));
+
+  Text := McpComposeReport(Parts,
+    'Written ' + FormatDateTime('yyyy-mm-dd"T"hh:nn:ss"Z"', LocalTimeToUniversal(Now)),
+    MCP_REPORT_MAX_BYTES);
+  Text := McpRedactHome(Text, GetUserDir);
+  Result := McpWriteReportFile(Cfg, Text, LocalTimeToUniversal(Now), APath, AErr);
 end;
 
 procedure InitializeMcpServer;
@@ -1533,6 +1729,7 @@ var
   GitHash : string;
   Addr    : string;
 begin
+  McpReportWriter := @McpWriteReport;
   if IsServerRunning then Exit;
 
   { the address from the settings; anything that is not an IPv4 address means the

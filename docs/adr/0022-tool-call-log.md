@@ -112,7 +112,60 @@ Two appends per call are far below the limit; the worst single append is not.
 A report can carry the last calls, runs can be compared, and a hang leaves its `begin` line.
 Costs: two small appends per call when on, redaction rules to maintain when a tool gains an
 argument that can hold a secret, hashes comparable only within one log format. Keyed on tool
-calls, not the session, so it survives #5. Later: a Messages-pane view; a command bundling
-both logs and the versions for an issue.
+calls, not the session, so it survives #5. The Messages-pane view and the report bundle came
+with Amendments 1 and 2.
+
+## Amendment 1 — a report bundle (accepted and implemented, 2026-11-06)
+
+**Status:** Accepted and implemented
+
+A bug report needs the same few facts every time: versions, settings, packages, the last
+lines of the three logs. People paste them by hand and forget half. One command collects
+them into a single Markdown file.
+
+1. **Triggers:** the tool `ide_report` and a menu item Tools > MCP Assistant > Write report.
+   Both write the same file; the tool returns its path, the menu item shows it in a message.
+2. **Output:** `mcp-report-<UTC timestamp>.md` in the config folder, never overwritten; the
+   three newest are kept. Nothing is sent anywhere.
+3. **Contents:**
+   - plugin version and git hash, log format, Lazarus, FPC, OS and CPU, UTC offset, protocol
+     revisions the server speaks;
+   - plugin settings that are safe to show (listen address and port, on/off switches); tokens
+     by name only, never the value;
+   - the active project's settings and the installed and project packages (what
+     `project_get_settings`, `package_list` and `project_list_packages` return), since a
+     missing or wrong package explains many reports;
+   - the last 200 lines of `mcp-tools.log`, `mcp-sessions.log` and `mcp-exceptions.log`, each
+     under its own heading; an absent or switched-off log says so.
+4. **Redaction:** the user's home directory becomes `~`; the user name elsewhere is not
+   searched for; secrets are not in the sources (hashes are kept out of settings, tokens by
+   name). Best effort, as in decision 4: the page says to read the file before posting it.
+5. **Size:** capped at 256 KB; log sections shrink first, newest lines kept, with a line
+   saying how many were cut.
+6. **Independent of the tool-call log:** works with it off, then that section says so.
+7. **Tests:** the builder is plain code over strings and a few records (no IDE): section
+   order, home-directory replacement, the cap, a missing log. The tool and menu item get one
+   live check each.
+
+## Amendment 2 — a Logging page and a live view of calls (accepted and implemented, 2026-11-06)
+
+**Status:** Accepted and implemented
+
+1. **Page:** Tools > Options > MCP Assistant > Logging, replacing the Diagnostics group on
+   General, with three settings: log tool calls to a file, the file's path (empty: the default
+   `mcp-tools.log` in the config folder; rotated copies sit next to it), and show calls in the
+   Messages window.
+2. **Live view:** with the third setting on, each finished call adds one line to the
+   `MCP Server` view: `tool  <ms> ms`, urgency progress; a failed call adds `  failed: <error>`
+   (one line, cut at 120 characters), urgency important. At the end of the call, not the start:
+   the file keeps the `begin` line for a call that never ends.
+3. **Independent:** the file and the view work separately; either, both or neither.
+4. **Threading:** the line is made on the HTTP thread and added on the main thread through
+   `Application.QueueAsyncCall`, so a busy main thread never holds a call back. The lines carry
+   the `MCP Server` SubTool (`skip_own` on `ide_get_messages` leaves them out).
+5. **Settings keys:** `Logging/ToolCallLog`, `Logging/ToolCallLogFile`, `Logging/ToolCallPane`;
+   the old `Tools/ToolCallLog` is read once and removed on the next save.
+6. **Dropped:** recording arguments and results ("replay") is not planned; the rejected
+   alternative above stays as the reason.
 
 Related: ADR-012, ADR-020, ADR-021; issues #5, #6.
