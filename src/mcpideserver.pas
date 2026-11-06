@@ -1695,6 +1695,9 @@ begin
           '- port: ' + IntToStr(McpSettings.ServerPort) + LineEnding +
           '- assistants may install packages: ' + YesNo(McpSettings.AllowPackageInstall) + LineEnding +
           '- tool-call log: ' + YesNo(McpSettings.ToolCallLog) + LineEnding +
+          '- tool-call log file: ' + IfThen(McpSettings.ToolLogFile = '',
+                                      '(default, in the config folder)', McpSettings.ToolLogFile) + LineEnding +
+          '- tool calls in the Messages window: ' + YesNo(McpSettings.ToolLogPane) + LineEnding +
           '- git: ' + IfThen(McpSettings.GitPath = '', '(on PATH)', McpSettings.GitPath) + LineEnding +
           '- client tokens, by name: ' + Toks + LineEnding +
           '- tokens themselves: never in a report';
