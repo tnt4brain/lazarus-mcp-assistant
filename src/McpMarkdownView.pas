@@ -28,7 +28,6 @@ function McpMarkdownShow(const AMarkdown, ATitle, ATab, ABaseDir: string;
 implementation
 
 uses
-  {$IFDEF WINDOWS} Windows, {$ENDIF}
   Forms, Controls, Graphics, ComCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
   LCLIntf, LazFileUtils, base64,
   McpMarkdown, McpImageInfo;
@@ -327,9 +326,7 @@ function McpMarkdownShow(const AMarkdown, ATitle, ATab, ABaseDir: string;
 var
   Tab : TMdTab;
   Title : string;
-  {$IFDEF WINDOWS}
-  Prev : HWND;
-  {$ENDIF}
+  Prev : TCustomForm;
 begin
   Result := False;
   ATabId := '';
@@ -347,15 +344,11 @@ begin
     { shown, not activated: the user keeps typing where they were (ADR-011) }
     if not GForm.Visible then
     begin
-      {$IFDEF WINDOWS}
-      { LCL must see the form as visible, or its children are never painted; so show it the
-        normal way and hand the foreground back to the window that had it }
-      Prev := GetForegroundWindow;
+      { Show activates the form; give the focus back to the IDE form that had it }
+      Prev := Screen.ActiveCustomForm;
       GForm.Show;
-      if (Prev <> 0) and (Prev <> GForm.Handle) then SetForegroundWindow(Prev);
-      {$ELSE}
-      GForm.Show;
-      {$ENDIF}
+      if Assigned(Prev) and (Prev <> GForm) and Prev.Visible and Prev.CanFocus then
+        Prev.SetFocus;
     end;
     ATabId := Tab.Id;
     Result := True;

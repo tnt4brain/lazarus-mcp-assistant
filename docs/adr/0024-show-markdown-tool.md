@@ -93,9 +93,10 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
   raise was needed. The text limit counts the document without the Base64 of `data:` images
   (`MdTextSize`). A UNC image path is refused (Windows would log on to the named host). Link
   hints come from IPro (`ShowHints`); a click reaches `OnHotClick`, which opens only `http(s)`.
-- The window is shown by the normal LCL `Show`, and the foreground is handed back to the window
-  that had it: calling `ShowWindow(SW_SHOWNOACTIVATE)` alone left LCL thinking the form hidden,
-  and the page stayed blank.
+- The window is shown by the plain LCL `Show`, with no platform code: the active IDE form is
+  remembered and focused again afterwards. If another program had the focus (a terminal), LCL
+  cannot know it, and the window may take the focus then. (`ShowWindow(SW_SHOWNOACTIVATE)`
+  alone was tried: LCL then thought the form hidden and the page stayed blank.)
 - Tests: the converter (headings, lists, tables, fences, escaping, images by path kind, hostile
   input such as `<script>` and `javascript:`) and the tool's schema and limits through the HTTP
   harness. The window needs a manual look on Windows.
