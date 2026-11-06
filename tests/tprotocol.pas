@@ -119,9 +119,12 @@ procedure TTestProtocol.TestInitializeNegotiatesVersion;
 
 begin
   CheckEquals('2024-11-05', Negotiated('2024-11-05'), 'oldest kept');
-  CheckEquals('2025-06-18', Negotiated('2025-06-18'), 'latest kept');
-  CheckEquals('2025-06-18', Negotiated('2099-01-01'), 'unknown: our latest');
-  CheckEquals('2025-06-18', Negotiated(''), 'none: our latest');
+  CheckEquals('2025-03-26', Negotiated('2025-03-26'), 'middle kept');
+  CheckEquals('2025-06-18', Negotiated('2025-06-18'), 'previous kept');
+  CheckEquals('2025-11-25', Negotiated('2025-11-25'), 'latest kept');
+  CheckEquals('2025-11-25', Negotiated('2026-07-28'), 'a revision we do not speak: our latest');
+  CheckEquals('2025-11-25', Negotiated('2099-01-01'), 'unknown: our latest');
+  CheckEquals('2025-11-25', Negotiated(''), 'none: our latest');
 end;
 
 { The system prompt reaches every client as the server's instructions }
