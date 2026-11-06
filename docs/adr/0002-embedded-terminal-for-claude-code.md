@@ -58,15 +58,9 @@ unmaintainable.
   before shipping: colors (SGR 0/1/3x/4x/9x), cursor movement (CUP/CUU/CUD/
   CUF/CUB), erase (ED/EL), and Unicode box-drawing characters.
 
-## Amendment 1: choosing the Windows terminal (issue #8)
+## Amendment 1 — the cheap alternative (2026-11-06)
 
-Still no embedded terminal.  On Windows the options page now has a Terminal
-choice: Default (claude.exe in a new console, as before), Command Prompt,
-PowerShell (pwsh when installed), Windows Terminal, Git Bash and Custom.  Only
-installed hosts are listed.  Every choice but Default runs a generated launch
-script (`.cmd`, `.ps1` or `.sh` with `/c/...` paths), so no command line is
-nested through `cmd /k`, `-Command` or `wt`.  Custom is an executable plus an
-argument template with `{cmd}`, `{dir}` and `{script}`.  The choice and the
-custom command are options-page settings only; no MCP tool reads or writes
-them, because the custom one is an arbitrary executable started from a menu.
+Still no embedded terminal.  Letting the user choose the terminal Claude Code
+starts in on Windows (Command Prompt, PowerShell, Windows Terminal, Git Bash,
+custom) is ADR-023.
 Linux and macOS keep `TerminalCommand`.
