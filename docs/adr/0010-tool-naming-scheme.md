@@ -56,6 +56,7 @@ lists the IDE's ToDo view of the project.
 | `delete_` | destroy a thing that lives in the form or source (component, collection item) |
 | `create_` | make a standalone artifact (unit, form, project, event handler) |
 | `move_` | change a thing's position or parent |
+| `show_` | put something in front of the user, with nothing coming back (`ide_show_markdown`, ADR-024) |
 | bare verb | an action named the way the IDE names it (`debug_run`, `debug_step_over`, `editor_save`, `project_build`, `ide_rebuild`) |
 
 ### 3. Titles and annotations come from the same place

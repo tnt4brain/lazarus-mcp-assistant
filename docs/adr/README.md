@@ -28,3 +28,4 @@ ADR-007 was never assigned; no document is missing.
 | [0021](0021-named-client-tokens.md) | # ADR-021 — Named client tokens, stored as tagged hashes |
 | [0022](0022-tool-call-log.md) | # ADR-022 — A tool-call log (`mcp-tools.log`) as evidence for bug reports |
 | [0023](0023-windows-terminal-choice.md) | # ADR-023 — The terminal Claude Code starts in on Windows is a setting |
+| [0024](0024-show-markdown-tool.md) | # ADR-024 — `ide_show_markdown`: show a Markdown document to the user in an IDE window |
