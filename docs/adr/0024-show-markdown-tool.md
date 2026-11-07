@@ -30,11 +30,15 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
    `UMarkdownParser`, so that project can take it later (renaming the unit). Subset: ATX and
    setext headings, paragraphs, emphasis, strikethrough, inline code, fenced and indented code,
    nested lists, task lists, block quotes, GFM tables, links (inline and reference), rules,
-   hard breaks. From GitLab's flavour (GLFM, which is GFM plus extensions) only the cheap
-   ones: `> [!note]` alerts, `>>>` quotes, `<br>`. Not taken: footnotes, description lists,
-   inline diffs, front matter, emoji, maths, diagrams, references (`#123`, `@user`: no GitLab
-   behind them) and raw HTML such as `<details>`. An unknown construct becomes
-   escaped text, never an error. It emits only what the spike showed IPro renders:
+   hard breaks, entities, link titles, bare `http(s)` addresses. From GitLab's flavour (GLFM,
+   which is GFM plus extensions) the ones IPro can show: `> [!note]` alerts, `>>>` quotes,
+   footnotes, description lists, `{+ +}` / `{- -}` diffs, front matter (shown as code). Raw
+   HTML stays escaped, but for `<br>` and the paired `<kbd>`, `<sub>`, `<sup>` (only when the
+   closing tag is there). Not taken: emoji, colour chips, maths, diagrams, `[[_TOC_]]`, image
+   sizes, video, `<details>`, and GitLab references (`#123`, `@user`: no GitLab behind them).
+   It is a subset of CommonMark, not a conforming implementation. An unknown construct
+   becomes escaped text, never an error. Scans are bounded (a link's text 2000 characters, its
+   address 2200, a missing closer is looked for once), so a hostile line stays linear. It emits only what the spike showed IPro renders:
    `h1`-`h6`, `p`, `br`, `strong`, `em`, `del`, `tt`, `a`, `blockquote`, `ul`/`ol`/`li` (nested,
    also inside a quote), `table`/`tr`/`th`/`td` (`align`, `border`), `hr`, `div`, `span`, and
    `img` (local paths only, see 5; not yet tried in the spike). Two

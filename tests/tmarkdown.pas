@@ -61,6 +61,16 @@ type
     procedure TestLineBreakTag;
     procedure TestAlert;
     procedure TestMultilineQuote;
+    procedure TestEntities;
+    procedure TestLinkTitle;
+    procedure TestReferenceImage;
+    procedure TestBareUrl;
+    procedure TestPairedTags;
+    procedure TestFootnotes;
+    procedure TestDescriptionList;
+    procedure TestInlineDiff;
+    procedure TestFrontMatter;
+    procedure TestNewSyntaxIsLinear;
   end;
 
   TTestImageInfo = class(TTestCase)
@@ -321,7 +331,7 @@ var
 begin
   R := H('see [the *docs*](https://example.com/a?b=1&c=2) now');
   Has(R, '<a href="https://example.com/a?b=1&amp;c=2">the <em>docs</em></a>');
-  Has(H('[x](http://a.b "title")'), '<a href="http://a.b">x</a>');
+  Has(H('[x](http://a.b "title")'), '<a href="http://a.b" title="title">x</a>');
   Has(H('[x](<https://a.b/c d>)'), 'x');
 end;
 
@@ -599,8 +609,8 @@ var
 begin
   R := H('see [docs][d], [d] and [x][] now' + #10#10 + '[d]: https://example.com "t"' + #10 +
          '[X]: <http://a.b>');
-  Has(R, '<a href="https://example.com">docs</a>');
-  Has(R, '<a href="https://example.com">d</a>');
+  Has(R, '<a href="https://example.com" title="t">docs</a>');
+  Has(R, '<a href="https://example.com" title="t">d</a>');
   Has(R, '<a href="http://a.b">x</a>');
   HasNot(R, ']:');
   { an undefined label stays text }
@@ -656,6 +666,126 @@ begin
   { not closed: up to the end }
   Has(H('>>>' + #10 + 'open'), 'open');
   HasNot(H('>>>' + #10 + 'open'), '&gt;');
+end;
+
+procedure TTestMarkdown.TestEntities;
+begin
+  Has(H('a &amp; b'), 'a &amp; b');
+  Has(H('&copy; &#35; &#x41; &mdash;'), #$C2#$A9' # A '#$E2#$80#$94);
+  { a decoded "<" is text, never a tag; and no markup from "&#42;" }
+  Has(H('&lt;script&gt;'), '&lt;script&gt;');
+  HasNot(H('&#42;a&#42;'), '<em>');
+  { unknown, controls and a missing semicolon stay as typed }
+  Has(H('&bogus; &#0; &#1; &copy'), '&amp;bogus; &amp;#0; &amp;#1; &amp;copy');
+  { inside code nothing is decoded }
+  Has(H('`&amp;`'), '&amp;amp;');
+end;
+
+procedure TTestMarkdown.TestLinkTitle;
+begin
+  Has(H('[x](http://a.b "the title")'), '<a href="http://a.b" title="the title">x</a>');
+  Has(H('[x](http://a.b ''t'')'), 'title="t"');
+  Has(H('[r]' + #10#10 + '[r]: http://a.b (hint)'), 'title="hint"');
+  HasNot(H('[x](http://a.b)'), 'title=');
+end;
+
+procedure TTestMarkdown.TestReferenceImage;
+begin
+  Has(H('![pic][p]' + #10#10 + '[p]: images/a.png'), '<img src="images/a.png" alt="pic">');
+end;
+
+procedure TTestMarkdown.TestBareUrl;
+begin
+  Has(H('go to https://example.com/a_b?x=1&y=2.'), '<a href="https://example.com/a_b?x=1&amp;y=2">');
+  { trailing dot and a closing parenthesis are not part of it }
+  Has(H('(see http://a.b/c).'), '<a href="http://a.b/c">http://a.b/c</a>).');
+  Has(H('http://a.b/x_(y)'), '<a href="http://a.b/x_(y)">');
+  Has(H('**https://a.b**'), '<strong><a href="https://a.b">');
+  { not in a word, not inside a link, not other schemes }
+  HasNot(H('xhttp://a.b'), '<a ');
+  Has(H('[see http://a.b](http://c.d)'), '<a href="http://c.d">see http://a.b</a>');
+  HasNot(H('ftp://a.b/c'), '<a ');
+  HasNot(H('http://'), '<a ');
+end;
+
+procedure TTestMarkdown.TestPairedTags;
+begin
+  Has(H('press <kbd>Ctrl</kbd>+<KBD>C</KBD>'), 'press <kbd>Ctrl</kbd>+<kbd>C</kbd>');
+  Has(H('H<sub>2</sub>O and x<sup>2</sup>'), 'H<sub>2</sub>O and x<sup>2</sup>');
+  { a tag without its closing one stays text }
+  Has(H('a <sub>b'), 'a &lt;sub&gt;b');
+  HasNot(H('a <sub>b'), '<sub>');
+  { markup inside works; other tags stay escaped }
+  Has(H('<kbd>**x**</kbd>'), '<kbd><strong>x</strong></kbd>');
+  Has(H('<kbd><b>x</b></kbd>'), '<kbd>&lt;b&gt;x&lt;/b&gt;</kbd>');
+end;
+
+procedure TTestMarkdown.TestFootnotes;
+var
+  R : string;
+begin
+  R := H('One[^a] and two[^b] and one again[^a].' + #10#10 + '[^a]: First *note*.' + #10 +
+         '[^b]: Second.');
+  Has(R, 'One<sup>1</sup> and two<sup>2</sup> and one again<sup>1</sup>.');
+  Has(R, '<hr><ol><li>First <em>note</em>.</li><li>Second.</li></ol>');
+  HasNot(R, '[^a]:');
+  { an undefined one stays text; an unused definition shows nothing }
+  Has(H('x[^zz]'), 'x[^zz]');
+  HasNot(H('[^a]: unused'), '<ol>');
+  { a note that cites itself ends }
+  Has(H('x[^a]' + #10#10 + '[^a]: me[^a]'), '<li>me<sup>1</sup></li>');
+end;
+
+procedure TTestMarkdown.TestDescriptionList;
+var
+  R : string;
+begin
+  R := H('Term' + #10 + ': first' + #10 + ': second' + #10#10 + 'Other' + #10 + ': third' +
+         #10#10 + 'after');
+  Has(R, '<dl><dt><strong>Term</strong></dt><dd>first</dd><dd>second</dd>');
+  Has(R, '<dt><strong>Other</strong></dt><dd>third</dd></dl>');
+  Has(R, '<p>after</p>');
+  { a lone ": x" line is a paragraph }
+  HasNot(H(': x'), '<dl>');
+end;
+
+procedure TTestMarkdown.TestInlineDiff;
+begin
+  Has(H('a {+ added +} b'), 'a <font color="#198754"><u>added</u></font> b');
+  Has(H('a [- gone -] b'), 'a <font color="#DC3545"><del>gone</del></font> b');
+  { not closed: text }
+  Has(H('a {+ x'), 'a {+ x');
+  { a task box is not a diff }
+  Has(H('[+]'), '[+]');
+end;
+
+procedure TTestMarkdown.TestNewSyntaxIsLinear;
+var
+  I : Integer;
+  S : string;
+  T : QWord;
+begin
+  { many unclosed tags, brackets, entities and addresses on one line must not be quadratic }
+  S := '';
+  for I := 1 to 20000 do
+    S := S + '<sub>[^a]{+ &amp; [x][y] [[[ [x](u http://a.b ![i](';
+  T := GetTickCount64;
+  H(S);
+  AssertTrue('took ' + IntToStr(GetTickCount64 - T) + ' ms', GetTickCount64 - T < 3000);
+end;
+
+procedure TTestMarkdown.TestFrontMatter;
+var
+  R : string;
+begin
+  R := H('---' + #10 + 'title: A doc' + #10 + 'tags: [x]' + #10 + '---' + #10#10 + '# Head');
+  Has(R, '<tt>title:&nbsp;A&nbsp;doc</tt>');
+  Has(R, '<h1>Head</h1>');
+  HasNot(R, '<hr>');
+  { without a key it is a rule and text }
+  Has(H('---' + #10 + 'plain' + #10 + '---'), '<hr>');
+  { only at the very top }
+  HasNot(H('text' + #10 + '---' + #10 + 'a: b' + #10 + '---'), '<tt>a:');
 end;
 
 procedure TTestImageInfo.TestPng;

@@ -12,7 +12,7 @@ unit McpMarkdown;
 interface
 
 uses
-  Classes, SysUtils;
+  Classes, SysUtils, StrUtils;
 
 const
   MD_MAX_DEPTH  = 16;   { nesting of quotes, lists and emphasis }
@@ -39,8 +39,13 @@ type
     FImages : TStrings;
     FDepth  : Integer;
     FRefs   : TStringList;     { reference link definitions: 'label=url', label in lower case }
+    FNotes  : TStringList;     { footnote definitions: 'id=text', id in lower case }
+    FNoteOrder : TStringList;  { footnote ids in the order they are first used }
+    FNoAuto : Integer;         { above 0: no bare URLs (inside a link's text) }
     procedure CollectRefs(ALines: TStrings);
-    function RefLinkAt(const S: string; P: Integer; out AText, AUrl: string;
+    function NotesHtml: string;
+    function DefListHtml(ALines: TStrings; var I: Integer): string;
+    function RefLinkAt(const S: string; P: Integer; out AText, AUrl, ATitle: string;
       out NextP: Integer): Boolean;
     function QuoteOut(AInner: TStringList): string;
     function Inline(const S: string): string;
@@ -67,6 +72,8 @@ implementation
 
 const
   HardBreak = #1;
+
+function ParseTitle(const ARest: string): string; forward;
 
 function MdEscape(const S: string): string;
 var
@@ -393,13 +400,42 @@ begin
   Result := (LeadingSpaces(S) <= 3) and (Trim(S) = '>>>');
 end;
 
+{ YAML front matter ("---" ... "---" at the very top, with a "key:" line in it) is shown as a
+  code block, as GitLab shows it in a box, not read as a rule and a heading. }
+procedure FrontMatterToCode(ALines: TStrings);
+var
+  I, E : Integer;
+  HasKey : Boolean;
+begin
+  if (ALines.Count < 3) or (Trim(ALines[0]) <> '---') then Exit;
+  E := 0;
+  HasKey := False;
+  for I := 1 to ALines.Count - 1 do
+  begin
+    if I > 60 then Exit;
+    if Trim(ALines[I]) = '---' then begin E := I; Break; end;
+    if (not HasKey) and (Trim(ALines[I]) <> '') then
+      HasKey := (Pos(':', ALines[I]) > 1) and (LeadingSpaces(ALines[I]) = 0);
+  end;
+  if (E = 0) or not HasKey then Exit;
+  ALines[0] := '~~~~~~~~';
+  ALines[E] := '~~~~~~~~';
+end;
+
+{ ": definition" of a description list }
+function IsDefLine(const S: string): Boolean;
+begin
+  Result := (LeadingSpaces(S) <= 3) and (Copy(TrimLeft(S), 1, 2) = ': ');
+end;
+
 { [label]: url "title" }
-function ParseRefDef(const S: string; out ALabel, AUrl: string): Boolean;
+function ParseRefDef(const S: string; out ALabel, AUrl, ATitle: string): Boolean;
 var
   T, Rest : string;
   P, Q : Integer;
 begin
   Result := False;
+  ATitle := '';
   if LeadingSpaces(S) > 3 then Exit;
   T := Trim(S);
   if (Length(T) < 5) or (T[1] <> '[') then Exit;
@@ -427,7 +463,139 @@ begin
   Rest := Trim(Copy(T, Q + 1, MaxInt));
   { only a quoted title may follow: else it is ordinary text that starts with "[x]:" }
   if (Rest <> '') and not (Rest[1] in ['"', '''', '(']) then Exit;
+  ATitle := ParseTitle(Rest);
   Result := AUrl <> '';
+end;
+
+{ [^id]: text, one line.  The id has no spaces or brackets. }
+function ParseNoteDef(const S: string; out AId, AText: string): Boolean;
+var
+  T : string;
+  P, I : Integer;
+begin
+  Result := False;
+  if LeadingSpaces(S) > 3 then Exit;
+  T := Trim(S);
+  if (Length(T) < 6) or (Copy(T, 1, 2) <> '[^') then Exit;
+  P := Pos(']:', T);
+  if (P < 4) or (P > 42) then Exit;
+  AId := LowerCase(Copy(T, 3, P - 3));
+  for I := 1 to Length(AId) do
+    if (AId[I] <= ' ') or (AId[I] in ['[', ']', '=']) then Exit;
+  AText := Trim(Copy(T, P + 2, MaxInt));
+  Result := AText <> '';
+end;
+
+{ The text of an entity (&amp; &#35; &#x23;) as UTF-8, or '' when it is none we know. }
+function EntityText(const AName: string): string;
+const
+  Names : array[0..29] of string = ('amp', 'lt', 'gt', 'quot', 'apos', 'nbsp', 'copy', 'reg',
+    'trade', 'hellip', 'mdash', 'ndash', 'laquo', 'raquo', 'euro', 'larr', 'rarr', 'uarr',
+    'darr', 'bull', 'middot', 'times', 'divide', 'deg', 'plusmn', 'para', 'sect', 'pound',
+    'yen', 'cent');
+  Codes : array[0..29] of LongWord = (38, 60, 62, 34, 39, 160, 169, 174, 8482, 8230, 8212, 8211,
+    171, 187, 8364, 8592, 8594, 8593, 8595, 8226, 183, 215, 247, 176, 177, 182, 167, 163, 165,
+    162);
+var
+  Code : LongWord;
+  I, First, Base : Integer;
+  Hex : Boolean;
+begin
+  Result := '';
+  Code := 0;
+  if (AName <> '') and (AName[1] = '#') then
+  begin
+    Hex := (Length(AName) > 2) and (AName[2] in ['x', 'X']);
+    if Hex then begin First := 3; Base := 16; end else begin First := 2; Base := 10; end;
+    if (First > Length(AName)) or (Length(AName) - First + 1 > 7) then Exit;
+    for I := First to Length(AName) do
+    begin
+      if AName[I] in ['0'..'9'] then Code := Code * LongWord(Base) + LongWord(Ord(AName[I]) - 48)
+      else if Hex and (AName[I] in ['a'..'f']) then Code := Code * 16 + LongWord(Ord(AName[I]) - 87)
+      else if Hex and (AName[I] in ['A'..'F']) then Code := Code * 16 + LongWord(Ord(AName[I]) - 55)
+      else Exit;
+    end;
+  end
+  else
+  begin
+    for I := 0 to High(Names) do
+      if AName = Names[I] then Code := Codes[I];
+    if Code = 0 then Exit;
+  end;
+  { no controls, no surrogates, nothing past Unicode }
+  if (Code < 32) or ((Code >= $7F) and (Code < $A0)) or (Code > $10FFFF) or
+     ((Code >= $D800) and (Code <= $DFFF)) then Exit;
+  if Code < $80 then Result := Chr(Code)
+  else if Code < $800 then Result := Chr($C0 or (Code shr 6)) + Chr($80 or (Code and $3F))
+  else if Code < $10000 then
+    Result := Chr($E0 or (Code shr 12)) + Chr($80 or ((Code shr 6) and $3F)) + Chr($80 or (Code and $3F))
+  else
+    Result := Chr($F0 or (Code shr 18)) + Chr($80 or ((Code shr 12) and $3F)) +
+              Chr($80 or ((Code shr 6) and $3F)) + Chr($80 or (Code and $3F));
+end;
+
+{ Entities in a run of plain text become their characters (escaped again by the caller). }
+function DecodeEntities(const S: string): string;
+var
+  B : TStringBuilder;
+  I, J : Integer;
+  T : string;
+begin
+  if Pos('&', S) = 0 then Exit(S);
+  B := TStringBuilder.Create;
+  try
+    I := 1;
+    while I <= Length(S) do
+    begin
+      if S[I] = '&' then
+      begin
+        J := I + 1;
+        while (J <= Length(S)) and (J - I <= 9) and (S[J] <> ';') and (S[J] > ' ') and (S[J] <> '&') do
+          Inc(J);
+        if (J <= Length(S)) and (S[J] = ';') then
+        begin
+          T := EntityText(Copy(S, I + 1, J - I - 1));
+          if T <> '' then
+          begin
+            B.Append(T);
+            I := J + 1;
+            Continue;
+          end;
+        end;
+      end;
+      B.Append(S[I]);
+      Inc(I);
+    end;
+    Result := B.ToString;
+  finally
+    B.Free;
+  end;
+end;
+
+{ A bare http(s):// address in running text; ALen is its length.  Trailing punctuation and an
+  unmatched ")" are not part of it. }
+function BareUrlAt(const S: string; P: Integer; out ALen: Integer): Boolean;
+var
+  N, E, L, Open, Close, I : Integer;
+begin
+  Result := False;
+  ALen := 0;
+  N := Length(S);
+  if (P > 1) and (S[P - 1] in ['A'..'Z', 'a'..'z', '0'..'9']) then Exit;
+  if SameText(Copy(S, P, 7), 'http://') then L := 7
+  else if SameText(Copy(S, P, 8), 'https://') then L := 8
+  else Exit;
+  E := P + L;
+  while (E <= N) and (S[E] > ' ') and not (S[E] in ['<', '>']) do Inc(E);
+  while (E > P + L) and (S[E - 1] in ['.', ',', ':', ';', '!', '?', '"', '''', '*', '_', '~']) do
+    Dec(E);
+  Open := 0;
+  Close := 0;
+  for I := P to E - 1 do
+    if S[I] = '(' then Inc(Open) else if S[I] = ')' then Inc(Close);
+  if (Close > Open) and (S[E - 1] = ')') then Dec(E);
+  ALen := E - P;
+  Result := (ALen > L) and IsSafeHttp(Copy(S, P, ALen));
 end;
 
 { ── The converter ────────────────────────────────────────────────────────── }
@@ -445,7 +613,7 @@ var
   I, FLen : Integer;
   FCh : Char;
   InFence : Boolean;
-  L, U : string;
+  L, U, T : string;
 begin
   I := 0;
   InFence := False;
@@ -463,10 +631,16 @@ begin
       InFence := True;
       Inc(I);
     end
-    else if ParseRefDef(ALines[I], L, U) then
+    else if ParseRefDef(ALines[I], L, U, T) then
     begin
       if (FRefs.Count < MD_MAX_REFS) and (FRefs.IndexOfName(L) < 0) then
-        FRefs.Add(L + '=' + U);
+        FRefs.Add(L + '=' + U + #2 + T);        { the title follows the address }
+      ALines.Delete(I);
+    end
+    else if ParseNoteDef(ALines[I], L, U) then
+    begin
+      if (FNotes.Count < MD_MAX_REFS) and (FNotes.IndexOfName(L) < 0) then
+        FNotes.Add(L + '=' + U);
       ALines.Delete(I);
     end
     else
@@ -475,18 +649,19 @@ begin
 end;
 
 { [text][label], [text][] and [label] at S[P] = '[', when the label is defined }
-function TMarkdownHtml.RefLinkAt(const S: string; P: Integer; out AText, AUrl: string;
+function TMarkdownHtml.RefLinkAt(const S: string; P: Integer; out AText, AUrl, ATitle: string;
   out NextP: Integer): Boolean;
 var
   N, Q, R, Depth : Integer;
-  Lbl : string;
+  Lbl, V : string;
 begin
   Result := False;
+  ATitle := '';
   if (FRefs = nil) or (FRefs.Count = 0) then Exit;
   N := Length(S);
   Depth := 0;
   Q := P;
-  while Q <= N do
+  while (Q <= N) and (Q - P <= 2000) do       { a link's text is not longer than this }
   begin
     if S[Q] = '\' then begin Inc(Q, 2); Continue; end;
     if S[Q] = '[' then Inc(Depth)
@@ -497,7 +672,7 @@ begin
     end;
     Inc(Q);
   end;
-  if Q > N then Exit;
+  if (Q > N) or (Q - P > 2000) then Exit;
   AText := Copy(S, P + 1, Q - P - 1);
   Lbl := AText;
   NextP := Q + 1;
@@ -511,22 +686,95 @@ begin
   end;
   Q := FRefs.IndexOfName(LowerCase(Trim(Lbl)));
   if Q < 0 then Exit;
-  AUrl := FRefs.ValueFromIndex[Q];
+  V := FRefs.ValueFromIndex[Q];
+  R := Pos(#2, V);
+  AUrl := Copy(V, 1, R - 1);
+  ATitle := Copy(V, R + 1, MaxInt);
   Result := True;
 end;
 
+{ The footnotes used, as a numbered list under a rule, in the order they were first cited. }
+function TMarkdownHtml.NotesHtml: string;
+var
+  B : TStringBuilder;
+  I : Integer;
+begin
+  Result := '';
+  if FNoteOrder.Count = 0 then Exit;
+  B := TStringBuilder.Create;
+  try
+    B.Append('<hr><ol>');
+    I := 0;
+    while I < FNoteOrder.Count do         { the text of a note may cite another }
+    begin
+      B.Append('<li>').Append(Inline(FNotes.Values[FNoteOrder[I]])).Append('</li>');
+      Inc(I);
+    end;
+    B.Append('</ol>');
+    Result := B.ToString;
+  finally
+    B.Free;
+  end;
+end;
+
+{ term, then one or more ": definition" lines; more such groups may follow }
+function TMarkdownHtml.DefListHtml(ALines: TStrings; var I: Integer): string;
+var
+  B : TStringBuilder;
+  K : Integer;
+begin
+  B := TStringBuilder.Create;
+  try
+    B.Append('<dl>');
+    repeat
+      B.Append('<dt><strong>').Append(Inline(Trim(ALines[I]))).Append('</strong></dt>');
+      Inc(I);
+      while (I < ALines.Count) and IsDefLine(ALines[I]) do
+      begin
+        B.Append('<dd>').Append(Inline(Trim(Copy(TrimLeft(ALines[I]), 2, MaxInt)))).Append('</dd>');
+        Inc(I);
+      end;
+      K := I;
+      while (K < ALines.Count) and IsBlank(ALines[K]) do Inc(K);
+      if (K + 1 < ALines.Count) and not IsDefLine(ALines[K]) and (Trim(ALines[K]) <> '') and
+         IsDefLine(ALines[K + 1]) then
+        I := K
+      else
+        Break;
+    until False;
+    B.Append('</dl>');
+    Result := B.ToString;
+  finally
+    B.Free;
+  end;
+end;
+
 { [text](url) at S[P] = '['; NextP is the position after the closing parenthesis }
-function ParseLinkAt(const S: string; P: Integer; out AText, AUrl: string;
+{ A title: "text", 'text' or (text); '' when Rest is anything else }
+function ParseTitle(const ARest: string): string;
+var
+  T : string;
+begin
+  Result := '';
+  T := Trim(ARest);
+  if Length(T) < 2 then Exit;
+  if ((T[1] = '"') and (T[Length(T)] = '"')) or ((T[1] = '''') and (T[Length(T)] = '''')) or
+     ((T[1] = '(') and (T[Length(T)] = ')')) then
+    Result := Copy(T, 2, Length(T) - 2);
+end;
+
+function ParseLinkAt(const S: string; P: Integer; out AText, AUrl, ATitle: string;
   out NextP: Integer): Boolean;
 var
   N, Q, R, Depth : Integer;
   Raw : string;
 begin
   Result := False;
+  ATitle := '';
   N := Length(S);
   Depth := 0;
   Q := P;
-  while Q <= N do
+  while (Q <= N) and (Q - P <= 2000) do       { a link's text is not longer than this }
   begin
     if S[Q] = '\' then begin Inc(Q, 2); Continue; end;
     if S[Q] = '[' then Inc(Depth)
@@ -537,11 +785,11 @@ begin
     end;
     Inc(Q);
   end;
-  if (Q > N) or (Q + 1 > N) or (S[Q + 1] <> '(') then Exit;
+  if (Q > N) or (Q - P > 2000) or (Q + 1 > N) or (S[Q + 1] <> '(') then Exit;
   AText := Copy(S, P + 1, Q - P - 1);
   Depth := 1;
   R := Q + 2;
-  while R <= N do
+  while (R <= N) and (R - Q <= 2200) do        { the address and title: 2048 and some room }
   begin
     if S[R] = '\' then begin Inc(R, 2); Continue; end;
     if S[R] = '(' then Inc(Depth)
@@ -552,15 +800,19 @@ begin
     end;
     Inc(R);
   end;
-  if R > N then Exit;
+  if (R > N) or (R - Q > 2200) then Exit;
   Raw := Trim(Copy(S, Q + 2, R - Q - 2));
   if (Raw <> '') and (Raw[1] = '<') and (Pos('>', Raw) > 0) then
-    AUrl := Copy(Raw, 2, Pos('>', Raw) - 2)
+  begin
+    AUrl := Copy(Raw, 2, Pos('>', Raw) - 2);
+    ATitle := ParseTitle(Copy(Raw, Pos('>', Raw) + 1, MaxInt));
+  end
   else
   begin
     Q := 1;
     while (Q <= Length(Raw)) and (Raw[Q] > ' ') do Inc(Q);
     AUrl := Copy(Raw, 1, Q - 1);
+    ATitle := ParseTitle(Copy(Raw, Q, MaxInt));
   end;
   NextP := R + 1;
   Result := True;
@@ -620,14 +872,49 @@ end;
 function TMarkdownHtml.Inline(const S: string): string;
 var
   B : TStringBuilder;
-  I, N, J, P, Run, Len, NextP : Integer;
+  I, N, J, P, Run, Len, NextP, K : Integer;
   C : Char;
-  Inner, Url, Text, Delim, Tag : string;
+  Inner, Url, Text, Delim, Tag, Title, Lo, Failed : string;
   Found : Boolean;
 
   function IsAlnum(Ch: Char): Boolean;
   begin
     Result := Ch in ['A'..'Z', 'a'..'z', '0'..'9'];
+  end;
+
+  function AsciiLower(const T: string): string;
+  var
+    X : Integer;
+  begin
+    Result := T;
+    for X := 1 to Length(Result) do
+      if Result[X] in ['A'..'Z'] then Result[X] := Chr(Ord(Result[X]) + 32);
+  end;
+
+  { GitLab's inline diff: {+ added +}, [+ added +], {- removed -}, [- removed -] }
+  function TryDiff: Boolean;
+  var
+    Sign, Close : Char;
+    E : Integer;
+  begin
+    Result := False;
+    if (I + 3 > N) or not (S[I + 1] in ['+', '-']) or (S[I + 2] <> ' ') then Exit;
+    Sign := S[I + 1];
+    if S[I] = '{' then Close := '}' else Close := ']';
+    { a closer missing here is missing further on too: look once }
+    if Pos('|' + Sign + Close + '|', Failed) > 0 then Exit;
+    E := PosEx(' ' + Sign + Close, S, I + 3);
+    if E = 0 then
+    begin
+      Failed := Failed + '|' + Sign + Close + '|';
+      Exit;
+    end;
+    if Sign = '+' then
+      B.Append('<font color="#198754"><u>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</u></font>')
+    else
+      B.Append('<font color="#DC3545"><del>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</del></font>');
+    I := E + 3;
+    Result := True;
   end;
 
 begin
@@ -642,12 +929,20 @@ begin
     begin
       C := S[I];
       { a run of ordinary characters goes out in one piece }
-      if not (C in ['\', '`', '!', '[', '<', '*', '_', '~', HardBreak]) then
+      if (FNoAuto = 0) and (C in ['h', 'H']) and BareUrlAt(S, I, Len) then
+      begin
+        Url := Copy(S, I, Len);
+        B.Append('<a href="' + MdEscape(Url) + '">' + MdEscape(Url) + '</a>');
+        Inc(I, Len);
+        Continue;
+      end;
+      if not (C in ['\', '`', '!', '[', '<', '*', '_', '~', '{', HardBreak]) then
       begin
         J := I;
-        while (J <= N) and not (S[J] in ['\', '`', '!', '[', '<', '*', '_', '~', HardBreak]) do
+        while (J <= N) and not (S[J] in ['\', '`', '!', '[', '<', '*', '_', '~', '{', HardBreak]) and
+              not ((FNoAuto = 0) and (S[J] in ['h', 'H']) and (J > I) and BareUrlAt(S, J, Len)) do
           Inc(J);
-        B.Append(MdEscape(Copy(S, I, J - I)));
+        B.Append(MdEscape(DecodeEntities(Copy(S, I, J - I))));
         I := J;
         Continue;
       end;
@@ -702,7 +997,9 @@ begin
             end;
           end;
         '!':
-          if (I < N) and (S[I + 1] = '[') and ParseLinkAt(S, I + 1, Text, Url, NextP) then
+          if (I < N) and (S[I + 1] = '[') and
+             (ParseLinkAt(S, I + 1, Text, Url, Title, NextP) or
+              RefLinkAt(S, I + 1, Text, Url, Title, NextP)) then
           begin
             B.Append(ImageHtml(Text, Url));
             I := NextP;
@@ -712,24 +1009,85 @@ begin
             B.Append('!');
             Inc(I);
           end;
-        '[':
-          if ParseLinkAt(S, I, Text, Url, NextP) or RefLinkAt(S, I, Text, Url, NextP) then
+        '{':
+          if not TryDiff then
           begin
-            if IsSafeHttp(Url) then
-              B.Append('<a href="' + MdEscape(Url) + '">' + Inline(Text) + '</a>')
-            else
-              B.Append(Inline(Text));
-            I := NextP;
-          end
-          else
-          begin
-            B.Append('[');
+            B.Append('{');
             Inc(I);
+          end;
+        '[':
+          begin
+            Found := False;
+            { a footnote reference [^id]: a small superscript number }
+            if (I + 2 <= N) and (S[I + 1] = '^') and (FNotes.Count > 0) then
+            begin
+              P := PosEx(']', S, I + 2);
+              if P > 0 then
+              begin
+                Tag := AsciiLower(Copy(S, I + 2, P - I - 2));
+                if FNotes.IndexOfName(Tag) >= 0 then
+                begin
+                  K := FNoteOrder.IndexOf(Tag);
+                  if K < 0 then K := FNoteOrder.Add(Tag);
+                  B.Append('<sup>' + IntToStr(K + 1) + '</sup>');
+                  I := P + 1;
+                  Found := True;
+                end;
+              end;
+            end;
+            if not Found then Found := TryDiff;
+            if not Found then
+            begin
+              if ParseLinkAt(S, I, Text, Url, Title, NextP) or
+                 RefLinkAt(S, I, Text, Url, Title, NextP) then
+              begin
+                if IsSafeHttp(Url) then
+                begin
+                  B.Append('<a href="' + MdEscape(Url) + '"');
+                  if Title <> '' then B.Append(' title="' + MdEscape(Title) + '"');
+                  B.Append('>');
+                  Inc(FNoAuto);          { no link inside a link }
+                  try
+                    B.Append(Inline(Text));
+                  finally
+                    Dec(FNoAuto);
+                  end;
+                  B.Append('</a>');
+                end
+                else
+                  B.Append(Inline(Text));
+                I := NextP;
+              end
+              else
+              begin
+                B.Append('[');
+                Inc(I);
+              end;
+            end;
           end;
         '<':
           begin
             P := Pos('>', Copy(S, I, 2100));
-            if SameText(Copy(S, I, 4), '<br>') then
+            { <kbd>, <sub>, <sup>: the only paired tags let through, and only when the closing
+              one is there, so that a stray one cannot change the rest of the page }
+            Tag := '';
+            K := 0;
+            if SameText(Copy(S, I, 5), '<kbd>') then Tag := 'kbd'
+            else if SameText(Copy(S, I, 5), '<sub>') then Tag := 'sub'
+            else if SameText(Copy(S, I, 5), '<sup>') then Tag := 'sup';
+            if (Tag <> '') and (Pos('|' + Tag + '|', Failed) = 0) then
+            begin
+              if Lo = '' then Lo := AsciiLower(S);
+              K := PosEx('</' + Tag + '>', Lo, I + 5);
+              if K = 0 then Failed := Failed + '|' + Tag + '|';
+            end;
+            if K > 0 then
+            begin
+              B.Append('<' + Tag + '>').Append(Inline(Copy(S, I + 5, K - I - 5)))
+               .Append('</' + Tag + '>');
+              I := K + 6;
+            end
+            else if SameText(Copy(S, I, 4), '<br>') then
             begin
               B.Append('<br>');
               Inc(I, 4);
@@ -1180,6 +1538,11 @@ begin
         end;
         PrevPara := False;
       end
+      else if (I + 1 < ALines.Count) and IsDefLine(ALines[I + 1]) and not IsDefLine(L) then
+      begin
+        B.Append(DefListHtml(ALines, I)).Append(#10);
+        PrevPara := False;
+      end
       else
       begin
         { a paragraph: lines up to a blank line or the start of another block }
@@ -1232,7 +1595,7 @@ end;
 function TMarkdownHtml.ToHtml(const AMarkdown: string; AImages: TStrings): string;
 var
   Lines : TStringList;
-  S : string;
+  S, Body : string;
 begin
   FImages := AImages;
   FDepth := 0;
@@ -1244,14 +1607,21 @@ begin
   S := StringReplace(S, #13, #10, [rfReplaceAll]);
   Lines := TStringList.Create;
   FRefs := TStringList.Create;
+  FNotes := TStringList.Create;
+  FNoteOrder := TStringList.Create;
+  FNoAuto := 0;
   try
     Lines.StrictDelimiter := True;
     Lines.LineBreak := #10;
     Lines.Text := S;
+    FrontMatterToCode(Lines);
     CollectRefs(Lines);
+    Body := Blocks(Lines, False);
     Result := '<html><head><style type="text/css">' + MD_STYLE + '</style></head><body>' + #10 +
-              Blocks(Lines, False) + '</body></html>';
+              Body + NotesHtml + '</body></html>';
   finally
+    FreeAndNil(FNoteOrder);
+    FreeAndNil(FNotes);
     FreeAndNil(FRefs);
     Lines.Free;
   end;
