@@ -228,7 +228,9 @@ end;
 
 function TMdTab.CanHandle(Sender: TObject; const URL: string): Boolean;
 begin
-  Result := False;        { never follow a link inside the panel, never fetch }
+  { never fetch anything: the panel scrolls to a "#heading" of this page and that is all;
+    http(s) links go to OnHotClick, which opens the system browser }
+  Result := (Length(URL) > 1) and (URL[1] = '#');
 end;
 
 procedure TMdTab.HotClick(Sender: TObject);

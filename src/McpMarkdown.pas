@@ -42,8 +42,10 @@ type
     FNotes  : TStringList;     { footnote definitions: 'id=text', id in lower case }
     FNoteOrder : TStringList;  { footnote ids in the order they are first used }
     FNoAuto : Integer;         { above 0: no bare URLs (inside a link's text) }
-    FHeads  : TStringList;     { top-level headings: 'level' #2 'html', for [[_TOC_]] }
-    procedure NoteHeading(ALevel: Integer; const AHtml: string);
+    FHeads  : TStringList;     { top-level headings: 'level' #2 'id' #2 'html', for [[_TOC_]] }
+    FSlugs  : TStringList;     { the ids given to headings }
+    FWantIds : Boolean;        { the text has a table of contents or a "#anchor" link }
+    function NoteHeading(ALevel: Integer; const AHtml: string): string;
     function TocHtml: string;
     procedure CollectRefs(ALines: TStrings);
     function NotesHtml: string;
@@ -425,6 +427,17 @@ begin
   ALines[E] := '~~~~~~~~';
 end;
 
+{ A link to a heading of the same document: "#some-heading" }
+function IsAnchorRef(const AUrl: string): Boolean;
+var
+  I : Integer;
+begin
+  Result := (Length(AUrl) >= 2) and (Length(AUrl) <= 120) and (AUrl[1] = '#');
+  if not Result then Exit;
+  for I := 2 to Length(AUrl) do
+    if (AUrl[I] <= ' ') or (AUrl[I] in ['"', '<', '>', '#']) then Exit(False);
+end;
+
 { GitLab's table of contents: "[[_TOC_]]" or "[TOC]" alone on a line }
 function IsTocLine(const S: string): Boolean;
 var
@@ -708,10 +721,92 @@ begin
   Result := True;
 end;
 
-procedure TMarkdownHtml.NoteHeading(ALevel: Integer; const AHtml: string);
+{ GitLab's heading anchor: the text in lower case, spaces as "-", no punctuation }
+function MdSlug(const AHtml: string): string;
+var
+  I, J : Integer;
+  InTag : Boolean;
+  C : Char;
 begin
-  if (FDepth = 0) and (FHeads.Count < 500) then
-    FHeads.Add(IntToStr(ALevel) + #2 + AHtml);
+  Result := '';
+  InTag := False;
+  I := 1;
+  while (I <= Length(AHtml)) and (Length(Result) < 100) do
+  begin
+    C := AHtml[I];
+    if InTag then
+    begin
+      if C = '>' then InTag := False;
+    end
+    else if C = '<' then
+      InTag := True
+    else if C = '&' then
+    begin
+      J := PosEx(';', AHtml, I);              { an entity: skipped }
+      if (J > 0) and (J - I <= 8) then I := J;
+    end
+    else if C in ['A'..'Z'] then
+      Result := Result + Chr(Ord(C) + 32)
+    else if (C in ['a'..'z', '0'..'9', '-', '_']) or (C >= #128) then
+      Result := Result + C
+    else if C = ' ' then
+      Result := Result + '-';
+    Inc(I);
+  end;
+end;
+
+{ The same HTML without its links: a link may not sit inside the link of a table of contents }
+function StripLinks(const S: string): string;
+var
+  B : TStringBuilder;
+  I, J : Integer;
+begin
+  if Pos('<a ', S) = 0 then Exit(S);
+  B := TStringBuilder.Create;
+  try
+    I := 1;
+    while I <= Length(S) do
+    begin
+      if Copy(S, I, 3) = '<a ' then
+      begin
+        J := PosEx('>', S, I);
+        if J = 0 then J := Length(S);
+        I := J + 1;
+      end
+      else if Copy(S, I, 4) = '</a>' then
+        Inc(I, 4)
+      else
+      begin
+        B.Append(S[I]);
+        Inc(I);
+      end;
+    end;
+    Result := B.ToString;
+  finally
+    B.Free;
+  end;
+end;
+
+{ Records a top-level heading for the table of contents and returns its id ('' when the text
+  has no use for ids, or the heading is not top-level) }
+function TMarkdownHtml.NoteHeading(ALevel: Integer; const AHtml: string): string;
+var
+  Base : string;
+  N : Integer;
+begin
+  Result := '';
+  if (FDepth <> 0) or (FHeads.Count >= 500) or not FWantIds then Exit;
+  Base := MdSlug(AHtml);
+  if Base = '' then Base := 'section';
+  Result := Base;
+  N := 0;
+  while FSlugs.IndexOf(Result) >= 0 do
+  begin
+    Inc(N);
+    Result := Base + '-' + IntToStr(N);
+  end;
+  FSlugs.Add(Result);
+  FHeads.Add(IntToStr(ALevel) + #2 + Result + #2 + AHtml);
 end;
 
 { The headings of the document as nested bulleted lists: [[_TOC_]] and [TOC] (GitLab).  A jump
@@ -719,8 +814,8 @@ end;
 function TMarkdownHtml.TocHtml: string;
 var
   B : TStringBuilder;
-  I, Lv, Base, D, T, P : Integer;
-  Item : string;
+  I, Lv, Base, D, T, P, Q : Integer;
+  Item, Id : string;
 begin
   Result := '';
   if FHeads.Count = 0 then Exit;
@@ -737,7 +832,9 @@ begin
     begin
       P := Pos(#2, FHeads[I]);
       Lv := StrToIntDef(Copy(FHeads[I], 1, P - 1), 1);
-      Item := Copy(FHeads[I], P + 1, MaxInt);
+      Q := PosEx(#2, FHeads[I], P + 1);
+      Id := Copy(FHeads[I], P + 1, Q - P - 1);
+      Item := '<a href="#' + MdEscape(Id) + '">' + StripLinks(Copy(FHeads[I], Q + 1, MaxInt)) + '</a>';
       T := Lv - Base + 1;
       if T > D + 1 then T := D + 1;
       if D = T then
@@ -1117,7 +1214,7 @@ begin
               if ParseLinkAt(S, I, Text, Url, Title, NextP) or
                  RefLinkAt(S, I, Text, Url, Title, NextP) then
               begin
-                if IsSafeHttp(Url) then
+                if IsSafeHttp(Url) or IsAnchorRef(Url) then
                 begin
                   B.Append('<a href="' + MdEscape(Url) + '"');
                   if Title <> '' then B.Append(' title="' + MdEscape(Title) + '"');
@@ -1517,7 +1614,7 @@ function TMarkdownHtml.Blocks(ALines: TStrings; ATight: Boolean): string;
 var
   B : TStringBuilder;
   I, J, Lv, Len, SetextLv : Integer;
-  L, T, Para, HText : string;
+  L, T, Para, HText, HId : string;
   Ch : Char;
   Code : TStringList;
   PrevPara : Boolean;
@@ -1562,8 +1659,9 @@ begin
       else if IsHeading(L, Lv, T) then
       begin
         HText := Inline(T);
-        NoteHeading(Lv, HText);
-        B.Append('<h' + IntToStr(Lv) + '>').Append(HText).Append('</h' + IntToStr(Lv) + '>').Append(#10);
+        HId := NoteHeading(Lv, HText);
+        if HId <> '' then HId := ' id="' + MdEscape(HId) + '"';
+        B.Append('<h' + IntToStr(Lv) + HId + '>').Append(HText).Append('</h' + IntToStr(Lv) + '>').Append(#10);
         Inc(I);
         PrevPara := False;
       end
@@ -1657,8 +1755,9 @@ begin
         begin
           Para := Trim(StringReplace(Para, HardBreak, ' ', [rfReplaceAll]));
           HText := Inline(Para);
-          NoteHeading(SetextLv, HText);
-          B.Append('<h' + IntToStr(SetextLv) + '>').Append(HText)
+          HId := NoteHeading(SetextLv, HText);
+          if HId <> '' then HId := ' id="' + MdEscape(HId) + '"';
+          B.Append('<h' + IntToStr(SetextLv) + HId + '>').Append(HText)
            .Append('</h' + IntToStr(SetextLv) + '>').Append(#10);
           PrevPara := False;
         end
@@ -1697,7 +1796,11 @@ begin
   FNotes := TStringList.Create;
   FNoteOrder := TStringList.Create;
   FHeads := TStringList.Create;
+  FSlugs := TStringList.Create;
   FNoAuto := 0;
+  { heading ids are only worth their bytes when something can point at them }
+  FWantIds := (Pos('](#', S) > 0) or (Pos(']: #', S) > 0) or
+              (Pos('[TOC]', UpperCase(S)) > 0) or (Pos('[[_TOC_]]', UpperCase(S)) > 0);
   try
     Lines.StrictDelimiter := True;
     Lines.LineBreak := #10;
@@ -1710,6 +1813,7 @@ begin
     Result := '<html><head><style type="text/css">' + MD_STYLE + '</style></head><body>' + #10 +
               Body + NotesHtml + '</body></html>';
   finally
+    FreeAndNil(FSlugs);
     FreeAndNil(FHeads);
     FreeAndNil(FNoteOrder);
     FreeAndNil(FNotes);

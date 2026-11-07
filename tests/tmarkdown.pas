@@ -71,6 +71,7 @@ type
     procedure TestInlineDiff;
     procedure TestFrontMatter;
     procedure TestToc;
+    procedure TestHeadingAnchors;
     procedure TestNewSyntaxIsLinear;
   end;
 
@@ -766,20 +767,47 @@ var
 begin
   R := H('[[_TOC_]]' + #10#10 + '# One' + #10#10 + '## Two *a*' + #10#10 + '## Three' + #10#10 +
          '#### Deep' + #10#10 + '# Four' + #10#10 + 'Five' + #10 + '---');
-  Has(R, '<ul><li>One<ul><li>Two <em>a</em></li><li>Three<ul><li>Deep</li></ul></li></ul></li>' +
-         '<li>Four<ul><li>Five</li></ul></li></ul>');
+  Has(R, '<ul><li><a href="#one">One</a><ul><li><a href="#two-a">Two <em>a</em></a></li>' +
+         '<li><a href="#three">Three</a><ul><li><a href="#deep">Deep</a></li></ul></li></ul></li>' +
+         '<li><a href="#four">Four</a><ul><li><a href="#five">Five</a></li></ul></li></ul>');
+  { the headings carry the ids the list points at }
+  Has(R, '<h1 id="one">One</h1>');
+  Has(R, '<h2 id="two-a">Two <em>a</em></h2>');
+  Has(R, '<h2 id="five">Five</h2>');
   { [TOC] works too, in any case; with no headings there is nothing }
-  Has(H('[toc]' + #10#10 + '# A'), '<ul><li>A</li></ul>');
+  Has(H('[toc]' + #10#10 + '# A'), '<ul><li><a href="#a">A</a></li></ul>');
   HasNot(H('[TOC]'), '<ul>');
   { the marker never reaches the page, also when typed into the text }
   HasNot(R, #3);
   HasNot(H('a' + #3 + 'b' + #10#10 + '# A'), #3);
   { two of them list the same headings; a heading in a quote is not listed }
   R := H('[TOC]' + #10#10 + '[[_TOC_]]' + #10#10 + '# A' + #10#10 + '> # Q');
-  AssertEquals(2, (Length(R) - Length(StringReplace(R, '<ul><li>A</li></ul>', '', [rfReplaceAll]))) div
-    Length('<ul><li>A</li></ul>'));
+  AssertEquals(2, (Length(R) - Length(StringReplace(R, '<ul><li><a href="#a">A</a></li></ul>', '',
+    [rfReplaceAll]))) div Length('<ul><li><a href="#a">A</a></li></ul>'));
   { in a code block it is code }
   Has(H('```' + #10 + '[TOC]' + #10 + '```' + #10#10 + '# A'), '<tt>[TOC]</tt>');
+  { a link inside a heading is not repeated inside the entry }
+  Has(H('[TOC]' + #10#10 + '# See [x](http://a.b)'),
+    '<li><a href="#see-x">See x</a></li>');
+end;
+
+procedure TTestMarkdown.TestHeadingAnchors;
+var
+  R : string;
+begin
+  R := H('[go](#my-head) and [no](#a%20b)' + #10#10 + '# My Head!' + #10#10 + '# A' + #10#10 + '# A');
+  Has(R, '<a href="#my-head">go</a>');
+  Has(R, '<h1 id="my-head">My Head!</h1>');
+  Has(R, '<h1 id="a">A</h1>');
+  Has(R, '<h1 id="a-1">A</h1>');
+  { a reference link may point at one too }
+  Has(H('[x][h]' + #10#10 + '[h]: #t' + #10#10 + '# T'), '<a href="#t">x</a>');
+  { nobody points at them: no ids }
+  HasNot(H('# A'), ' id=');
+  { a bad one is text }
+  HasNot(H('[x](#a"b)'), '<a href="#a');
+  { non-ASCII text keeps its letters }
+  Has(H('[TOC]' + #10#10 + '# Привет мир'), 'id="Привет-мир"');
 end;
 
 procedure TTestMarkdown.TestNewSyntaxIsLinear;
