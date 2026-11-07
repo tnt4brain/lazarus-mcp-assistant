@@ -95,7 +95,8 @@ begin
     'Supported: headings, emphasis, strikethrough, inline and fenced code, lists and task ' +
     'lists, block quotes (also > [!note] alerts and >>> blocks), GFM tables, http(s) links ' +
     '(also reference links and bare addresses), footnotes, description lists, rules, ' +
-    '<kbd>, <sub>, <sup>, <br>. Other raw HTML is shown as text. Images: a ' +
+    '[[_TOC_]] and #heading links, :emoji:, <kbd>, <sub>, <sup>, <br>; <!-- comments --> are ' +
+    'hidden. Other raw HTML is shown as text. Images: a ' +
     'local path (relative to the project directory; png, jpg, gif, bmp, at most 8 MB) or a ' +
     'data:image/(png|jpeg|gif|bmp);base64 URI (at most 4 MB decoded; the way to show a ' +
     'picture when the assistant runs on another machine); http(s) images are not fetched and ' +

@@ -427,6 +427,204 @@ begin
   ALines[E] := '~~~~~~~~';
 end;
 
+{ HTML comments are not shown, as in GitLab.  A comment may run over several lines; one that is
+  not closed runs to the end.  Fenced code keeps its lines, and "<!--" after an odd number of
+  backticks on its line is inside inline code. }
+procedure StripComments(ALines: TStrings);
+var
+  I, K, P, E, J, Ticks, FLen : Integer;
+  FCh : Char;
+  InFence, InComment : Boolean;
+  L : string;
+  B : TStringBuilder;
+begin
+  InFence := False;
+  InComment := False;
+  FCh := '`';
+  FLen := 3;
+  for I := 0 to ALines.Count - 1 do
+  begin
+    L := ALines[I];
+    if InComment then
+    begin
+      E := Pos('-->', L);
+      if E = 0 then
+      begin
+        ALines[I] := '';
+        Continue;
+      end;
+      L := Copy(L, E + 3, MaxInt);
+      InComment := False;
+    end
+    else
+    begin
+      if InFence then
+      begin
+        if IsFenceEnd(L, FCh, FLen) then InFence := False;
+        Continue;
+      end;
+      if IsFenceStart(L, FCh, FLen) then
+      begin
+        InFence := True;
+        Continue;
+      end;
+    end;
+    if Pos('<!--', L) = 0 then
+    begin
+      ALines[I] := L;
+      Continue;
+    end;
+    B := TStringBuilder.Create;
+    try
+      K := 1;
+      Ticks := 0;
+      while K <= Length(L) do
+      begin
+        P := PosEx('<!--', L, K);
+        if P = 0 then
+        begin
+          B.Append(Copy(L, K, MaxInt));
+          Break;
+        end;
+        for J := K to P - 1 do
+          if L[J] = '`' then Inc(Ticks);
+        B.Append(Copy(L, K, P - K));
+        if Odd(Ticks) then
+        begin
+          B.Append('<!--');
+          K := P + 4;
+          Continue;
+        end;
+        E := PosEx('-->', L, P + 4);
+        if E = 0 then
+        begin
+          InComment := True;
+          Break;
+        end;
+        K := E + 3;
+      end;
+      ALines[I] := B.ToString;
+    finally
+      B.Free;
+    end;
+  end;
+end;
+
+{ "{width=50% height=20}" right after an image: ' width="50%" height="20"'.  Classes (".float-left")
+  are taken and ignored.  Anything else leaves NextP = P: the braces stay text. }
+function ParseImageSize(const S: string; P: Integer; out NextP: Integer): string;
+var
+  E, I, V, Digits : Integer;
+  T, Tok, Key, Val : string;
+  Pct : Boolean;
+begin
+  Result := '';
+  NextP := P;
+  if (P > Length(S)) or (S[P] <> '{') then Exit;
+  E := PosEx('}', S, P + 1);
+  if (E = 0) or (E - P > 60) then Exit;
+  T := Trim(Copy(S, P + 1, E - P - 1));
+  if T = '' then Exit;
+  while T <> '' do
+  begin
+    I := Pos(' ', T);
+    if I = 0 then I := Length(T) + 1;
+    Tok := Copy(T, 1, I - 1);
+    T := TrimLeft(Copy(T, I + 1, MaxInt));
+    if Tok[1] = '.' then Continue;
+    I := Pos('=', Tok);
+    if I < 2 then Exit('');
+    Key := LowerCase(Copy(Tok, 1, I - 1));
+    Val := LowerCase(Copy(Tok, I + 1, MaxInt));
+    if (Key <> 'width') and (Key <> 'height') then Exit('');
+    Pct := (Val <> '') and (Val[Length(Val)] = '%');
+    if Pct then Delete(Val, Length(Val), 1)
+    else if (Length(Val) > 2) and (Copy(Val, Length(Val) - 1, 2) = 'px') then
+      Delete(Val, Length(Val) - 1, 2);
+    Digits := Length(Val);
+    if (Digits < 1) or (Digits > 4) then Exit('');
+    V := 0;
+    for I := 1 to Digits do
+    begin
+      if not (Val[I] in ['0'..'9']) then Exit('');
+      V := V * 10 + Ord(Val[I]) - 48;
+    end;
+    if V < 1 then Exit('');
+    if Pct and (V > 100) then Exit('');
+    Result := Result + ' ' + Key + '="' + IntToStr(V);
+    if Pct then Result := Result + '%';
+    Result := Result + '"';
+  end;
+  NextP := E + 1;
+end;
+
+{ The emoji of a shortcode (:name:) as UTF-8: a curated set of the common ones.  GitLab knows
+  far more; an unknown name stays as typed. }
+function EmojiText(const AName: string): string;
+const
+  Table : array[0..127] of string = (
+    'smile=1F604', 'smiley=1F603', 'grinning=1F600', 'laughing=1F606', 'joy=1F602',
+    'wink=1F609', 'blush=1F60A', 'heart_eyes=1F60D', 'sunglasses=1F60E', 'thinking=1F914',
+    'thinking_face=1F914', 'neutral_face=1F610', 'confused=1F615', 'cry=1F622', 'sob=1F62D',
+    'angry=1F620', 'scream=1F631', 'sweat_smile=1F605', 'slightly_smiling_face=1F642',
+    'upside_down_face=1F643', 'hugs=1F917', 'shrug=1F937', 'facepalm=1F926',
+    '+1=1F44D', 'thumbsup=1F44D', '-1=1F44E', 'thumbsdown=1F44E', 'clap=1F44F', 'pray=1F64F',
+    'muscle=1F4AA', 'ok_hand=1F44C', 'wave=1F44B', 'point_right=1F449', 'point_left=1F448',
+    'point_up=261D,FE0F', 'point_down=1F447', 'raised_hands=1F64C', 'eyes=1F440',
+    'heart=2764,FE0F', 'broken_heart=1F494', 'green_heart=1F49A', 'blue_heart=1F499',
+    'yellow_heart=1F49B', 'star=2B50', 'star2=1F31F', 'sparkles=2728', 'fire=1F525',
+    'boom=1F4A5', 'zap=26A1', 'tada=1F389', 'rocket=1F680', '100=1F4AF', 'trophy=1F3C6',
+    'gift=1F381', 'bulb=1F4A1', 'warning=26A0,FE0F', 'x=274C', 'white_check_mark=2705',
+    'heavy_check_mark=2714,FE0F', 'heavy_multiplication_x=2716,FE0F', 'question=2753',
+    'exclamation=2757', 'grey_question=2754', 'information_source=2139,FE0F',
+    'no_entry=26D4', 'no_entry_sign=1F6AB', 'construction=1F6A7', 'memo=1F4DD', 'book=1F4D6',
+    'books=1F4DA', 'bug=1F41B', 'wrench=1F527', 'hammer=1F528', 'gear=2699,FE0F',
+    'lock=1F512', 'unlock=1F513', 'key=1F511', 'link=1F517', 'mag=1F50D', 'package=1F4E6',
+    'bell=1F514', 'hourglass=231B', 'calendar=1F4C6', 'chart_with_upwards_trend=1F4C8',
+    'chart_with_downwards_trend=1F4C9', 'clipboard=1F4CB', 'pushpin=1F4CC', 'paperclip=1F4CE',
+    'email=1F4E7', 'envelope=2709,FE0F', 'arrow_right=27A1,FE0F', 'arrow_left=2B05,FE0F',
+    'arrow_up=2B06,FE0F', 'arrow_down=2B07,FE0F', 'heavy_plus_sign=2795',
+    'heavy_minus_sign=2796', 'red_circle=1F534', 'large_blue_circle=1F535',
+    'white_circle=26AA', 'black_circle=26AB', 'coffee=2615', 'beer=1F37A', 'pizza=1F355',
+    'cake=1F370', 'monkey=1F412', 'see_no_evil=1F648', 'skull=1F480', 'ghost=1F47B',
+    'robot=1F916', 'cat=1F431', 'dog=1F436', 'snake=1F40D', 'turtle=1F422', 'whale=1F433',
+    'bee=1F41D', 'sunny=2600,FE0F', 'cloud=2601,FE0F', 'snowflake=2744,FE0F',
+    'rainbow=1F308', 'truck=1F69A', 'car=1F697', 'airplane=2708,FE0F', 'ship=1F6A2',
+    'hammer_and_wrench=1F6E0,FE0F', 'rotating_light=1F6A8', 'checkered_flag=1F3C1',
+    'closed_lock_with_key=1F510', 'wastebasket=1F5D1,FE0F');
+var
+  I, P, J : Integer;
+  Hex, Part : string;
+
+  function Utf8(ACode: LongWord): string;
+  begin
+    if ACode < $800 then Result := Chr($C0 or (ACode shr 6)) + Chr($80 or (ACode and $3F))
+    else if ACode < $10000 then
+      Result := Chr($E0 or (ACode shr 12)) + Chr($80 or ((ACode shr 6) and $3F)) + Chr($80 or (ACode and $3F))
+    else
+      Result := Chr($F0 or (ACode shr 18)) + Chr($80 or ((ACode shr 12) and $3F)) +
+                Chr($80 or ((ACode shr 6) and $3F)) + Chr($80 or (ACode and $3F));
+  end;
+
+begin
+  Result := '';
+  for I := 0 to High(Table) do
+  begin
+    P := Pos('=', Table[I]);
+    if Copy(Table[I], 1, P - 1) <> AName then Continue;
+    Hex := Copy(Table[I], P + 1, MaxInt);
+    while Hex <> '' do
+    begin
+      J := Pos(',', Hex);
+      if J = 0 then J := Length(Hex) + 1;
+      Part := Copy(Hex, 1, J - 1);
+      Hex := Copy(Hex, J + 1, MaxInt);
+      Result := Result + Utf8(LongWord(StrToInt('$' + Part)));
+    end;
+    Exit;
+  end;
+end;
+
 { A link to a heading of the same document: "#some-heading" }
 function IsAnchorRef(const AUrl: string): Boolean;
 var
@@ -1109,10 +1307,10 @@ begin
         Inc(I, Len);
         Continue;
       end;
-      if not (C in ['\', '`', '!', '[', '<', '*', '_', '~', '{', HardBreak]) then
+      if not (C in ['\', '`', '!', '[', '<', '*', '_', '~', '{', ':', HardBreak]) then
       begin
         J := I;
-        while (J <= N) and not (S[J] in ['\', '`', '!', '[', '<', '*', '_', '~', '{', HardBreak]) and
+        while (J <= N) and not (S[J] in ['\', '`', '!', '[', '<', '*', '_', '~', '{', ':', HardBreak]) and
               not ((FNoAuto = 0) and (S[J] in ['h', 'H']) and (J > I) and BareUrlAt(S, J, Len)) do
           Inc(J);
         B.Append(MdEscape(DecodeEntities(Copy(S, I, J - I))));
@@ -1174,13 +1372,41 @@ begin
              (ParseLinkAt(S, I + 1, Text, Url, Title, NextP) or
               RefLinkAt(S, I + 1, Text, Url, Title, NextP)) then
           begin
-            B.Append(ImageHtml(Text, Url));
-            I := NextP;
+            Tag := ImageHtml(Text, Url);
+            { {width=50%}: only on a real img, not on a placeholder }
+            Inner := ParseImageSize(S, NextP, K);
+            if (Inner <> '') and (Copy(Tag, 1, 5) = '<img ') then
+              Tag := Copy(Tag, 1, Length(Tag) - 1) + Inner + '>';
+            B.Append(Tag);
+            I := K;
           end
           else
           begin
             B.Append('!');
             Inc(I);
+          end;
+        ':':
+          begin
+            { :name: is an emoji when we know the name }
+            Found := False;
+            P := I + 1;
+            while (P <= N) and (P - I <= 33) and (S[P] in ['a'..'z', '0'..'9', '_', '+', '-']) do
+              Inc(P);
+            if (P <= N) and (S[P] = ':') and (P > I + 1) then
+            begin
+              Inner := EmojiText(Copy(S, I + 1, P - I - 1));
+              if Inner <> '' then
+              begin
+                B.Append(Inner);
+                I := P + 1;
+                Found := True;
+              end;
+            end;
+            if not Found then
+            begin
+              B.Append(':');
+              Inc(I);
+            end;
           end;
         '{':
           if not TryDiff then
@@ -1806,6 +2032,7 @@ begin
     Lines.LineBreak := #10;
     Lines.Text := S;
     FrontMatterToCode(Lines);
+    StripComments(Lines);
     CollectRefs(Lines);
     Body := Blocks(Lines, False);
     if Pos(TocMark, Body) > 0 then

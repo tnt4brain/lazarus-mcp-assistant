@@ -72,6 +72,9 @@ type
     procedure TestFrontMatter;
     procedure TestToc;
     procedure TestHeadingAnchors;
+    procedure TestComments;
+    procedure TestImageSize;
+    procedure TestEmoji;
     procedure TestNewSyntaxIsLinear;
   end;
 
@@ -808,6 +811,54 @@ begin
   HasNot(H('[x](#a"b)'), '<a href="#a');
   { non-ASCII text keeps its letters }
   Has(H('[TOC]' + #10#10 + '# Привет мир'), 'id="Привет-мир"');
+end;
+
+procedure TTestMarkdown.TestComments;
+var
+  R : string;
+begin
+  Has(H('a <!-- hidden --> b'), '<p>a  b</p>');
+  HasNot(H('a <!-- hidden --> b'), 'hidden');
+  { over several lines, and two on one line }
+  R := H('before' + #10#10 + '<!--' + #10 + 'secret' + #10 + '-->' + #10#10 + 'after <!-- x --> and <!-- y -->.');
+  HasNot(R, 'secret');
+  Has(R, '<p>before</p>');
+  Has(R, '<p>after  and .</p>');
+  { not closed: to the end }
+  R := H('a' + #10#10 + '<!-- never' + #10 + 'closed');
+  HasNot(R, 'closed');
+  Has(R, '<p>a</p>');
+  { in code it is code }
+  Has(H('`<!-- x -->`'), '&lt;!--&nbsp;x&nbsp;--&gt;');
+  Has(H('```' + #10 + '<!-- x -->' + #10 + '```'), '&lt;!--&nbsp;x&nbsp;--&gt;');
+end;
+
+procedure TTestMarkdown.TestImageSize;
+begin
+  Has(H('![a](p.png){width=50%}'), '<img src="p.png" alt="a" width="50%">');
+  Has(H('![a](p.png){width=100px height=20}'), '<img src="p.png" alt="a" width="100" height="20">');
+  Has(H('![a](p.png){.float-left}'), '<img src="p.png" alt="a">');
+  HasNot(H('![a](p.png){.float-left}'), 'float-left');
+  { not a size: stays text; odd values are refused }
+  Has(H('![a](p.png){note}'), '{note}');
+  Has(H('![a](p.png){width=abc}'), '{width=abc}');
+  Has(H('![a](p.png){width=150%}'), '{width=150%}');
+  Has(H('![a](p.png){width=0}'), '{width=0}');
+  { a placeholder takes none }
+  HasNot(H('![a](http://x.y/p.png){width=50%}'), 'width=');
+end;
+
+procedure TTestMarkdown.TestEmoji;
+begin
+  Has(H(':smile: and :+1:'), #$F0#$9F#$98#$84' and '#$F0#$9F#$91#$8D);
+  { a variation selector goes after the symbol }
+  Has(H(':warning:'), #$E2#$9A#$A0#$EF#$B8#$8F);
+  { unknown names, times and a lone colon stay as typed }
+  Has(H(':nosuchemoji: 12:30:45 a:b: :'), ':nosuchemoji: 12:30:45 a:b: :');
+  Has(H('`:smile:`'), ':smile:');
+  Has(H('[:tada: yes](http://a.b)'), #$F0#$9F#$8E#$89' yes</a>');
+  { upper case is not a shortcode }
+  Has(H(':SMILE:'), ':SMILE:');
 end;
 
 procedure TTestMarkdown.TestNewSyntaxIsLinear;

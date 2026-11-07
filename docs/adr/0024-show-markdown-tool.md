@@ -33,10 +33,14 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
    hard breaks, entities, link titles, bare `http(s)` addresses. From GitLab's flavour (GLFM,
    which is GFM plus extensions) the ones IPro can show: `> [!note]` alerts, `>>>` quotes,
    footnotes, description lists, `{+ +}` / `{- -}` diffs, front matter (shown as code),
-   `[[_TOC_]]` / `[TOC]` (the top-level headings as nested lists, without links). Raw
-   HTML stays escaped, but for `<br>` and the paired `<kbd>`, `<sub>`, `<sup>` (only when the
-   closing tag is there). Not taken: emoji, colour chips, maths, diagrams, heading anchors, image
-   sizes, video, `<details>`, and GitLab references (`#123`, `@user`: no GitLab behind them).
+   `[[_TOC_]]` / `[TOC]` (the top-level headings as nested lists, linked), heading anchors
+   (`#some-heading`; ids are only written when the text has a TOC or such a link, and the panel
+   follows a `#` link by itself, scrolling and fetching nothing), `{width=50%}` after an image,
+   `:emoji:` shortcodes (about 130 common names; GitLab knows far more, an unknown one stays as
+   typed) and hidden `<!-- comments -->`. Raw HTML stays escaped, but for `<br>` and the paired
+   `<kbd>`, `<sub>`, `<sup>` (only when the closing tag is there). Not taken: colour chips,
+   maths, diagrams, video, `<details>`, and GitLab references (`#123`, `@user`: no GitLab
+   behind them).
    It is a subset of CommonMark, not a conforming implementation. An unknown construct
    becomes escaped text, never an error. Scans are bounded (a link's text 2000 characters, its
    address 2200, a missing closer is looked for once), so a hostile line stays linear. It emits only what the spike showed IPro renders:
