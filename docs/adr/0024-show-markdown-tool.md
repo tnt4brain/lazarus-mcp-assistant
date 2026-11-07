@@ -27,9 +27,13 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
    would add a dependency, stays unused.
 4. **Converter: a pure unit `McpMarkdown`** (class `TMarkdownHtml`, `ToHtml(AMarkdown): string`),
    plain RTL, no IDE units, tested in the suite. Written in the style of `book_translator`'s
-   `UMarkdownParser`, so that project can take it later (renaming the unit). Subset: ATX
-   headings, paragraphs, emphasis, strikethrough, inline code, fenced and indented code, nested
-   lists, block quotes, GFM tables, links, rules, hard breaks. An unknown construct becomes
+   `UMarkdownParser`, so that project can take it later (renaming the unit). Subset: ATX and
+   setext headings, paragraphs, emphasis, strikethrough, inline code, fenced and indented code,
+   nested lists, task lists, block quotes, GFM tables, links (inline and reference), rules,
+   hard breaks. From GitLab's flavour (GLFM, which is GFM plus extensions) only the cheap
+   ones: `> [!note]` alerts, `>>>` quotes, `<br>`. Not taken: footnotes, description lists,
+   inline diffs, front matter, emoji, maths, diagrams, references (`#123`, `@user`: no GitLab
+   behind them) and raw HTML such as `<details>`. An unknown construct becomes
    escaped text, never an error. It emits only what the spike showed IPro renders:
    `h1`-`h6`, `p`, `br`, `strong`, `em`, `del`, `tt`, `a`, `blockquote`, `ul`/`ol`/`li` (nested,
    also inside a quote), `table`/`tr`/`th`/`td` (`align`, `border`), `hr`, `div`, `span`, and

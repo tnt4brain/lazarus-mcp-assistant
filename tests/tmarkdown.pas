@@ -55,6 +55,12 @@ type
     procedure TestControlCharacters;
     procedure TestScheme;
     procedure TestTextSize;
+    procedure TestTaskList;
+    procedure TestSetextHeading;
+    procedure TestReferenceLinks;
+    procedure TestLineBreakTag;
+    procedure TestAlert;
+    procedure TestMultilineQuote;
   end;
 
   TTestImageInfo = class(TTestCase)
@@ -559,6 +565,97 @@ begin
   { two pictures }
   AssertEquals(2 * Length('![p](data:image/gif;base64,)'),
     MdTextSize('![p](data:image/gif;base64,' + Pic + ')![p](data:image/gif;base64,' + Pic + ')'));
+end;
+
+procedure TTestMarkdown.TestTaskList;
+var
+  R : string;
+begin
+  R := H('- [ ] open' + #10 + '- [x] done' + #10 + '- [X] big' + #10 + '- [y] other');
+  Has(R, '<li>' + #$E2#$98#$90 + ' open');
+  Has(R, '<li>' + #$E2#$98#$91 + ' done');
+  Has(R, '<li>' + #$E2#$98#$91 + ' big');
+  Has(R, '<li>[y] other');
+end;
+
+procedure TTestMarkdown.TestSetextHeading;
+var
+  R : string;
+begin
+  R := H('Title' + #10 + '=====' + #10#10 + 'Sub' + #10 + '---' + #10#10 + 'text');
+  Has(R, '<h1>Title</h1>');
+  Has(R, '<h2>Sub</h2>');
+  Has(R, '<p>text</p>');
+  HasNot(R, '<hr>');
+  { more than one line }
+  Has(H('a **b**' + #10 + 'c' + #10 + '==='), '<h1>a <strong>b</strong> c</h1>');
+  { a rule after a blank line is still a rule }
+  Has(H('a' + #10#10 + '---'), '<hr>');
+end;
+
+procedure TTestMarkdown.TestReferenceLinks;
+var
+  R : string;
+begin
+  R := H('see [docs][d], [d] and [x][] now' + #10#10 + '[d]: https://example.com "t"' + #10 +
+         '[X]: <http://a.b>');
+  Has(R, '<a href="https://example.com">docs</a>');
+  Has(R, '<a href="https://example.com">d</a>');
+  Has(R, '<a href="http://a.b">x</a>');
+  HasNot(R, ']:');
+  { an undefined label stays text }
+  Has(H('[nope] and [a][b]'), '[nope] and [a][b]');
+  { definitions inside a fence are code }
+  Has(H('```' + #10 + '[a]: http://x' + #10 + '```'), '[a]:');
+  { only http(s) is a live link, as for inline links }
+  R := H('[t][j]' + #10#10 + '[j]: javascript:alert(1)');
+  HasNot(R, '<a href');
+  Has(R, 't');
+  { a sentence that starts with a bracket is not a definition }
+  Has(H('[1]: see below'), '[1]: see below');
+end;
+
+procedure TTestMarkdown.TestLineBreakTag;
+begin
+  Has(H('a<br>b'), 'a<br>b');
+  Has(H('a<BR/>b'), 'a<br>b');
+  Has(H('a<br />b'), 'a<br>b');
+  Has(H('| a |' + #10 + '|---|' + #10 + '| x<br>y |'), '>x<br>y</td>');
+  HasNot(H('a<br>b'), '&lt;br');
+  { other tags stay escaped }
+  Has(H('<b>x</b>'), '&lt;b&gt;');
+end;
+
+procedure TTestMarkdown.TestAlert;
+var
+  R : string;
+begin
+  R := H('> [!note]' + #10 + '> hello');
+  Has(R, '<td width="5" bgcolor="#0D6EFD">');
+  Has(R, '<strong><font color="#0D6EFD">Note</font></strong>');
+  Has(R, 'hello');
+  HasNot(R, '[!note]');
+  R := H('> [!warning] Careful now' + #10 + '> x');
+  Has(R, '#FD7E14');
+  Has(R, 'Careful now');
+  { an unknown kind is an ordinary quote }
+  R := H('> [!bogus]' + #10 + '> x');
+  Has(R, '<td width="5" bgcolor="#DEE2E6">');
+  Has(R, '[!bogus]');
+end;
+
+procedure TTestMarkdown.TestMultilineQuote;
+var
+  R : string;
+begin
+  R := H('>>>' + #10 + 'line one' + #10#10 + 'line two' + #10 + '>>>' + #10 + 'after');
+  Has(R, '<td width="5" bgcolor="#DEE2E6">');
+  Has(R, 'line one');
+  Has(R, 'line two');
+  Has(R, '<p>after</p>');
+  { not closed: up to the end }
+  Has(H('>>>' + #10 + 'open'), 'open');
+  HasNot(H('>>>' + #10 + 'open'), '&gt;');
 end;
 
 procedure TTestImageInfo.TestPng;

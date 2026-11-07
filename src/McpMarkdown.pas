@@ -38,6 +38,11 @@ type
   private
     FImages : TStrings;
     FDepth  : Integer;
+    FRefs   : TStringList;     { reference link definitions: 'label=url', label in lower case }
+    procedure CollectRefs(ALines: TStrings);
+    function RefLinkAt(const S: string; P: Integer; out AText, AUrl: string;
+      out NextP: Integer): Boolean;
+    function QuoteOut(AInner: TStringList): string;
     function Inline(const S: string): string;
     function ImageHtml(const AAlt, AUrl: string): string;
     function Blocks(ALines: TStrings; ATight: Boolean): string;
@@ -366,7 +371,149 @@ begin
     Result := True;
 end;
 
+{ A line of "=" (heading 1) or "-" (heading 2) under a paragraph.  ALevel is set only when True. }
+function IsSetextLine(const S: string; out ALevel: Integer): Boolean;
+var
+  T : string;
+  I : Integer;
+begin
+  Result := False;
+  if LeadingSpaces(S) > 3 then Exit;
+  T := Trim(S);
+  if (T = '') or not (T[1] in ['=', '-']) then Exit;
+  for I := 1 to Length(T) do
+    if T[I] <> T[1] then Exit;
+  if T[1] = '=' then ALevel := 1 else ALevel := 2;
+  Result := True;
+end;
+
+{ GitLab's multiline quote: a line with ">>>" alone opens it, the next one closes it }
+function IsMultiQuoteFence(const S: string): Boolean;
+begin
+  Result := (LeadingSpaces(S) <= 3) and (Trim(S) = '>>>');
+end;
+
+{ [label]: url "title" }
+function ParseRefDef(const S: string; out ALabel, AUrl: string): Boolean;
+var
+  T, Rest : string;
+  P, Q : Integer;
+begin
+  Result := False;
+  if LeadingSpaces(S) > 3 then Exit;
+  T := Trim(S);
+  if (Length(T) < 5) or (T[1] <> '[') then Exit;
+  P := Pos(']:', T);
+  if P < 3 then Exit;
+  ALabel := LowerCase(Trim(Copy(T, 2, P - 2)));
+  { "[^1]:" is a footnote; "=" would break the name=value list }
+  if (ALabel = '') or (ALabel[1] = '^') or (Pos('[', ALabel) > 0) or (Pos('=', ALabel) > 0) then
+    Exit;
+  T := Trim(Copy(T, P + 2, MaxInt));
+  if T = '' then Exit;
+  if T[1] = '<' then
+  begin
+    Q := Pos('>', T);
+    if Q = 0 then Exit;
+    AUrl := Copy(T, 2, Q - 2);
+  end
+  else
+  begin
+    Q := 1;
+    while (Q <= Length(T)) and (T[Q] > ' ') do Inc(Q);
+    Dec(Q);
+    AUrl := Copy(T, 1, Q);
+  end;
+  Rest := Trim(Copy(T, Q + 1, MaxInt));
+  { only a quoted title may follow: else it is ordinary text that starts with "[x]:" }
+  if (Rest <> '') and not (Rest[1] in ['"', '''', '(']) then Exit;
+  Result := AUrl <> '';
+end;
+
 { ── The converter ────────────────────────────────────────────────────────── }
+
+const
+  MD_MAX_REFS = 256;
+  { task list boxes: U+2610 and U+2611 }
+  MD_BOX_OPEN   = #$E2#$98#$90;
+  MD_BOX_CHECKED = #$E2#$98#$91;
+
+{ Reference definitions are taken out of the text before the blocks are read; a fenced block
+  keeps its lines. }
+procedure TMarkdownHtml.CollectRefs(ALines: TStrings);
+var
+  I, FLen : Integer;
+  FCh : Char;
+  InFence : Boolean;
+  L, U : string;
+begin
+  I := 0;
+  InFence := False;
+  FCh := '`';
+  FLen := 3;
+  while I < ALines.Count do
+  begin
+    if InFence then
+    begin
+      if IsFenceEnd(ALines[I], FCh, FLen) then InFence := False;
+      Inc(I);
+    end
+    else if IsFenceStart(ALines[I], FCh, FLen) then
+    begin
+      InFence := True;
+      Inc(I);
+    end
+    else if ParseRefDef(ALines[I], L, U) then
+    begin
+      if (FRefs.Count < MD_MAX_REFS) and (FRefs.IndexOfName(L) < 0) then
+        FRefs.Add(L + '=' + U);
+      ALines.Delete(I);
+    end
+    else
+      Inc(I);
+  end;
+end;
+
+{ [text][label], [text][] and [label] at S[P] = '[', when the label is defined }
+function TMarkdownHtml.RefLinkAt(const S: string; P: Integer; out AText, AUrl: string;
+  out NextP: Integer): Boolean;
+var
+  N, Q, R, Depth : Integer;
+  Lbl : string;
+begin
+  Result := False;
+  if (FRefs = nil) or (FRefs.Count = 0) then Exit;
+  N := Length(S);
+  Depth := 0;
+  Q := P;
+  while Q <= N do
+  begin
+    if S[Q] = '\' then begin Inc(Q, 2); Continue; end;
+    if S[Q] = '[' then Inc(Depth)
+    else if S[Q] = ']' then
+    begin
+      Dec(Depth);
+      if Depth = 0 then Break;
+    end;
+    Inc(Q);
+  end;
+  if Q > N then Exit;
+  AText := Copy(S, P + 1, Q - P - 1);
+  Lbl := AText;
+  NextP := Q + 1;
+  if (Q < N) and (S[Q + 1] = '[') then
+  begin
+    R := Q + 2;
+    while (R <= N) and (S[R] <> ']') do Inc(R);
+    if R > N then Exit;
+    if R > Q + 2 then Lbl := Copy(S, Q + 2, R - Q - 2);
+    NextP := R + 1;
+  end;
+  Q := FRefs.IndexOfName(LowerCase(Trim(Lbl)));
+  if Q < 0 then Exit;
+  AUrl := FRefs.ValueFromIndex[Q];
+  Result := True;
+end;
 
 { [text](url) at S[P] = '['; NextP is the position after the closing parenthesis }
 function ParseLinkAt(const S: string; P: Integer; out AText, AUrl: string;
@@ -566,7 +713,7 @@ begin
             Inc(I);
           end;
         '[':
-          if ParseLinkAt(S, I, Text, Url, NextP) then
+          if ParseLinkAt(S, I, Text, Url, NextP) or RefLinkAt(S, I, Text, Url, NextP) then
           begin
             if IsSafeHttp(Url) then
               B.Append('<a href="' + MdEscape(Url) + '">' + Inline(Text) + '</a>')
@@ -582,7 +729,22 @@ begin
         '<':
           begin
             P := Pos('>', Copy(S, I, 2100));
-            if (P > 0) and IsSafeHttp(Copy(S, I + 1, P - 2)) then
+            if SameText(Copy(S, I, 4), '<br>') then
+            begin
+              B.Append('<br>');
+              Inc(I, 4);
+            end
+            else if SameText(Copy(S, I, 5), '<br/>') then
+            begin
+              B.Append('<br>');
+              Inc(I, 5);
+            end
+            else if SameText(Copy(S, I, 6), '<br />') then
+            begin
+              B.Append('<br>');
+              Inc(I, 6);
+            end
+            else if (P > 0) and IsSafeHttp(Copy(S, I + 1, P - 2)) then
             begin
               Url := Copy(S, I + 1, P - 2);
               B.Append('<a href="' + MdEscape(Url) + '">' + MdEscape(Url) + '</a>');
@@ -749,6 +911,49 @@ begin
   end;
 end;
 
+{ The quote itself.  A first line "[!note]" (also tip, important, warning, caution), with an
+  optional title after it, makes a GitLab alert: a coloured stripe and a bold title. }
+function TMarkdownHtml.QuoteOut(AInner: TStringList): string;
+var
+  Color, Title, Kind, First : string;
+  P : Integer;
+begin
+  Color := MD_BORDER;
+  Title := '';
+  if AInner.Count > 0 then
+  begin
+    First := Trim(AInner[0]);
+    P := Pos(']', First);
+    if (Copy(First, 1, 2) = '[!') and (P > 3) then
+    begin
+      Kind := LowerCase(Copy(First, 3, P - 3));
+      if Kind = 'note' then Color := '#0D6EFD'
+      else if Kind = 'tip' then Color := '#198754'
+      else if Kind = 'important' then Color := '#6F42C1'
+      else if Kind = 'warning' then Color := '#FD7E14'
+      else if Kind = 'caution' then Color := '#DC3545'
+      else Kind := '';
+      if Kind <> '' then
+      begin
+        Title := Trim(Copy(First, P + 1, MaxInt));
+        if Title = '' then Title := UpCase(Kind[1]) + Copy(Kind, 2, MaxInt);
+        AInner.Delete(0);
+        Title := '<strong><font color="' + Color + '">' + MdEscape(Title) + '</font></strong><br>';
+      end;
+    end;
+  end;
+  Inc(FDepth);
+  try
+    { a stripe on the left, then the text: a quote has no border of its own in IPro }
+    Result := '<table border="0" cellpadding="0" cellspacing="0"><tr>' +
+              '<td width="5" bgcolor="' + Color + '">&nbsp;</td>' +
+              '<td width="12">&nbsp;</td><td>' + Title + Blocks(AInner, False) +
+              '</td></tr></table>';
+  finally
+    Dec(FDepth);
+  end;
+end;
+
 function TMarkdownHtml.QuoteHtml(ALines: TStrings; var I: Integer): string;
 var
   Inner : TStringList;
@@ -775,15 +980,7 @@ begin
         Break;
       Inc(I);
     end;
-    Inc(FDepth);
-    try
-      { a stripe on the left, then the text: a quote has no border of its own in IPro }
-      Result := '<table border="0" cellpadding="0" cellspacing="0"><tr>' +
-                '<td width="5" bgcolor="' + MD_BORDER + '">&nbsp;</td>' +
-                '<td width="12">&nbsp;</td><td>' + Blocks(Inner, False) + '</td></tr></table>';
-    finally
-      Dec(FDepth);
-    end;
+    Result := QuoteOut(Inner);
   finally
     Inner.Free;
   end;
@@ -814,6 +1011,12 @@ begin
     begin
       ListMarker(ALines[I], ItemIndent, ContentCol, ItemOrdered, Num);
       First := Copy(ALines[I], ContentCol + 1, MaxInt);
+      { a task list item: "[ ] " or "[x] " becomes a box }
+      if (Length(First) >= 4) and (First[1] = '[') and (First[3] = ']') and (First[4] = ' ') then
+      begin
+        if First[2] = ' ' then First := MD_BOX_OPEN + Copy(First, 4, MaxInt)
+        else if First[2] in ['x', 'X'] then First := MD_BOX_CHECKED + Copy(First, 4, MaxInt);
+      end;
       Item.Clear;
       Item.Add(First);
       PrevBlank := False;
@@ -879,7 +1082,7 @@ end;
 function TMarkdownHtml.Blocks(ALines: TStrings; ATight: Boolean): string;
 var
   B : TStringBuilder;
-  I, J, Lv, Len : Integer;
+  I, J, Lv, Len, SetextLv : Integer;
   L, T, Para : string;
   Ch : Char;
   Code : TStringList;
@@ -933,6 +1136,23 @@ begin
         B.Append(TableHtml(ALines, I)).Append(#10);
         PrevPara := False;
       end
+      else if IsMultiQuoteFence(L) then
+      begin
+        Code := TStringList.Create;
+        try
+          Inc(I);
+          while (I < ALines.Count) and not IsMultiQuoteFence(ALines[I]) do
+          begin
+            Code.Add(ALines[I]);
+            Inc(I);
+          end;
+          Inc(I);                      { the closing ">>>", or past the end }
+          B.Append(QuoteOut(Code)).Append(#10);
+        finally
+          Code.Free;
+        end;
+        PrevPara := False;
+      end
       else if IsQuote(L) then
       begin
         B.Append(QuoteHtml(ALines, I)).Append(#10);
@@ -964,10 +1184,16 @@ begin
       begin
         { a paragraph: lines up to a blank line or the start of another block }
         Para := '';
+        SetextLv := 0;
         J := I;
         while J < ALines.Count do
         begin
           if IsBlank(ALines[J]) then Break;
+          if (J > I) and IsSetextLine(ALines[J], SetextLv) then
+          begin
+            Inc(J);                    { the underline belongs to the heading }
+            Break;
+          end;
           if (J > I) and StartsBlock(ALines, J) then Break;
           T := ALines[J];
           if (Length(T) >= 2) and (Copy(T, Length(T) - 1, 2) = '  ') and (J + 1 < ALines.Count) then
@@ -980,7 +1206,14 @@ begin
         end;
         I := J;
         Para := Trim(Para);
-        if ATight then
+        if SetextLv > 0 then
+        begin
+          Para := Trim(StringReplace(Para, HardBreak, ' ', [rfReplaceAll]));
+          B.Append('<h' + IntToStr(SetextLv) + '>').Append(Inline(Para))
+           .Append('</h' + IntToStr(SetextLv) + '>').Append(#10);
+          PrevPara := False;
+        end
+        else if ATight then
         begin
           if PrevPara then B.Append('<br>');
           B.Append(Inline(Para)).Append(#10);
@@ -1010,13 +1243,16 @@ begin
   S := StringReplace(S, #13#10, #10, [rfReplaceAll]);
   S := StringReplace(S, #13, #10, [rfReplaceAll]);
   Lines := TStringList.Create;
+  FRefs := TStringList.Create;
   try
     Lines.StrictDelimiter := True;
     Lines.LineBreak := #10;
     Lines.Text := S;
+    CollectRefs(Lines);
     Result := '<html><head><style type="text/css">' + MD_STYLE + '</style></head><body>' + #10 +
               Blocks(Lines, False) + '</body></html>';
   finally
+    FreeAndNil(FRefs);
     Lines.Free;
   end;
 end;
