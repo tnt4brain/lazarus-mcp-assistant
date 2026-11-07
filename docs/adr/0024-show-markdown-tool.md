@@ -27,29 +27,32 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
    would add a dependency, stays unused.
 4. **Converter: a pure unit `McpMarkdown`** (class `TMarkdownHtml`, `ToHtml(AMarkdown): string`),
    plain RTL, no IDE units, tested in the suite. Written in the style of `book_translator`'s
-   `UMarkdownParser`, so that project can take it later (renaming the unit). Subset: ATX and
-   setext headings, paragraphs, emphasis, strikethrough, inline code, fenced and indented code,
-   nested lists, task lists, block quotes, GFM tables, links (inline and reference), rules,
-   hard breaks, entities, link titles, bare `http(s)` addresses. From GitLab's flavour (GLFM,
-   which is GFM plus extensions) the ones IPro can show: `> [!note]` alerts, `>>>` quotes,
-   footnotes, description lists, `{+ +}` / `{- -}` diffs, front matter (shown as code),
-   `[[_TOC_]]` / `[TOC]` (the top-level headings as nested lists, linked), heading anchors
-   (`#some-heading`; ids are only written when the text has a TOC or such a link, and the panel
-   follows a `#` link by itself, scrolling and fetching nothing), `{width=50%}` after an image,
-   `:emoji:` shortcodes (about 130 common names; GitLab knows far more, an unknown one stays as
-   typed) and hidden `<!-- comments -->`. Raw HTML stays escaped, but for `<br>` and the paired
-   `<kbd>`, `<sub>`, `<sup>` (only when the closing tag is there). Not taken: colour chips,
-   maths, diagrams, video, `<details>`, and GitLab references (`#123`, `@user`: no GitLab
-   behind them).
-   It is a subset of CommonMark, not a conforming implementation. An unknown construct
-   becomes escaped text, never an error. Scans are bounded (a link's text 2000 characters, its
-   address 2200, a missing closer is looked for once), so a hostile line stays linear. It emits only what the spike showed IPro renders:
-   `h1`-`h6`, `p`, `br`, `strong`, `em`, `del`, `tt`, `a`, `blockquote`, `ul`/`ol`/`li` (nested,
-   also inside a quote), `table`/`tr`/`th`/`td` (`align`, `border`), `hr`, `div`, `span`, and
-   `img` (local paths only, see 5; not yet tried in the spike). Two
-   forms differ from the usual: inline code is `tt` (`code` is letter-spaced), and a fence is a
-   shaded one-cell table (`bgcolor`) of `tt` lines with `&nbsp;` for runs of spaces and `br`
-   between lines, because IPro does not decode entities inside `pre`.
+   `UMarkdownParser`, so that project can take it later (renaming the unit). It is a subset of
+   CommonMark and GitLab's flavour (GLFM, GFM plus extensions), not a conforming implementation,
+   and takes what IPro can show:
+   - *Blocks:* ATX and setext headings, paragraphs, quotes (also `>>>` and `> [!note]` alerts),
+     bulleted, numbered and task lists (nested), description lists, fenced and indented code,
+     GFM tables, rules, front matter (shown as code), `[[_TOC_]]` / `[TOC]`, footnotes.
+   - *Inline:* emphasis, strikethrough, code, links (inline, reference, bare `http(s)`
+     addresses, `#heading` anchors; titles kept), images (`{width=50%}` after one),
+     `{+ +}` / `{- -}` diffs, footnote references, entities, `:emoji:` (about 130 common names;
+     an unknown one stays as typed), `<br>` and the paired `<kbd>`, `<sub>`, `<sup>` (only when
+     the closing tag is there). `<!-- comments -->` are dropped.
+   - *Not taken:* colour chips, maths, diagrams, video, `<details>`, other raw HTML (escaped),
+     GitLab references (`#123`, `@user`: no GitLab behind them).
+   - *Anchors:* headings get GitLab-style ids only when the text has a TOC or a `#` link. The
+     panel follows a `#` link by itself (scrolls, fetches nothing); the data provider refuses
+     every other URL.
+
+   An unknown construct becomes escaped text, never an error. Scans are bounded (a link's text
+   2000 characters, its address 2200, a missing closer is looked for once), so a hostile line
+   stays linear (a test builds 800 KB of it). The output has only tags the spike showed IPro
+   renders: `h1`-`h6`, `p`, `br`, `strong`, `em`, `del`, `tt`, `kbd`, `sub`, `sup`, `a`, `ul`/`ol`/`li`
+   (nested), `dl`/`dt`/`dd`, `table`/`tr`/`th`/`td`, `hr`, `font`, `img`, and a `style` block of
+   whole-pixel margins. Forms that differ from the usual: inline code is `tt` (`code` is
+   letter-spaced); a fence is a shaded one-cell table of `tt` lines with `&nbsp;` for runs of
+   spaces and `br` between lines, because IPro does not decode entities inside `pre`; a quote
+   is a table with a coloured stripe, as IPro draws no border on `blockquote`.
 5. **The input is untrusted** (it can quote files and web pages):
    - Raw HTML in the Markdown is escaped, never passed on.
    - Images are shown from local files and from Base64 `data:` URIs (part 2 of the work; the
@@ -74,8 +77,10 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
      shown before the click. Other schemes are plain text.
 6. **Logging:** ADR-022 records `arg_keys` and a hash, never values; the document stays out of
    `mcp-tools.log`.
-7. **Server instructions** get two sentences: use the tool for long structured output and keep the
-   chat reply short; not for short answers.
+7. **Server instructions** say which answers go to the window: a reply with a table, a plan, a
+   review, a code listing or more than about 15 lines of structured text; the chat reply then
+   shrinks to the gist. Short answers stay in the chat. (A first, vaguer wording left the
+   choice to the model and it kept answering in the console.)
 
 ## Rejected
 
@@ -94,8 +99,15 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
   quotes, nested lists, rules, shaded code blocks and Cyrillic text all fine. Long code lines do
   not wrap: the page scrolls sideways.
 - An unknown tag is dropped but its text stays; a `javascript:` link would still look like a
-  link, so the converter emits `a` only for `http` and `https`. Whether a click needs a handler
-  to stay silent is checked with the window, not assumed.
+  link, so the converter emits `a` only for `http`, `https` and `#anchor`. A click on an
+  `http(s)` link reaches `OnHotClick` (the data provider's `CanHandle` is false for it); a
+  `#` link is handled by the panel and scrolls.
+- **Look.** Bootstrap 5 as far as IPro allows: its colours, 16 px under a block and 8 px under
+  a heading (a `style` block; IPro reads tag selectors and whole pixels only), the UI font and
+  a real monospace font, a 1.25 line height. IPro takes a table border's colour from the
+  `border` attribute, not from CSS: the borders of tables and code frames are dark, not light
+  grey. It ignores the bottom margin of `ul` and `ol`: no gap after a list. Emoji are
+  monochrome (the panel draws text with GDI, with no colour fonts).
 - The tool shows what the model sends; a misleading document is possible, as in the console. Links
   need a click and show their target.
 - Found while building the images part: the handler hands IPro a `TPicture` and IPro owns it;
@@ -108,15 +120,23 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
   hints come from IPro (`ShowHints`); a click reaches `OnHotClick`, which opens only `http(s)`.
 - **Docking.** The window is registered with `IDEWindowCreators` (`McpMarkdownFormID`, as the
   chat window is) and created and shown through it, so in the IDE's docking layout the user can
-  dock it next to the source editor, and the IDE remembers where it was; the floating layout is
-  unchanged. A window restored at IDE start has no documents and closes itself. A docked window
-  behind another tab is not brought forward by a new document; the user clicks its tab.
-  Not a page of the editor's own notebook: the IDE offers no way to add one.
+  dock it next to the source editor; the floating layout is unchanged. A window restored at IDE
+  start has no documents and closes itself. A docked window behind another tab is not brought
+  forward by a new document; the user clicks its tab. Not a page of the editor's own
+  notebook: the IDE offers no way to add one.
+  Closing the window hides it, with its documents dropped, and the next document shows it
+  again (a closed docked window still counted as visible, and the check now looks at the host
+  window too). AnchorDocking forgets where a closed window was docked, so the creator names the
+  source editor as the default dock sibling (right side): a window the user closed comes back
+  there, not where they had put it. A floating window opens on the monitor of the IDE's main
+  window.
 - The window is shown by the plain LCL `Show`, with no platform code: the active IDE form is
   remembered and focused again afterwards. If another program had the focus (a terminal), LCL
   cannot know it, and the window may take the focus then. (`ShowWindow(SW_SHOWNOACTIVATE)`
   alone was tried: LCL then thought the form hidden and the page stayed blank.)
-- Tests: the converter (headings, lists, tables, fences, escaping, images by path kind, hostile
-  input such as `<script>` and `javascript:`) and the tool's schema and limits through the HTTP
-  harness. The window needs a manual look on Windows.
+- Tests: the converter (every construct above, escaping, images by path kind, hostile input such
+  as `<script>`, `javascript:` and an 800 KB line of unclosed openers) and the image header
+  checks. The window needs a manual look on Windows; links, anchors, docking and reopening were
+  checked that way. Not checked: closing a docked tab by its own button, and the empty-window
+  cleanup when the IDE starts with the viewer docked.
 - Minor release (1.4.0).
