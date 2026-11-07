@@ -42,6 +42,9 @@ type
     FNotes  : TStringList;     { footnote definitions: 'id=text', id in lower case }
     FNoteOrder : TStringList;  { footnote ids in the order they are first used }
     FNoAuto : Integer;         { above 0: no bare URLs (inside a link's text) }
+    FHeads  : TStringList;     { top-level headings: 'level' #2 'html', for [[_TOC_]] }
+    procedure NoteHeading(ALevel: Integer; const AHtml: string);
+    function TocHtml: string;
     procedure CollectRefs(ALines: TStrings);
     function NotesHtml: string;
     function DefListHtml(ALines: TStrings; var I: Integer): string;
@@ -422,6 +425,17 @@ begin
   ALines[E] := '~~~~~~~~';
 end;
 
+{ GitLab's table of contents: "[[_TOC_]]" or "[TOC]" alone on a line }
+function IsTocLine(const S: string): Boolean;
+var
+  T : string;
+begin
+  Result := False;
+  if LeadingSpaces(S) > 3 then Exit;
+  T := UpperCase(Trim(S));
+  Result := (T = '[[_TOC_]]') or (T = '[TOC]');
+end;
+
 { ": definition" of a description list }
 function IsDefLine(const S: string): Boolean;
 begin
@@ -602,6 +616,7 @@ end;
 
 const
   MD_MAX_REFS = 256;
+  TocMark = #3;         { stands for the table of contents until the headings are known }
   { task list boxes: U+2610 and U+2611 }
   MD_BOX_OPEN   = #$E2#$98#$90;
   MD_BOX_CHECKED = #$E2#$98#$91;
@@ -691,6 +706,67 @@ begin
   AUrl := Copy(V, 1, R - 1);
   ATitle := Copy(V, R + 1, MaxInt);
   Result := True;
+end;
+
+procedure TMarkdownHtml.NoteHeading(ALevel: Integer; const AHtml: string);
+begin
+  if (FDepth = 0) and (FHeads.Count < 500) then
+    FHeads.Add(IntToStr(ALevel) + #2 + AHtml);
+end;
+
+{ The headings of the document as nested bulleted lists: [[_TOC_]] and [TOC] (GitLab).  A jump
+  of more than one level counts as one, so every list sits inside an item. }
+function TMarkdownHtml.TocHtml: string;
+var
+  B : TStringBuilder;
+  I, Lv, Base, D, T, P : Integer;
+  Item : string;
+begin
+  Result := '';
+  if FHeads.Count = 0 then Exit;
+  Base := 6;
+  for I := 0 to FHeads.Count - 1 do
+  begin
+    Lv := StrToIntDef(Copy(FHeads[I], 1, Pos(#2, FHeads[I]) - 1), 1);
+    if Lv < Base then Base := Lv;
+  end;
+  B := TStringBuilder.Create;
+  try
+    D := 0;
+    for I := 0 to FHeads.Count - 1 do
+    begin
+      P := Pos(#2, FHeads[I]);
+      Lv := StrToIntDef(Copy(FHeads[I], 1, P - 1), 1);
+      Item := Copy(FHeads[I], P + 1, MaxInt);
+      T := Lv - Base + 1;
+      if T > D + 1 then T := D + 1;
+      if D = T then
+        B.Append('</li>')
+      else if D < T then
+      begin
+        B.Append('<ul>');
+        Inc(D);
+      end
+      else
+      begin
+        while D > T do
+        begin
+          B.Append('</li></ul>');
+          Dec(D);
+        end;
+        B.Append('</li>');
+      end;
+      B.Append('<li>').Append(Item);
+    end;
+    while D > 0 do
+    begin
+      B.Append('</li></ul>');
+      Dec(D);
+    end;
+    Result := B.ToString;
+  finally
+    B.Free;
+  end;
 end;
 
 { The footnotes used, as a numbered list under a rule, in the order they were first cited. }
@@ -1441,7 +1517,7 @@ function TMarkdownHtml.Blocks(ALines: TStrings; ATight: Boolean): string;
 var
   B : TStringBuilder;
   I, J, Lv, Len, SetextLv : Integer;
-  L, T, Para : string;
+  L, T, Para, HText : string;
   Ch : Char;
   Code : TStringList;
   PrevPara : Boolean;
@@ -1477,9 +1553,17 @@ begin
         end;
         PrevPara := False;
       end
+      else if IsTocLine(L) then
+      begin
+        B.Append(TocMark).Append(#10);       { filled in when all headings are known }
+        Inc(I);
+        PrevPara := False;
+      end
       else if IsHeading(L, Lv, T) then
       begin
-        B.Append('<h' + IntToStr(Lv) + '>').Append(Inline(T)).Append('</h' + IntToStr(Lv) + '>').Append(#10);
+        HText := Inline(T);
+        NoteHeading(Lv, HText);
+        B.Append('<h' + IntToStr(Lv) + '>').Append(HText).Append('</h' + IntToStr(Lv) + '>').Append(#10);
         Inc(I);
         PrevPara := False;
       end
@@ -1572,7 +1656,9 @@ begin
         if SetextLv > 0 then
         begin
           Para := Trim(StringReplace(Para, HardBreak, ' ', [rfReplaceAll]));
-          B.Append('<h' + IntToStr(SetextLv) + '>').Append(Inline(Para))
+          HText := Inline(Para);
+          NoteHeading(SetextLv, HText);
+          B.Append('<h' + IntToStr(SetextLv) + '>').Append(HText)
            .Append('</h' + IntToStr(SetextLv) + '>').Append(#10);
           PrevPara := False;
         end
@@ -1601,6 +1687,7 @@ begin
   FDepth := 0;
   if Assigned(FImages) then FImages.Clear;
   S := StringReplace(AMarkdown, HardBreak, '', [rfReplaceAll]);
+  S := StringReplace(S, TocMark, '', [rfReplaceAll]);
   S := StringReplace(S, #0, ' ', [rfReplaceAll]);
   S := StringReplace(S, #9, '    ', [rfReplaceAll]);
   S := StringReplace(S, #13#10, #10, [rfReplaceAll]);
@@ -1609,6 +1696,7 @@ begin
   FRefs := TStringList.Create;
   FNotes := TStringList.Create;
   FNoteOrder := TStringList.Create;
+  FHeads := TStringList.Create;
   FNoAuto := 0;
   try
     Lines.StrictDelimiter := True;
@@ -1617,9 +1705,12 @@ begin
     FrontMatterToCode(Lines);
     CollectRefs(Lines);
     Body := Blocks(Lines, False);
+    if Pos(TocMark, Body) > 0 then
+      Body := StringReplace(Body, TocMark, TocHtml, [rfReplaceAll]);
     Result := '<html><head><style type="text/css">' + MD_STYLE + '</style></head><body>' + #10 +
               Body + NotesHtml + '</body></html>';
   finally
+    FreeAndNil(FHeads);
     FreeAndNil(FNoteOrder);
     FreeAndNil(FNotes);
     FreeAndNil(FRefs);

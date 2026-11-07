@@ -70,6 +70,7 @@ type
     procedure TestDescriptionList;
     procedure TestInlineDiff;
     procedure TestFrontMatter;
+    procedure TestToc;
     procedure TestNewSyntaxIsLinear;
   end;
 
@@ -757,6 +758,28 @@ begin
   Has(H('a {+ x'), 'a {+ x');
   { a task box is not a diff }
   Has(H('[+]'), '[+]');
+end;
+
+procedure TTestMarkdown.TestToc;
+var
+  R : string;
+begin
+  R := H('[[_TOC_]]' + #10#10 + '# One' + #10#10 + '## Two *a*' + #10#10 + '## Three' + #10#10 +
+         '#### Deep' + #10#10 + '# Four' + #10#10 + 'Five' + #10 + '---');
+  Has(R, '<ul><li>One<ul><li>Two <em>a</em></li><li>Three<ul><li>Deep</li></ul></li></ul></li>' +
+         '<li>Four<ul><li>Five</li></ul></li></ul>');
+  { [TOC] works too, in any case; with no headings there is nothing }
+  Has(H('[toc]' + #10#10 + '# A'), '<ul><li>A</li></ul>');
+  HasNot(H('[TOC]'), '<ul>');
+  { the marker never reaches the page, also when typed into the text }
+  HasNot(R, #3);
+  HasNot(H('a' + #3 + 'b' + #10#10 + '# A'), #3);
+  { two of them list the same headings; a heading in a quote is not listed }
+  R := H('[TOC]' + #10#10 + '[[_TOC_]]' + #10#10 + '# A' + #10#10 + '> # Q');
+  AssertEquals(2, (Length(R) - Length(StringReplace(R, '<ul><li>A</li></ul>', '', [rfReplaceAll]))) div
+    Length('<ul><li>A</li></ul>'));
+  { in a code block it is code }
+  Has(H('```' + #10 + '[TOC]' + #10 + '```' + #10#10 + '# A'), '<tt>[TOC]</tt>');
 end;
 
 procedure TTestMarkdown.TestNewSyntaxIsLinear;

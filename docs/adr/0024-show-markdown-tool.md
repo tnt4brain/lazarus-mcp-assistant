@@ -32,9 +32,10 @@ and is installed; Report Manager already uses it as the fallback viewer for its 
    nested lists, task lists, block quotes, GFM tables, links (inline and reference), rules,
    hard breaks, entities, link titles, bare `http(s)` addresses. From GitLab's flavour (GLFM,
    which is GFM plus extensions) the ones IPro can show: `> [!note]` alerts, `>>>` quotes,
-   footnotes, description lists, `{+ +}` / `{- -}` diffs, front matter (shown as code). Raw
+   footnotes, description lists, `{+ +}` / `{- -}` diffs, front matter (shown as code),
+   `[[_TOC_]]` / `[TOC]` (the top-level headings as nested lists, without links). Raw
    HTML stays escaped, but for `<br>` and the paired `<kbd>`, `<sub>`, `<sup>` (only when the
-   closing tag is there). Not taken: emoji, colour chips, maths, diagrams, `[[_TOC_]]`, image
+   closing tag is there). Not taken: emoji, colour chips, maths, diagrams, heading anchors, image
    sizes, video, `<details>`, and GitLab references (`#123`, `@user`: no GitLab behind them).
    It is a subset of CommonMark, not a conforming implementation. An unknown construct
    becomes escaped text, never an error. Scans are bounded (a link's text 2000 characters, its
