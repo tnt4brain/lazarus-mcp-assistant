@@ -30,7 +30,7 @@ implementation
 uses
   Classes, SysUtils, Math, StrUtils,
   LazIDEIntf, SrcEditorIntf, LazFileUtils,
-  Controls, Forms, Menus, LCLProc, FormEditingIntf, ComponentEditors,
+  Controls, Forms, Menus, ActnList, LCLProc, FormEditingIntf, ComponentEditors,
   TypInfo, LResources,
   ComponentReg, PropEdits,
   fpjson,
@@ -64,14 +64,14 @@ const
       '\"Parent\":\"Panel1\",\"Name\":\"btnOK\",\"Columns[0].Width\":120,\"Lines\":[\"first\",\"second\"]}. ' +
       'Collection items are addressed by index (Columns[0].Caption, Panels[2].Text); string lists ' +
       '(Lines, Items) take an array of strings or one text with line breaks. Parent moves the control ' +
-      'into another container; Name renames it in the source as well; events take a handler name (created if missing). ' +
+      'into another container (for an action, Parent or ActionList names the TActionList it moves to); Name renames it in the source as well; events take a handler name (created if missing). ' +
       'Applied in order Parent, others, Name. Returns one result per property."}},' +
     '"required":["form_file","component_name","properties"]}';
 
   SCHEMA_FORM_ADD_COMPONENT =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
-    '"class_name":{"type":"string","description":"Component class (e.g. TButton); must be on the IDE palette"},' +
-    '"parent_name":{"type":"string","description":"Container to put it in; defaults to the form"},' +
+    '"class_name":{"type":"string","description":"Component class (e.g. TButton); must be on the IDE palette, or be an action class (TAction, ...)"},' +
+    '"parent_name":{"type":"string","description":"Container to put it in; defaults to the form. For an action: the TActionList that gets it"},' +
     '"name":{"type":"string","description":"Component name; default is the IDE''s (Button1, ...)"},' +
     '"left":{"type":"integer","description":"Default 8"},' +
     '"top":{"type":"integer","description":"Default 8"},' +
@@ -122,7 +122,7 @@ const
   SCHEMA_FORM_LIST_COLLECTION_ITEMS =
     '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
     '"include_properties":{"type":"boolean","description":"Return each item''s properties (default true)"}},' +
-    '"required":["form_file","component_name","property"]}';
+    '"required":["form_file","component_name"]}';
 
   SCHEMA_FORM_ADD_COLLECTION_ITEM =
     '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
@@ -815,6 +815,26 @@ begin
   end;
 end;
 
+function ActionCaption(AAction: TContainedAction): string;
+begin
+  if IsPublishedProp(AAction, 'Caption') then
+    Result := GetStrProp(AAction, 'Caption')
+  else
+    Result := '';
+end;
+
+{ A registered action class (TAction and subclasses) by name, or nil.  Actions
+  are not on the palette; the designer offers them in the action list editor. }
+function FindActionClass(const AName: string): TComponentClass;
+var
+  C : TPersistentClass;
+begin
+  Result := nil;
+  C := GetClass(AName);
+  if (C <> nil) and C.InheritsFrom(TContainedAction) then
+    Result := TComponentClass(C);
+end;
+
 { Move AComp into the container named ANewParent. }
 function SetParentOf(ADesigner: TIDesigner; AComp: TComponent;
   const ANewParent: string; out AErr: string): Boolean;
@@ -823,9 +843,21 @@ var
 begin
   Result := False;
   AErr   := '';
+  if AComp is TContainedAction then
+  begin
+    { an action belongs to a TActionList, not to a container }
+    P := FindComp(ADesigner, ANewParent);
+    if not (P is TCustomActionList) then
+    begin
+      AErr := 'action list not found: ' + ANewParent;
+      Exit;
+    end;
+    TContainedAction(AComp).ActionList := TCustomActionList(P);
+    Exit(True);
+  end;
   if not (AComp is TControl) then
   begin
-    AErr := AComp.Name + ' is not a control';
+    AErr := AComp.Name + ' is neither a control nor an action';
     Exit;
   end;
   P := FindComp(ADesigner, ANewParent);
@@ -880,7 +912,8 @@ begin
       for I := 0 to AProps.Count - 1 do
       begin
         Key := AProps.Names[I];
-        if (Pass = 0) <> SameText(Key, 'Parent') then Continue;
+        if (Pass = 0) <> (SameText(Key, 'Parent') or
+           ((AComp is TContainedAction) and SameText(Key, 'ActionList'))) then Continue;
         if (Pass = 2) <> SameText(Key, 'Name') then Continue;
         Val := JSONValueAsString(AProps.Items[I]);
         R := TJSONObject.Create;
@@ -898,12 +931,21 @@ begin
                 OldParent := TControl(AComp).Parent;
               if SetParentOf(ADesigner, TComponent(AComp), Val, Err) then
               begin
-                R.Add('value', TControl(AComp).Parent.Name);
-                { as the Object Inspector and the component tree record it }
-                Undoable := Assigned(OldParent);
-                if ARecord and Undoable then
-                  AddUndo(AGroup^, AComp, uopChange, 'Parent', OldParent.Name,
-                          TControl(AComp).Parent.Name);
+                if AComp is TContainedAction then
+                begin
+                  { not recorded in the undo list: undo would not restore the list }
+                  R.Add('value', TContainedAction(AComp).ActionList.Name);
+                  Undoable := False;
+                end
+                else
+                begin
+                  R.Add('value', TControl(AComp).Parent.Name);
+                  { as the Object Inspector and the component tree record it }
+                  Undoable := Assigned(OldParent);
+                  if ARecord and Undoable then
+                    AddUndo(AGroup^, AComp, uopChange, 'Parent', OldParent.Name,
+                            TControl(AComp).Parent.Name);
+                end;
               end;
             end;
           end
@@ -1090,6 +1132,16 @@ begin
       Result.Add('text', GetStrProp(C, 'Text'));
     if (C is TWinControl) and IsPublishedProp(C, 'TabOrder') then
       Result.Add('tab_order', TWinControl(C).TabOrder);
+  end
+  else if AComp is TContainedAction then
+  begin
+    Result.Add('action', True);
+    if Assigned(TContainedAction(AComp).ActionList) then
+      Result.Add('action_list', TContainedAction(AComp).ActionList.Name)
+    else
+      Result.Add('action_list', '');
+    Result.Add('caption',  ActionCaption(TContainedAction(AComp)));
+    Result.Add('category', TContainedAction(AComp).Category);
   end
   else if AComp is TMenuItem then
   begin
@@ -1498,6 +1550,45 @@ begin
   begin
     Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
   end;
+  if (AComp is TCustomActionList) and (Name = 'form_list_collection_items') and
+     SameText(Ctx.Params.Get('property', 'Actions'), 'Actions') then
+  begin
+    { the actions of a list are components, not collection items }
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('component_name', AComp.Name);
+      Obj.Add('property', 'Actions');
+      Obj.Add('item_class', 'TContainedAction');
+      Obj.Add('count', TCustomActionList(AComp).ActionCount);
+      Arr  := TJSONArray.Create;
+      Obj.Add('items', Arr);
+      Pool := TEditorPool.Create;
+      try
+        for I := 0 to TCustomActionList(AComp).ActionCount - 1 do
+        begin
+          IObj := TJSONObject.Create;
+          IObj.Add('index', I);
+          IObj.Add('name',  TCustomActionList(AComp).Actions[I].Name);
+          IObj.Add('class', TCustomActionList(AComp).Actions[I].ClassName);
+          IObj.Add('display_name', ActionCaption(TCustomActionList(AComp).Actions[I]));
+          if Ctx.Params.Get('include_properties', True) then
+          begin
+            Res := TJSONArray.Create;
+            Pool.CollectTop(TCustomActionList(AComp).Actions[I], tkProperties);
+            ListLevel(Pool, '', 0, nil, Res);
+            IObj.Add('properties', Res);
+          end;
+          Arr.Add(IObj);
+        end;
+      finally
+        Pool.Free;
+      end;
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+    Exit;
+  end;
   Coll := FindCollection(AComp, Ctx.Params.Get('property', ''), Err);
   if Coll = nil then
   begin
@@ -1800,6 +1891,10 @@ var
   Kinds        : TTypeKinds;
   I, Failed    : Integer;
   RegComp      : TRegisteredComponent;
+  ActionCls    : TComponentClass;
+  NewClass     : TComponentClass;
+  NewUnit      : string;
+  ActList      : TCustomActionList;
   Query        : string;
   NewCompClass : string;
   ParentComp   : TComponent;
@@ -2015,12 +2110,18 @@ begin
           RegComp := IDEComponentPalette.Comps[I];
           Break;
         end;
+    ActionCls := nil;
     if RegComp = nil then
     begin
-      Ctx.Error  := True;
-      Ctx.Result := 'Component class not in IDE palette: ' + NewCompClass +
-                    ' (use form_search_palette)';
-      Exit;
+      { actions are not on the palette }
+      ActionCls := FindActionClass(NewCompClass);
+      if ActionCls = nil then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Component class not in IDE palette: ' + NewCompClass +
+                      ' (use form_search_palette)';
+        Exit;
+      end;
     end;
     ParentComp := Root;
     if Ctx.Params.Get('parent_name', '') <> '' then
@@ -2037,14 +2138,41 @@ begin
     ATop    := Ctx.Params.Get('top',    8);
     AWidth  := Ctx.Params.Get('width',  0);   { 0 = class default }
     AHeight := Ctx.Params.Get('height', 0);
-    NewComp := FormEditingHook.CreateComponent(ParentComp, RegComp.ComponentClass,
-      RegComp.GetUnitName, ALeft, ATop, AWidth, AHeight, False);
+    ActList := nil;
+    if Assigned(RegComp) then
+    begin
+      NewClass := RegComp.ComponentClass;
+      NewUnit  := RegComp.GetUnitName;
+    end
+    else
+    begin
+      NewClass := ActionCls;
+      NewUnit  := GetTypeData(PTypeInfo(ActionCls.ClassInfo))^.UnitName;
+    end;
+    if NewClass.InheritsFrom(TContainedAction) then
+    begin
+      { an action goes into an action list; the form owns it }
+      if ParentComp is TCustomActionList then
+        ActList := TCustomActionList(ParentComp)
+      else if ParentComp <> Root then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'parent_name must be a TActionList for an action: ' +
+                      Ctx.Params.Get('parent_name', '');
+        Exit;
+      end;
+      ParentComp := Root;
+    end;
+    NewComp := FormEditingHook.CreateComponent(ParentComp, NewClass,
+      NewUnit, ALeft, ATop, AWidth, AHeight, False);
     if NewComp = nil then
     begin
       Ctx.Error  := True;
       Ctx.Result := 'CreateComponent returned nil for: ' + NewCompClass;
       Exit;
     end;
+    if Assigned(ActList) and (NewComp is TContainedAction) then
+      TContainedAction(NewComp).ActionList := ActList;
     { What the designer does after a palette drop: the IDE adds the class
       field, the unit to the uses clause and the package dependency. }
     GlobalDesignHook.PersistentAdded(NewComp, False);
@@ -2358,7 +2486,10 @@ begin
     SCHEMA_FORM_CREATE_EVENT_HANDLER, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_list_collection_items',
     'List the items of a collection property (ListView Columns, StatusBar Panels, ' +
-    '...). Edit them with form_set_properties and indexed paths: Columns[0].Caption.',
+    '...). Edit them with form_set_properties and indexed paths: Columns[0].Caption. ' +
+    'For a TActionList, lists its actions (property optional): edit them by name with ' +
+    'form_set_properties, create with form_add_component (class TAction, parent_name = ' +
+    'the list), delete with form_delete_component.',
     SCHEMA_FORM_LIST_COLLECTION_ITEMS, MCP_ANN_RO));
   Tools.Add(MakeTool('form_add_collection_item',
     'Add an item to a collection property (Columns, Panels, Sections, Bands, ...), ' +
