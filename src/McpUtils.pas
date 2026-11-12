@@ -28,6 +28,12 @@ function FindFreePort(const AAddr: string = McpLoopback): Word;
 { Try to bind AAddr:APort. Returns True if the port is currently free. }
 function IsPortFree(APort: Word; const AAddr: string = McpLoopback): Boolean;
 
+{ The port to store in the settings after the server started on AActual while
+  AWanted was the stored one. The stored port is the URL clients are configured
+  for, so a fallback (the stored port was busy, a second IDE instance) must not
+  replace it: only a first start (AWanted = 0) or the stored port itself is kept. }
+function McpPortToPersist(AWanted, AActual: Word): Word;
+
 { S is a dotted IPv4 address (four numbers 0..255). }
 function McpValidListenAddress(const S: string): Boolean;
 
@@ -226,6 +232,14 @@ begin
   FillAddr(Addr, AAddr, APort);
   Result := fpBind(S, @Addr, SizeOf(Addr)) = 0;
   CloseSocket(S);
+end;
+
+function McpPortToPersist(AWanted, AActual: Word): Word;
+begin
+  if AWanted = 0 then
+    Result := AActual
+  else
+    Result := AWanted;
 end;
 
 function GenerateToken: string;

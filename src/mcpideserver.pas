@@ -1692,7 +1692,9 @@ begin
   end;
   if Toks = '' then Toks := '(none)';
   Sett := '- listen address: ' + McpSettings.ListenAddress + LineEnding +
-          '- port: ' + IntToStr(McpSettings.ServerPort) + LineEnding +
+          '- port: ' + IntToStr(McpSettings.ServerPort) +
+          IfThen(GetServerPort = McpSettings.ServerPort, '',
+                 ' (saved; this run listens on ' + IntToStr(GetServerPort) + ')') + LineEnding +
           '- assistants may install packages: ' + YesNo(McpSettings.AllowPackageInstall) + LineEnding +
           '- tool-call log: ' + YesNo(McpSettings.ToolCallLog) + LineEnding +
           '- tool-call log file: ' + IfThen(McpSettings.ToolLogFile = '',
@@ -1729,6 +1731,7 @@ end;
 procedure InitializeMcpServer;
 var
   Port    : Word;
+  Wanted  : Word;     { the port stored in the settings: the URL clients use }
   Token   : string;
   Tries   : Integer;
   Ver     : string;
@@ -1754,7 +1757,8 @@ begin
   end;
 
   // Try to reuse the persisted port so the MCP URL stays identical
-  Port := McpSettings.ServerPort;
+  Wanted := McpSettings.ServerPort;
+  Port := Wanted;
   if (Port = 0) or not IsPortFree(Port, Addr) then
     Port := FindFreePort(Addr);
   if (Port = 0) and (Addr <> McpLoopback) then
@@ -1763,7 +1767,7 @@ begin
     McpAddMessage(mluImportant,
       'MCP Assistant: cannot listen on ' + Addr + ', using ' + McpLoopback + ' instead');
     Addr := McpLoopback;
-    Port := McpSettings.ServerPort;
+    Port := Wanted;
     if (Port = 0) or not IsPortFree(Port, Addr) then
       Port := FindFreePort(Addr);
   end;
@@ -1795,9 +1799,19 @@ begin
     Exit;
   end;
 
-  // Persist port so next restart reuses the same URL
-  McpSettings.ServerPort := Port;
-  McpSettings.SaveSettings;
+  { Persist the port so the next start reuses the same URL, but only the port
+    that was asked for: a random fallback (another IDE instance holds the stored
+    port) is for this run only, else the first instance restarts on a URL its
+    clients do not have. }
+  if McpPortToPersist(Wanted, Port) <> McpSettings.ServerPort then
+  begin
+    McpSettings.ServerPort := McpPortToPersist(Wanted, Port);
+    McpSettings.SaveSettings;
+  end;
+  if (Wanted <> 0) and (Port <> Wanted) then
+    McpAddMessage(mluImportant,
+      Format('MCP Assistant: port %d is busy (another IDE instance?), listening on %d ' +
+             'for this session; the saved port stays %d', [Wanted, Port, Wanted]));
 
   DebugLn(Format('[MCP Server] Listening on %s:%d.', [Addr, Port]));
 

@@ -21,6 +21,7 @@ type
     procedure TestFindFreePortIsUsable;
     procedure TestIsPortFreeForBoundPort;
     procedure TestListenAddresses;
+    procedure TestPortToPersist;
     procedure TestSwap16RoundTrip;
     procedure TestNormalizePathAbsolute;
     procedure TestNormalizePathRelativeUnchanged;
@@ -138,6 +139,14 @@ begin
   CheckEquals(0, fpListen(S, 1), 'Could not listen on test socket');
   CloseSocket(S);
   CheckTrue(IsPortFree(P), 'Port must register as free immediately after the listening socket is closed');
+end;
+
+procedure TTestUtils.TestPortToPersist;
+begin
+  CheckEquals(38765, McpPortToPersist(0, 38765), 'first start keeps the port it got');
+  CheckEquals(38765, McpPortToPersist(38765, 38765), 'the stored port stays');
+  CheckEquals(38765, McpPortToPersist(38765, 64099),
+    'a fallback port must not replace the stored one');
 end;
 
 procedure TTestUtils.TestSwap16RoundTrip;

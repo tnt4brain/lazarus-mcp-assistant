@@ -1,6 +1,6 @@
 # ADR-004 — Self-Hosted Development: Token Persistence, IDE Rebuild, and Session Continuity
 
-**Status:** Decided  
+**Status:** Decided, amended 2026-11-13 (a fallback port is not saved)  
 **Date:** 2026-10-02
 
 ## Context
@@ -134,3 +134,39 @@ The manual escape hatch if the IDE boot-loops: rename `lazarus.old.exe` →
 - `PackageIntf` must be added to implementation uses in `mcpideserver.pas`.
 - `LaunchMcpAssistant` sets `Proc.InheritHandles := False` so Claude Code does
   not inherit the MCP listening socket.
+
+## Amendment (2026-11-13): a fallback port is not saved
+
+Decision 5 keeps the URL stable by reusing the port stored in
+`mcpassistantoptions.xml`. That works while the stored port is free at start. When it
+is not, the server falls back to a free port chosen by the OS. This happens when
+the previous process still holds the socket (the case decision 5 fixes) and also when
+a second IDE instance is running, since both read the same options file.
+
+The server used to store whatever port it ended up on. The second instance then
+overwrote the stored port with a random one, and the first instance, restarting later,
+started on a URL none of its clients had. A contributor saw the port move 38765 →
+64099 → 56742 across restarts (PR #2, issue #18). Clients with a direct URL broke
+without any message.
+
+- **The stored port is what clients are configured for, so only it is kept.** After
+  the server starts, the port is written to the settings only if none was stored yet
+  (first start) or if the server is on the stored port. `McpPortToPersist` makes that
+  decision and has a unit test.
+- **A fallback lives for one run.** The config file written for the terminal launcher
+  holds the port actually in use, and the report (`ide_report`) shows the saved port
+  and, when it differs, the one this run listens on. Nothing is stored.
+- **The Messages window says so.** When the stored port is busy, one line names both
+  ports ("port N is busy (another IDE instance?), listening on M for this session; the
+  saved port stays N").
+
+Rejected: a port setting per IDE instance (per `--pcp`): the options file already is
+per config directory, and two instances on the same directory are the unusual case;
+the fix only has to stop the unusual case from damaging the usual one.  
+Not covered: the wider sharing of one options file between instances (tokens, consent
+switches). Nothing here changes it.
+
+The call site in `InitializeMcpServer` has no automated test: it needs a live IDE and a
+second process holding the port. The helper's rule is tested; the wiring is checked by
+hand (start a second instance on the same config directory, confirm the stored port is
+unchanged).
