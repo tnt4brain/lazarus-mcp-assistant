@@ -23,7 +23,7 @@ uses
   MacroIntf, Controls, Forms, StdCtrls, IDEDialogs, LCLPlatformDef, StrUtils, MenuIntf, ExtCtrls,
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
-  fpjson,
+  fpjson, jsonparser,
   McpToolContext, McpToolsPackages, McpDialogWatch, McpIdeListeners,
   McpSessionLog, McpToolLog, McpReport;
 
@@ -83,7 +83,9 @@ const
     '{"type":"object","properties":{' +
     '"unit_name":{"type":"string","description":"Pascal unit name for the new form (e.g. UnitSettings)"},' +
     '"kind":{"type":"string","enum":["form","datamodule","frame"],"description":"What to create (default form)"},' +
-    '"directory":{"type":"string","description":"Directory for the new files; defaults to the active project directory"}},' +
+    '"directory":{"type":"string","description":"Directory for the new files; defaults to the active project directory, or the package directory with package_name/lpk_path"},' +
+    '"package_name":{"type":"string","description":"Add the new unit to this loaded package instead of the active project"},' +
+    '"lpk_path":{"type":"string","description":"Absolute path of the .lpk to add the unit to (loaded if needed); alternative to package_name"}},' +
     '"required":["unit_name"]}';
 
   SCHEMA_CLOSE_PROJECT = '{"type":"object","properties":{}}';
@@ -793,6 +795,11 @@ var
   MacroText  : string;
   DbgGen     : Boolean;
   DbgType    : TCompilerDbgSymbolType;
+  InPkg      : Boolean;
+  TargetPkg  : TLazPackage;
+  PkgErr, PkgRes : string;
+  NewFlags   : TNewFlags;
+  AddParams  : TJSONObject;
 begin
   Result := False;
 
@@ -1222,6 +1229,16 @@ begin
     end;
     NewName  := Ctx.Params.Get('unit_name', '');
     FilePath := Ctx.Params.Get('directory', '');
+    InPkg := (Trim(Ctx.Params.Get('package_name', '')) <> '') or
+             (Trim(Ctx.Params.Get('lpk_path', '')) <> '');
+    if InPkg then
+    begin
+      if not TargetPackage(Ctx.Params, TargetPkg, PkgErr) then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+      end;
+      if FilePath = '' then FilePath := TargetPkg.Directory;
+    end;
     if FilePath = '' then
     begin
       Proj := LazarusIDE.ActiveProject;
@@ -1252,8 +1269,9 @@ begin
     end;
     { nfCreateDefaultSrc: without it NewFile leaves the unit empty and the
       designer root nameless (class "T") }
-    if LazarusIDE.DoNewEditorFile(Desc, FilePath, '',
-         [nfCreateDefaultSrc, nfIsPartOfProject, nfOpenInEditor, nfSave]) <> mrOK then
+    if InPkg then NewFlags := [nfCreateDefaultSrc, nfOpenInEditor, nfSave]
+    else NewFlags := [nfCreateDefaultSrc, nfIsPartOfProject, nfOpenInEditor, nfSave];
+    if LazarusIDE.DoNewEditorFile(Desc, FilePath, '', NewFlags) <> mrOK then
     begin
       Ctx.Error  := True;
       Ctx.Result := 'Could not create ' + FilePath;
@@ -1264,6 +1282,25 @@ begin
       Obj.Add('kind',      Kind);
       Obj.Add('unit_file', FilePath);
       Obj.Add('form_file', ChangeFileExt(FilePath, '.lfm'));
+      if InPkg then
+      begin
+        { the unit is not part of the active project; register it in the package }
+        AddParams := TJSONObject.Create;
+        try
+          AddParams.Add('file', FilePath);
+          if Ctx.Params.Get('lpk_path', '') <> '' then
+            AddParams.Add('lpk_path', Ctx.Params.Get('lpk_path', ''))
+          else
+            AddParams.Add('package_name', Ctx.Params.Get('package_name', ''));
+          PkgRes := PackageAddFile(AddParams, PkgErr);
+        finally
+          AddParams.Free;
+        end;
+        if PkgErr <> '' then
+          Obj.Add('package_error', PkgErr)
+        else
+          Obj.Add('package', GetJSON(PkgRes));
+      end;
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -1476,7 +1513,9 @@ begin
     SCHEMA_ANSWER_DIALOG, MCP_ANN_DEST));
   Tools.Add(MakeTool('form_create',
     'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +
-    'both added to the active project and opened in the editor. The IDE names ' +
+    'both added to the active project and opened in the editor. With package_name ' +
+    'or lpk_path the unit goes into that package instead (created in the package ' +
+    'directory, added and the .lpk saved). The IDE names ' +
     'it (Form2, DataModule1, Frame1); rename it with form_set_properties Name.',
     SCHEMA_CREATE_FORM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_open',
