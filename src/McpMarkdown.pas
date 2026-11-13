@@ -1515,6 +1515,31 @@ begin
           end;
         '*', '_', '~':
           begin
+            { ***bold italic***, ___bold italic___ }
+            if (C <> '~') and (I + 3 <= N) and (S[I + 1] = C) and (S[I + 2] = C) and
+               (S[I + 3] > ' ') and not ((C = '_') and (I > 1) and IsAlnum(S[I - 1])) then
+            begin
+              Delim := StringOfChar(C, 3);
+              Found := False;
+              P := I + 3;
+              while P <= N - 2 do
+              begin
+                if S[P] = '\' then begin Inc(P, 2); Continue; end;
+                if (S[P] = C) and (Copy(S, P, 3) = Delim) and (S[P - 1] > ' ') and
+                   not ((C = '_') and (P + 3 <= N) and IsAlnum(S[P + 3])) then
+                begin
+                  Found := True;
+                  Break;
+                end;
+                Inc(P);
+              end;
+              if Found then
+              begin
+                B.Append('<strong><em>' + Inline(Copy(S, I + 3, P - I - 3)) + '</em></strong>');
+                I := P + 3;
+                Continue;
+              end;
+            end;
             Len := 1;
             if (I < N) and (S[I + 1] = C) then Len := 2;
             if (C = '~') and (Len = 1) then

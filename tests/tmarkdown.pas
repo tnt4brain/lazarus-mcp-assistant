@@ -194,6 +194,9 @@ begin
   Has(R, '<em>em</em>');
   Has(R, '<em>em2</em>');
   Has(R, '<del>gone</del>');
+  Has(R, '<strong><em>both</em></strong>');
+  Has(H('x ___both___ y'), '<strong><em>both</em></strong>');
+  Has(H('***open'), '***open');
   Has(H('a * b * c'), 'a * b * c');
   Has(H('**open'), '**open');
   Has(H('\*not\*'), '*not*');
