@@ -24,6 +24,7 @@ type
     procedure TestAddAndRemoveDependency;
     procedure TestSetInfo;
     procedure TestRefusals;
+    procedure TestNameOfAnUnloadedPackage;
     procedure TestConsentGuard;
     procedure TestDownloadUnknownPackage;
   end;
@@ -169,6 +170,22 @@ begin
   T := Call('package_remove_file',
     '{' + Lpk + ',"file":' + JsonStr(FixtureDir + 'nosuchfile.pas') + '}');
   CheckTrue(Pos('is not in', T) > 0, 'not a package file: ' + T);
+end;
+
+procedure TTestPackageEdit.TestNameOfAnUnloadedPackage;
+{ A package a tool loaded by lpk_path is closed again when the IDE is idle (see the
+  unit comment).  package_name must still find it, through its package link. }
+var
+  T : string;
+begin
+  T := Call('package_get_settings', '{' + Lpk + '}');
+  CheckFalse(IsError(T), 'loaded by lpk_path: ' + T);
+  Sleep(2000);
+  T := Call('package_get_settings', '{"package_name":"McpFixturePkg"}');
+  CheckFalse(IsError(T), 'by name after the IDE closed it: ' + T);
+  CheckTrue(Pos('McpFixturePkg', T) > 0, 'its settings: ' + T);
+  T := Call('package_get_settings', '{"package_name":"NoSuchPackageXyz"}');
+  CheckTrue(Pos('Package not loaded', T) > 0, 'an unknown name is still refused: ' + T);
 end;
 
 procedure TTestPackageEdit.TestDownloadUnknownPackage;
