@@ -25,6 +25,10 @@ function TargetPackage(AParams: TJSONObject; out APkg: TLazPackage;
   tells which. }
 function EditResult(APkg: TLazPackage; AWasModified: Boolean; AObj: TJSONObject): string;
 
+{ package_add_file: AParams carries file plus package_name or lpk_path.  AErr =
+  '' on success; the result is the JSON. }
+function PackageAddFile(AParams: TJSONObject; out AErr: string): string;
+
 { A package's status and contents.  APkg: the package to describe, else the
   one loaded under PkgName. }
 function PackageInfoJSON(const PkgName: string; WithFiles: Boolean;
