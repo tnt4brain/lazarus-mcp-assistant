@@ -14,7 +14,7 @@ unit McpMarkdownView;
 interface
 
 uses
-  Classes, SysUtils;
+  Classes, SysUtils, Graphics;
 
 const
   MCP_MD_MAX_TABS = 8;
@@ -25,17 +25,33 @@ const
 function McpMarkdownShow(const AMarkdown, ATitle, ATab, ABaseDir: string;
   out ATabId, AError: string): Boolean;
 
+{ Show a Markdown file (the user's View command): a tab per file, so opening it again
+  refreshes that tab.  AText <> '' is used instead of the file's content (an editor buffer
+  with unsaved changes). }
+function McpMarkdownOpenFile(const AFile, AText: string; out AError: string): Boolean;
+
+{ The user's "View Markdown" commands: the active source editor when it holds a Markdown file,
+  else a file dialog.  Errors are shown in the IDE's message line, never as a modal box. }
+procedure McpMarkdownViewActive(Sender: TObject);
+procedure McpMarkdownPickFile(Sender: TObject);
+
 { Make the window known to the IDE's window layout, so that with the docking layout the user
   can dock it beside the source editor, and the IDE remembers where it was.  Called from the
   package's Register. }
 procedure RegisterMarkdownWindow;
 
+{ The picture of an img of a rendered document: a local file (relative to ABaseDir) or an
+  "mcp-img:N" of AImages ('type:base64').  Checks type, size and the pixel count; nil with the
+  reason in AWhy when it is not shown.  The caller frees the picture. }
+function McpLoadMarkdownPicture(const AUrl, ABaseDir: string; AImages: TStrings;
+  out AWhy: string): TPicture;
+
 implementation
 
 uses
-  Forms, Controls, Graphics, ComCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
-  LCLIntf, LazFileUtils, base64, IDEWindowIntf,
-  McpMarkdown, McpImageInfo;
+  Forms, Controls, ComCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
+  LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEMsgIntf, IDEExternToolIntf,
+  McpMarkdown, McpImageInfo, McpMessages;
 
 const
   MD_FORM_ID = 'McpMarkdownFormID';
@@ -49,6 +65,7 @@ type
     FImages  : TStringList;     { 'type:base64', the index is the N of mcp-img:N }
     FBaseDir : string;
     FId      : string;
+    FFile    : string;     { the file this tab shows ('' = a document from ide_show_markdown) }
     function  LoadImage(const AUrl: string; out AWhy: string): TPicture;
     procedure GetImage(Sender: TIpHtmlNode; const URL: string; var Picture: TPicture);
     function  CanHandle(Sender: TObject; const URL: string): Boolean;
@@ -63,6 +80,8 @@ type
   TMdForm = class(TForm)
   private
     FPages : TPageControl;
+    FLink  : string;       { a relative .md link clicked, opened after the click returns }
+    procedure OpenLink(Data: PtrInt);
     procedure CloseTab(Sender: TObject);
     procedure WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
   public
@@ -70,6 +89,7 @@ type
     destructor Destroy; override;
     procedure CloseIfEmpty(Data: PtrInt);
     function FindTab(const AId: string): TMdTab;
+    function FindFileTab(const AFile: string): TMdTab;
     function NewTab: TMdTab;
     property Pages: TPageControl read FPages;
   end;
@@ -133,7 +153,8 @@ begin
   Result := 'Courier New';
 end;
 
-function TMdTab.LoadImage(const AUrl: string; out AWhy: string): TPicture;
+function McpLoadMarkdownPicture(const AUrl, ABaseDir: string; AImages: TStrings;
+  out AWhy: string): TPicture;
 var
   Data, Declared, Payload, Kind, Path, Ext : string;
   N : Integer;
@@ -148,9 +169,13 @@ begin
     'mcp-img':
       begin
         N := StrToIntDef(Copy(AUrl, 9, 10), -1);
-        if (N < 0) or (N >= FImages.Count) then begin AWhy := 'unknown image'; Exit; end;
-        Declared := Copy(FImages[N], 1, Pos(':', FImages[N]) - 1);
-        Payload := Copy(FImages[N], Pos(':', FImages[N]) + 1, MaxInt);
+        if (AImages = nil) or (N < 0) or (N >= AImages.Count) then
+        begin
+          AWhy := 'unknown image';
+          Exit;
+        end;
+        Declared := Copy(AImages[N], 1, Pos(':', AImages[N]) - 1);
+        Payload := Copy(AImages[N], Pos(':', AImages[N]) + 1, MaxInt);
         if Length(Payload) > (MCP_IMG_MAX_DATA_BYTES div 3 + 1) * 4 then
         begin
           AWhy := 'picture too large';
@@ -176,8 +201,8 @@ begin
         end;
         if not FilenameIsAbsolute(Path) then
         begin
-          if FBaseDir = '' then begin AWhy := 'no project directory'; Exit; end;
-          Path := AppendPathDelim(FBaseDir) + Path;
+          if ABaseDir = '' then begin AWhy := 'no project directory'; Exit; end;
+          Path := AppendPathDelim(ABaseDir) + Path;
         end;
         if not FileExists(Path) then begin AWhy := 'file not found'; Exit; end;
         if not ReadWholeFile(Path, Data) then begin AWhy := 'picture too large'; Exit; end;
@@ -205,6 +230,11 @@ begin
     Ms.Free;
     Gr.Free;
   end;
+end;
+
+function TMdTab.LoadImage(const AUrl: string; out AWhy: string): TPicture;
+begin
+  Result := McpLoadMarkdownPicture(AUrl, FBaseDir, FImages, AWhy);
 end;
 
 procedure TMdTab.GetImage(Sender: TIpHtmlNode; const URL: string; var Picture: TPicture);
@@ -241,6 +271,23 @@ begin
   if not (Sender is TIpHtmlPanel) then Exit;
   Url := TIpHtmlPanel(Sender).HotURL;
   Scheme := MdUrlScheme(Url);
+  if Scheme = '' then
+  begin
+    { a relative link to another Markdown file opens in this window }
+    if (FFile <> '') and (Owner is TMdForm) then
+    begin
+      I := Pos('#', Url);
+      if I > 0 then Url := Copy(Url, 1, I - 1);
+      Url := StringReplace(Url, '%20', ' ', [rfReplaceAll]);
+      if (Url <> '') and ((LowerCase(ExtractFileExt(Url)) = '.md') or
+                          (LowerCase(ExtractFileExt(Url)) = '.markdown')) then
+      begin
+        TMdForm(Owner).FLink := CleanAndExpandFilename(AppendPathDelim(FBaseDir) + Url);
+        Application.QueueAsyncCall(@TMdForm(Owner).OpenLink, 0);
+      end;
+    end;
+    Exit;
+  end;
   if (Scheme <> 'http') and (Scheme <> 'https') then Exit;
   for I := 1 to Length(Url) do
     if Url[I] <= ' ' then Exit;
@@ -347,6 +394,27 @@ begin
   for I := 0 to FPages.PageCount - 1 do
     if (FPages.Pages[I] is TMdTab) and (TMdTab(FPages.Pages[I]).Id = AId) then
       Exit(TMdTab(FPages.Pages[I]));
+end;
+
+function TMdForm.FindFileTab(const AFile: string): TMdTab;
+var
+  I : Integer;
+begin
+  Result := nil;
+  for I := 0 to FPages.PageCount - 1 do
+    if (FPages.Pages[I] is TMdTab) and (TMdTab(FPages.Pages[I]).FFile <> '') and
+       (CompareFilenames(TMdTab(FPages.Pages[I]).FFile, AFile) = 0) then
+      Exit(TMdTab(FPages.Pages[I]));
+end;
+
+procedure TMdForm.OpenLink(Data: PtrInt);
+var
+  Err : string;
+begin
+  if FLink = '' then Exit;
+  if not McpMarkdownOpenFile(FLink, '', Err) then
+    McpAddMessage(mluImportant, 'Markdown: ' + Err);
+  FLink := '';
 end;
 
 function TMdForm.NewTab: TMdTab;
@@ -462,6 +530,100 @@ begin
   except
     on E: Exception do
       AError := E.ClassName + ': ' + E.Message;
+  end;
+end;
+
+{ ── The user's commands ──────────────────────────────────────────────────── }
+
+const
+  MD_MAX_FILE_BYTES = 8 * 1024 * 1024;
+
+function IsMarkdownName(const AName: string): Boolean;
+var
+  Ext : string;
+begin
+  Ext := LowerCase(ExtractFileExt(AName));
+  Result := (Ext = '.md') or (Ext = '.markdown') or (Ext = '.mdown');
+end;
+
+function McpMarkdownOpenFile(const AFile, AText: string; out AError: string): Boolean;
+var
+  Text, TabId, Err : string;
+  S    : TFileStream;
+  Tab  : TMdTab;
+  Reuse: string;
+begin
+  Result := False;
+  AError := '';
+  Text := AText;
+  if Text = '' then
+  begin
+    if not FileExists(AFile) then begin AError := 'no such file: ' + AFile; Exit; end;
+    try
+      S := TFileStream.Create(AFile, fmOpenRead or fmShareDenyNone);
+      try
+        if S.Size > MD_MAX_FILE_BYTES then begin AError := AFile + ' is too large'; Exit; end;
+        SetLength(Text, S.Size);
+        if S.Size > 0 then S.ReadBuffer(Text[1], S.Size);
+      finally
+        S.Free;
+      end;
+    except
+      on E: Exception do begin AError := E.Message; Exit; end;
+    end;
+  end;
+  if (Length(Text) >= 3) and (Text[1] = #$EF) and (Text[2] = #$BB) and (Text[3] = #$BF) then
+    Delete(Text, 1, 3);
+  Reuse := '';
+  if Assigned(GForm) then
+  begin
+    Tab := GForm.FindFileTab(AFile);
+    if Assigned(Tab) then Reuse := Tab.Id;
+  end;
+  if not McpMarkdownShow(Text, ExtractFileName(AFile), Reuse, ExtractFilePath(AFile),
+                         TabId, Err) then
+  begin
+    AError := Err; Exit;
+  end;
+  if Assigned(GForm) then
+  begin
+    Tab := GForm.FindTab(TabId);
+    if Assigned(Tab) then Tab.FFile := AFile;
+  end;
+  Result := True;
+end;
+
+procedure McpMarkdownViewActive(Sender: TObject);
+var
+  Ed  : TSourceEditorInterface;
+  Err : string;
+begin
+  Ed := nil;
+  if Assigned(SourceEditorManagerIntf) then Ed := SourceEditorManagerIntf.ActiveEditor;
+  if Assigned(Ed) and IsMarkdownName(Ed.FileName) then
+  begin
+    if not McpMarkdownOpenFile(Ed.FileName, Ed.Lines.Text, Err) then
+      McpAddMessage(mluImportant, 'Markdown: ' + Err);
+  end
+  else
+    McpMarkdownPickFile(Sender);
+end;
+
+procedure McpMarkdownPickFile(Sender: TObject);
+var
+  Dlg : TOpenDialog;
+  Err : string;
+begin
+  Dlg := TOpenDialog.Create(nil);
+  try
+    Dlg.Title := 'View Markdown file';
+    Dlg.Filter := 'Markdown (*.md;*.markdown)|*.md;*.markdown|All files|*.*';
+    Dlg.Options := Dlg.Options + [ofFileMustExist];
+    if Dlg.Execute then
+      if not McpMarkdownOpenFile(Dlg.FileName, '', Err) then
+        McpAddMessage(mluImportant, 'Markdown: ' + Err);
+  finally
+    Dlg.Free;
   end;
 end;
 

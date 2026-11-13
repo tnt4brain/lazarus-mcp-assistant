@@ -224,6 +224,16 @@ begin
     RegisterIDEMenuCommand(
       McpMenu, 'LaunchMcpAssistant', 'Launch MCP Assistant',
       nil, @LaunchMcpAssistant);
+    { the Markdown viewer for the user's own files: README, ADRs, docs }
+    RegisterIDEMenuCommand(
+      McpMenu, 'McpViewMarkdown', 'View Markdown...',
+      nil, @McpMarkdownViewActive);
+    RegisterIDEMenuCommand(
+      itmViewIDEInternalsWindows, 'McpViewMarkdownWin', 'Markdown Viewer...',
+      nil, @McpMarkdownViewActive);
+    RegisterIDEMenuCommand(
+      SourceEditorMenuRoot, 'McpViewMarkdownEditor', 'View as Markdown',
+      nil, @McpMarkdownViewActive);
     RegisterIDEMenuSection(McpMenu, 'McpSep1');
     RegisterIDEMenuCommand(
       McpMenu, 'McpOptions', 'Options...',
