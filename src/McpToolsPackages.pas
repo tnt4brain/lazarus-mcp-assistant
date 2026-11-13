@@ -44,6 +44,7 @@ uses
   Project,                { IdePackager/IdeProject, linked via IdeDebugger: TPkgDependency }
   PackageSystem,          { PackageGraph }
   PackageLinks,           { LazPackageLinks }
+  PackageLinkIntf,        { TPackageLink }
   ParsedCompilerOpts, SearchPathProcs,  { IdeConfig: unit/include paths }
   CodeToolManager, CodeCache,
   Controls,               { mrOk }
@@ -1049,6 +1050,7 @@ function TargetPackage(AParams: TJSONObject; out APkg: TLazPackage;
 var
   Name, Lpk : string;
   Other     : TLazPackage;
+  Link      : TPackageLink;
 begin
   Result := False;
   APkg   := nil;
@@ -1078,6 +1080,19 @@ begin
   else if Name <> '' then
   begin
     APkg := PackageGraph.FindPackageWithName(Name, nil);
+    if APkg = nil then
+    begin
+      { The IDE unloads a package nothing holds (no editor, not installed, not
+        required), so one that package_create or package_open just loaded may be gone
+        again by the next call: open it from its package link. }
+      Link := LazPackageLinks.FindLinkWithPkgName(Name);
+      if Assigned(Link) and FileExists(Link.LPKFilename) then
+      begin
+        PackageEditingInterface.DoOpenPackageFile(Link.LPKFilename,
+          [pofDoNotOpenEditor], False);
+        APkg := PackageGraph.FindPackageWithFilename(Link.LPKFilename);
+      end;
+    end;
     if APkg = nil then
     begin
       AErr := 'Package not loaded: ' + Name + '. Give its lpk_path instead.';
