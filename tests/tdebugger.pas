@@ -468,7 +468,7 @@ begin
   CheckEquals('paused', JPath(T, 'state'), 'run_to_line: ' + T);
   CheckEquals('2', EvalI(GSessA), 'the existing breakpoint''s condition applied');
   T := Call(GSessA, 'debug_list_breakpoints', '{}');
-  CheckTrue(Pos('"condition" : "I = 2"', T) > 0,
+  CheckTrue(Pos('"condition":"I = 2"', T) > 0,
     'the user''s breakpoint is still there, condition intact: ' + T);
 end;
 

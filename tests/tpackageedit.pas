@@ -78,7 +78,7 @@ end;
 procedure CheckSaved(ACase: TTestCase; const T: string);
 begin
   ACase.CheckFalse(IsError(T), T);
-  if Pos('"saved" : false', T) > 0 then
+  if Pos('"saved":false', T) > 0 then
     if Pos('has unsaved changes', T) > 0 then
       ACase.Ignore('the IDE has unsaved package changes: ' + T)
     else
@@ -93,8 +93,8 @@ begin
   T := Call('package_add_file', '{' + Lpk + ',"file":' + JsonStr(Extra) + '}');
   try
     CheckSaved(Self, T);
-    CheckTrue(Pos('"unit" : "McpFixtureExtra"', T) > 0, 'unit name read: ' + T);
-    CheckTrue(Pos('"has_register_proc" : true', T) > 0, 'Register found: ' + T);
+    CheckTrue(Pos('"unit":"McpFixtureExtra"', T) > 0, 'unit name read: ' + T);
+    CheckTrue(Pos('"has_register_proc":true', T) > 0, 'Register found: ' + T);
     CheckEquals(0, Pos('unit_path_added', T), 'same directory, no path: ' + T);
     CheckTrue(Pos('McpFixtureExtra', LpkText) > 0, 'in the saved .lpk');
     T := Call('package_add_file', '{' + Lpk + ',"file":' + JsonStr(Extra) + '}');
@@ -114,8 +114,8 @@ begin
     '{' + Lpk + ',"required_package":"LazUtils","min_version":"1.0"}');
   try
     CheckSaved(Self, T);
-    CheckTrue(Pos('"status" : "ok"', T) > 0, 'resolved: ' + T);
-    CheckTrue(Pos('"min_version" : "1.0"', T) > 0, 'version limit: ' + T);
+    CheckTrue(Pos('"status":"ok"', T) > 0, 'resolved: ' + T);
+    CheckTrue(Pos('"min_version":"1.0"', T) > 0, 'version limit: ' + T);
     CheckTrue(Pos('LazUtils', LpkText) > 0, 'in the saved .lpk');
     T := Call('package_add_dependency', '{' + Lpk + ',"required_package":"LazUtils"}');
     CheckTrue(Pos('already requires', T) > 0, 'twice: ' + T);
@@ -134,12 +134,12 @@ begin
   T := Call('package_set_info', '{' + Lpk + ',"version":"2.3.4","author":"MCP test"}');
   try
     CheckSaved(Self, T);
-    CheckTrue(Pos('"version" : "1.0"', T) > 0, 'old value: ' + T);
-    CheckTrue(Pos('"version" : "2.3.4"', T) > 0, 'new value: ' + T);
+    CheckTrue(Pos('"version":"1.0"', T) > 0, 'old value: ' + T);
+    CheckTrue(Pos('"version":"2.3.4"', T) > 0, 'new value: ' + T);
     CheckTrue(Pos('Major="2" Minor="3" Release="4"', LpkText) > 0, 'in the saved .lpk: ' + LpkText);
     CheckTrue(Pos('MCP test', LpkText) > 0, 'author saved');
     T := Call('package_set_info', '{' + Lpk + ',"license":"MIT"}');
-    CheckTrue(Pos('"unchanged" : true', T) > 0, 'same value: ' + T);
+    CheckTrue(Pos('"unchanged":true', T) > 0, 'same value: ' + T);
     T := Call('package_set_info', '{' + Lpk + ',"version":"one"}');
     CheckTrue(Pos('Bad version', T) > 0, 'refused: ' + T);
   finally

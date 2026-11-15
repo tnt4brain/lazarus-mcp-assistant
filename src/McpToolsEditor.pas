@@ -29,7 +29,7 @@ const
     '{"type":"object","properties":{"file":{"type":"string",' +
     '"description":"Absolute path to the file"},' +
     '"start_line":{"type":"integer","description":"First line to return (1-based, default 1)"},' +
-    '"end_line":{"type":"integer","description":"Last line to return (default: the end)"}},' +
+    '"end_line":{"type":"integer","description":"Last line to return (1-based, inclusive; default: the end)"}},' +
     '"required":["file"]}';
 
   { characters of content per editor_read_file result; past it the result

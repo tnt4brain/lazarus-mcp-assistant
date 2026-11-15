@@ -187,7 +187,7 @@ var
 begin
   T := Complete(LineCounter, 4, ',"auto_save":true');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"saved" : true', T) > 0, 'saved: ' + T);
+  CheckTrue(Pos('"saved":true', T) > 0, 'saved: ' + T);
   CheckTrue(Pos('Counter: Integer;', Disk) > 0, 'on disk');
 end;
 

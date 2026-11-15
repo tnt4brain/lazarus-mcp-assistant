@@ -70,7 +70,7 @@ function FindButtonByModalResult(AParent: TWinControl; AResult: TModalResult): T
 implementation
 
 uses
-  LazLogger,
+  LazLogger, CheckLst, CodeCache,
   McpDebugGuard;  { GMcpDriven }
 
 function NormalizeButtonCaption(const S: string): string;
@@ -153,6 +153,31 @@ begin
   Screen.RemoveHandlerRemoveForm(@OnFormRemoved);
 end;
 
+{ In the IDE's "files changed on disk" dialog: take the check off every file whose
+  open editor has unsaved changes. }
+procedure UncheckModifiedEditors(AForm: TCustomForm);
+var
+  List : TComponent;
+  I    : Integer;
+  Obj  : TObject;
+  Ed   : TSourceEditorInterface;
+begin
+  List := AForm.FindComponent('FilesListBox');
+  if not (List is TCheckListBox) then Exit;
+  for I := 0 to TCheckListBox(List).Count - 1 do
+  begin
+    Obj := TCheckListBox(List).Items.Objects[I];
+    if not (Obj is TCodeBuffer) then Continue;
+    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(TCodeBuffer(Obj).Filename);
+    if Assigned(Ed) and Ed.Modified and TCheckListBox(List).Checked[I] then
+    begin
+      TCheckListBox(List).Checked[I] := False;
+      DebugLn(['[MCP Assistant] kept ', TCodeBuffer(Obj).Filename,
+               ' (unsaved editor changes) out of the disk reload']);
+    end;
+  end;
+end;
+
 procedure TMcpIdeHookManager.OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
 var
   C: TComponent;
@@ -170,10 +195,14 @@ begin
       AutoAnswer(Form, mrOK);
   end
   else if Form.ClassNameIs('TDiskDiffsDlg') and (GMcpToolCallsActive > 0) then
-    { "Some files have changed on disk" — typically files an agent edited.
-      Pre-checked are only files without unsaved editor changes, so OK
-      reloads exactly those and keeps the user's unsaved edits. }
-    AutoAnswer(Form, mrOK);
+    begin
+      { "Some files have changed on disk" — typically files an agent edited.
+        The dialog pre-checks every file whose project unit is not modified,
+        so a file open in an editor but not in the project, with unsaved
+        changes, was checked and reloaded over them.  Uncheck those first. }
+      UncheckModifiedEditors(Form);
+      AutoAnswer(Form, mrOK);
+    end;
 end;
 
 type

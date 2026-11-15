@@ -258,7 +258,7 @@ begin
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('user.pas', FilesOf(T)) > 0, 'user.pas: ' + T);
   CheckTrue(Pos('prog.lpr', FilesOf(T)) > 0, 'prog.lpr: ' + T);
-  CheckTrue(Pos('"extra_files_searched" : 2', T) > 0, T);
+  CheckTrue(Pos('"extra_files_searched":2', T) > 0, T);
 end;
 
 procedure TTestFindDeclaration.TestSearchDirAndLimit;
@@ -273,7 +273,7 @@ begin
   T := CallToolText('code_find_references',
     Base + ',"search_dir":' + Dir + ',"max_files":1}', []);
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"extra_files_searched" : 1', T) > 0, T);
+  CheckTrue(Pos('"extra_files_searched":1', T) > 0, T);
   CheckTrue(Pos('"truncated"', T) > 0, 'more files than the limit: ' + T);
 end;
 

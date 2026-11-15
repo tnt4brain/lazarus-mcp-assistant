@@ -18,8 +18,8 @@ uses
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf, CompOptsIntf,
   LazFileUtils, FileUtil,
   IDEMsgIntf, IDEExternToolIntf,
-  Controls, Forms,
-  fpjson,
+  Controls, Forms, ExtCtrls,
+  fpjson, jsonparser,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
   McpToolsPkgManage, McpRunProgram, McpMessages;
@@ -51,7 +51,7 @@ const
     'whose file looks unchanged, e.g. edited within the same second as the last build"}}}';
 
   SCHEMA_REBUILD_IDE =
-    '{"type":"object","properties":{}}';
+    '{"type":"object","properties":{' + MCP_REBUILD_FLAGS + '}}';
 
   SCHEMA_RUN_TESTS =
     '{"type":"object","properties":{' +
@@ -196,6 +196,20 @@ type
     ConsentOk  : Boolean;
     ConsentMsg : string;
     PkgFound   : Boolean;
+    SaveUnsaved : Boolean;
+    SkipCompile : Boolean;
+    Unsaved    : TStringList;     { files whose editor holds unsaved changes }
+    CompileFailed : Boolean;
+    CompileJson : string;
+    Closed     : TStringList;     { editors DoRebuild closed, to open again if the build fails }
+    RebuildOk  : Boolean;
+    RebuildFailure : string;
+    constructor Create;
+    destructor Destroy; override;
+    procedure CheckUnsaved;
+    procedure PreCompile;
+    procedure ReopenClosed;
+    procedure CollectFailure;
     procedure CheckConsent;
     procedure FindUninstallPackage;
     procedure DismissExceptionDialog;
@@ -253,6 +267,199 @@ begin
   end;
 end;
 
+var
+  GRestartTimer : TTimer = nil;
+
+type
+  TServerRestarter = class
+    procedure Tick(Sender: TObject);
+  end;
+
+var
+  GServerRestarter : TServerRestarter = nil;
+
+procedure TServerRestarter.Tick(Sender: TObject);
+begin
+  GRestartTimer.Enabled := False;
+  if Assigned(GMcpRestartServer) then GMcpRestartServer();
+end;
+
+{ Main thread: bring the server back a moment from now (the answer of the call that
+  failed is still being sent on the old one). }
+procedure ScheduleServerRestart;
+begin
+  if GRestartTimer = nil then
+  begin
+    GServerRestarter := TServerRestarter.Create;
+    GRestartTimer := TTimer.Create(nil);
+    GRestartTimer.Enabled := False;
+    GRestartTimer.OnTimer := @GServerRestarter.Tick;
+  end;
+  GRestartTimer.Interval := 2500;
+  GRestartTimer.Enabled := True;
+end;
+
+constructor TBuildSyncHelper.Create;
+begin
+  inherited Create;
+  Unsaved := TStringList.Create;
+  Closed  := TStringList.Create;
+end;
+
+destructor TBuildSyncHelper.Destroy;
+begin
+  Unsaved.Free;
+  Closed.Free;
+  inherited Destroy;
+end;
+
+{ Can the IDE save APkg without asking anything?  A package that was never saved
+  has no file to write, and one with a file missing on disk makes the IDE ask what
+  to do: a question nobody answers while the server waits for this call. }
+function PackageSavesQuietly(APkg: TIDEPackage): Boolean;
+var
+  I  : Integer;
+  FN : string;
+begin
+  Result := False;
+  if APkg.IsVirtual or APkg.ReadOnly then Exit;
+  for I := 0 to APkg.FileCount - 1 do
+  begin
+    FN := APkg.Files[I].GetFullFilename;
+    if (APkg.Files[I].FileType = pftVirtualUnit) or (Pos('$(', FN) > 0) then Continue;
+    if not FileExists(FN) then Exit;
+  end;
+  Result := True;
+end;
+
+{ Main thread: which open editors and packages hold unsaved changes?  They are saved
+  when the caller said so (save_unsaved); a rebuild would drop an editor's text, and
+  an unsaved package makes the IDE stop on a "Save package?" question with the server
+  already down. }
+procedure TBuildSyncHelper.CheckUnsaved;
+var
+  I       : Integer;
+  Ed      : TSourceEditorInterface;
+  Pkg     : TIDEPackage;
+  Savable : Boolean;
+begin
+  Unsaved.Clear;
+  for I := 0 to SourceEditorManagerIntf.UniqueSourceEditorCount - 1 do
+  begin
+    Ed := SourceEditorManagerIntf.UniqueSourceEditors[I];
+    if Ed.Modified then
+      Unsaved.Add(Ed.FileName);
+  end;
+  if SaveUnsaved then
+    for I := Unsaved.Count - 1 downto 0 do
+    begin
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(Unsaved[I]);
+      if Assigned(Ed) and (LazarusIDE.DoSaveEditorFile(Ed, []) = mrOk) then
+        Unsaved.Delete(I);
+    end;
+
+  { Packages, after the editors: saving a package writes its modified files too.
+    DoSaveAllPackages takes every modified package, so it is called only when none of
+    them could make the IDE ask something; otherwise they are all reported below. }
+  if SaveUnsaved then
+  begin
+    Savable := False;
+    for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+    begin
+      Pkg := PackageEditingInterface.GetPackages(I);
+      if not Pkg.Modified then Continue;
+      Savable := PackageSavesQuietly(Pkg);
+      if not Savable then Break;
+    end;
+    if Savable then
+      PackageEditingInterface.DoSaveAllPackages([]);
+  end;
+  for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+  begin
+    Pkg := PackageEditingInterface.GetPackages(I);
+    if not Pkg.Modified then Continue;
+    if Pkg.IsVirtual then
+      Unsaved.Add('package ' + Pkg.Name + ' (never saved)')
+    else
+      Unsaved.Add('package ' + Pkg.Name + ' (' + Pkg.Filename + ')');
+  end;
+end;
+
+{ Main thread: compile what the rebuild will compile, with the IDE's own compiler,
+  while this IDE is still whole.  A package that is not loaded is left to the rebuild. }
+procedure TBuildSyncHelper.PreCompile;
+var
+  P   : TJSONObject;
+  Err : string;
+  D   : TJSONData;
+begin
+  CompileFailed := False;
+  CompileJson   := '';
+  if SkipCompile or (UninstallName <> '') then Exit;
+  P := TJSONObject.Create;
+  try
+    if LpkPath <> '' then
+      P.Add('lpk_path', LpkPath)
+    else if Assigned(PackageEditingInterface.FindPackageWithName('LazMcpAssistant')) then
+      P.Add('package_name', 'LazMcpAssistant')
+    else
+      Exit;
+    Err := '';
+    CompileJson := McpCompilePackageIde(P, Err);
+    if (Err <> '') or (CompileJson = '') or (Pos('use_lazbuild', CompileJson) > 0) then
+    begin
+      CompileJson := '';
+      Exit;
+    end;
+    D := GetJSON(CompileJson);
+    try
+      CompileFailed := (D is TJSONObject) and not TJSONObject(D).Get('success', True);
+    finally
+      D.Free;
+    end;
+  finally
+    P.Free;
+  end;
+end;
+
+procedure TBuildSyncHelper.ReopenClosed;
+var
+  I : Integer;
+begin
+  for I := 0 to Closed.Count - 1 do
+    LazarusIDE.DoOpenEditorFile(Closed[I], -1, -1, [ofOnlyIfExists, ofQuiet]);
+  Closed.Clear;
+end;
+
+{ Main thread: the build ended without restarting the IDE.  Say so, with the compiler
+  messages, and put the editors and the server back. }
+procedure TBuildSyncHelper.CollectFailure;
+var
+  Obj : TJSONObject;
+  Errors, Warnings : TJSONArray;
+begin
+  Obj := TJSONObject.Create;
+  Errors := TJSONArray.Create;
+  Warnings := TJSONArray.Create;
+  try
+    McpCompilerMessages(Errors, Warnings);
+    Obj.Add('status', 'rebuild_failed');
+    Obj.Add('message', 'The IDE build failed, so the IDE was NOT restarted. The MCP server ' +
+      'is back in a few seconds on the same port and token; the editors that were open are ' +
+      'open again. Fix the errors, then run ' + ToolName + ' again.');
+    Obj.Add('errors', Errors); Errors := nil;
+    Obj.Add('warning_count', Warnings.Count);
+    RebuildFailure := Obj.AsJSON;
+  finally
+    Errors.Free;
+    Warnings.Free;
+    Obj.Free;
+  end;
+  McpAddMessage(mluImportant, 'MCP Assistant: ' + ToolName +
+    ' failed; the IDE was not restarted. See the build messages above.');
+end;
+
+
 procedure TBuildSyncHelper.DoRebuild;
 var
   IDEPkg  : TIDEPackage;
@@ -269,9 +476,15 @@ begin
     if F.Visible and (F.BorderStyle = bsDialog) then
       F.Close;
   end;
+  Closed.Clear;
   while SourceEditorManagerIntf.UniqueSourceEditorCount > 0 do
+  begin
+    if SourceEditorManagerIntf.UniqueSourceEditors[0].FileName <> '' then
+      Closed.Add(SourceEditorManagerIntf.UniqueSourceEditors[0].FileName);
     LazarusIDE.DoCloseEditorFile(
       SourceEditorManagerIntf.UniqueSourceEditors[0], [cfQuiet]);
+  end;
+  RebuildOk := True;
   if Assigned(StopServer) then StopServer();
   PkgList := TObjectList.Create(True);
   try
@@ -295,10 +508,19 @@ begin
         PkgList.Add(PkgID);
       end;
     end;
-    PackageEditingInterface.InstallPackages(
-      PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]);
+    { On success the IDE restarts itself and this does not matter.  If it comes back
+      with anything but ok, the build failed and this IDE is still the one running. }
+    RebuildOk := PackageEditingInterface.InstallPackages(
+      PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]) = mrOk;
   finally
     PkgList.Free;
+  end;
+  if not RebuildOk then
+  begin
+    { no restart is coming: this IDE stays, so put it back as it was }
+    ReopenClosed;
+    CollectFailure;
+    ScheduleServerRestart;
   end;
 end;
 
@@ -348,6 +570,8 @@ begin
   GBuildHelper.UninstallName := UninstallName;
   GBuildHelper.ToolName   := Name;
   GBuildHelper.StopServer := Ctx.StopServer;
+  GBuildHelper.SaveUnsaved := Assigned(Ctx.Params) and Ctx.Params.Get('save_unsaved', False);
+  GBuildHelper.SkipCompile := Assigned(Ctx.Params) and Ctx.Params.Get('skip_compile', False);
 
   if UninstallName <> '' then
   begin
@@ -393,6 +617,31 @@ begin
     Sleep(300);
   end;
 
+  { Nothing destructive until two things are known: no editor holds unsaved text
+    (closing it for the rebuild would drop it), and the build can succeed (a failed
+    build used to leave the IDE half rebuilt, with the server down). }
+  TThread.Synchronize(nil, @GBuildHelper.CheckUnsaved);
+  if GBuildHelper.Unsaved.Count > 0 then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := '{"status":"not_started","message":"Nothing was changed. These files and ' +
+      'packages have unsaved changes; the rebuild closes every editor without asking, and an ' +
+      'unsaved package stops it on a question: ' +
+      StringReplace(Trim(GBuildHelper.Unsaved.Text), LineEnding, '; ', [rfReplaceAll]) +
+      '. Save them (editor_save, or the package editor), or pass save_unsaved=true to have ' +
+      'them saved first."}';
+    Exit;
+  end;
+  TThread.Synchronize(nil, @GBuildHelper.PreCompile);
+  if GBuildHelper.CompileFailed then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := '{"status":"not_started","message":"Nothing was changed: the package does ' +
+      'not compile, so the rebuild would have failed. Fix the errors (skip_compile=true ' +
+      'skips this check).","compile":' + GBuildHelper.CompileJson + '}';
+    Exit;
+  end;
+
   { Phase 2 — main thread is free; read IDE paths. }
   TThread.Synchronize(nil, @GBuildHelper.ReadPollPaths);
 
@@ -423,6 +672,11 @@ begin
 
   { Phase 4 — close editors, dismiss stray dialogs, stop server, rebuild. }
   TThread.Synchronize(nil, @GBuildHelper.DoRebuild);
+  if not GBuildHelper.RebuildOk then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := GBuildHelper.RebuildFailure;
+  end;
 
   finally
     InterlockedCompareExchange(GRebuildActive, 0, 1);
@@ -456,7 +710,10 @@ begin
   Tools.Add(MakeTool('ide_rebuild',
     'Rebuild and restart the IDE with its installed packages; the server is ' +
     'down for about a minute (the result says how to wait). Run package_compile ' +
-    'first. To install a package, use package_install.',
+    'first. To install a package, use package_install. Refused, with nothing changed, while ' +
+    'an editor or a package has unsaved changes (save_unsaved) or the package does not compile ' +
+    '(skip_compile); ' +
+    'a failed build leaves the IDE running with the errors as the answer.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
   Tools.Add(MakeTool('ide_run_tests',
     'Compile and run an FPCUnit test project; returns pass/fail counts, per-test ' +

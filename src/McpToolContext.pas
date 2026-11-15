@@ -55,6 +55,22 @@ procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
   missing project). }
 function McpToolNeedsProject(const AToolName: string): Boolean;
 
+const
+  { Parameters of ide_rebuild, package_install and package_uninstall besides their own }
+  MCP_REBUILD_FLAGS =
+    '"save_unsaved":{"type":"boolean","description":"Save the editors and the packages that hold ' +
+    'unsaved changes first. Default false: the call is refused (nothing changed) and names them, ' +
+    'because the rebuild closes every editor without asking and stops on a question about an ' +
+    'unsaved package. A package that was never saved, or has a file missing on disk, is never ' +
+    'saved this way and still stops the call"},' +
+    '"skip_compile":{"type":"boolean","description":"Do not compile the package first. Default false: ' +
+    'a package that does not compile stops the call before anything is changed"}';
+
+var
+  { Set by mcpideserver: stop and start the server again (main thread).  A rebuild
+    that ends without restarting the IDE uses it to bring the server back. }
+  GMcpRestartServer : TProcedure = nil;
+
 { Called by SyncCallTool and HandleToolsList respectively. }
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 procedure McpRegisterSchemas(Tools: TJSONArray);

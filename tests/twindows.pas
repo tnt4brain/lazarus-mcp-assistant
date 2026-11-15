@@ -485,14 +485,14 @@ begin
       Sleep(500);
     end;
     CheckFalse(IsError(T), T);
-    CheckTrue(Pos('"created_project_file" : true', T) > 0, 'wrote the .lpi: ' + T);
+    CheckTrue(Pos('"created_project_file":true', T) > 0, 'wrote the .lpi: ' + T);
     CheckTrue(FileExists(Lpi), '.lpi next to the .lpr');
     T := Call('project_get_settings', '{}');
     CheckTrue(SameFileName(Lpi, JPath(T, 'project_file')), 'it is the active project: ' + T);
     CheckTrue(JPath(T, 'compiler') <> '', 'compiler named: ' + T);
     CheckTrue(JPath(T, 'fpc_version') <> '', 'FPC version named: ' + T);
     T := Call('project_build', '{}');
-    CheckTrue(Pos('"success" : true', T) > 0, 'builds: ' + T);
+    CheckTrue(Pos('"success":true', T) > 0, 'builds: ' + T);
     T := Call('project_open', '{"file":' + JsonStr(Lpr) + '}');
     CheckTrue(Pos('"already_open":true', T) > 0, 'second open: ' + T);
   finally
@@ -541,7 +541,7 @@ begin
     T := Call('project_set_settings', '{"debug_info":"dwarf3"}');
     CheckEquals('dwarf3', JPath(T, 'debug_info'), T);
     T := Call('project_build', '{}');
-    CheckTrue(Pos('"success" : true', T) > 0, 'builds: ' + T);
+    CheckTrue(Pos('"success":true', T) > 0, 'builds: ' + T);
     T := Call('debug_run', '{"timeout_s":30}');
     CheckFalse(IsError(T), T);
     CheckEquals('exited', JPath(T, 'reason'), T);
@@ -836,7 +836,7 @@ begin
     T := Call('project_set_settings', '{"debug_info":"dwarf3"}');
     CheckEquals('dwarf3', JPath(T, 'debug_info'), T);
     T := Call('project_build', '{}');
-    CheckTrue(Pos('"success" : true', T) > 0, 'builds: ' + T);
+    CheckTrue(Pos('"success":true', T) > 0, 'builds: ' + T);
 
     T := Call('debug_attach', '{"pid":999999,"timeout_s":5}');
     CheckTrue(IsError(T) and (Pos('did not attach', T) > 0), 'a wrong id: ' + T);

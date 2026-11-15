@@ -1,6 +1,6 @@
 # ADR-016 — Running a Program Without the Debugger: Output, Exit Code, Later Attach
 
-**Status:** Accepted (v1.0); decisions 5 and 6 are planned, not built  
+**Status:** Accepted (v1.0); decisions 1-6 are built (5 as `debug_attach`, ADR-019; 6 with `project_run_input`); 7 is deliberately not planned (checked 2026-11-15)  
 **Date:** 2026-10-17
 
 ## Context
@@ -46,13 +46,15 @@ program. The process object is a local variable, so it cannot be wrapped from ou
    program runs as the IDE would run it. Not ported: `HideIDEOnRun`, the launching
    application, macOS app bundles and the console window position and size. The tool
    description says so. A program with a pipe has no console window of its own.
-5. **Later attach (planned).** The IDE has `TDebugManager.Attach(pid)` and FpDebug
+5. **Later attach (built as `debug_attach`, ADR-019).** The IDE has `TDebugManager.Attach(pid)` and FpDebug
    supports `dcAttach`/`dcDetach` on Windows and Linux. A `debug_attach` tool would let a
    client break into a program started by `project_run` that hangs, then use the
    existing debug tools. It needs DWARF info (as `debug_run` does), the debug lease
    (ADR-012), and `debug_stop` must detach rather than kill. Not built until it has been
    shown to work on a piped process; it cannot catch startup crashes (use `debug_run`).
-6. **Input over a pipe: `stdin`, `keep_stdin_open`, `project_run_input`.** By default
+   Built that way: `debug_attach {pid}` and `debug_stop {detach: true}` (the program runs on),
+   under the debug lease; see ADR-019 for the path that avoids the IDE's own attach dialog.
+6. **Input over a pipe: `stdin`, `keep_stdin_open`, `project_run_input` (built).** By default
    stdin is closed at the start, so a program that reads it gets end of file instead of
    hanging. `project_run` takes `stdin` (text written at the start, stdin closed after it)
    and `keep_stdin_open` (stdin stays open). `project_run_input {text, close,

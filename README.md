@@ -73,8 +73,8 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
 | `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
 | `code_add_uses` | Add a unit to the interface or implementation uses clause |
-| `code_insert_in_procedure` | Insert text right after a routine's `begin` |
-| `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end` |
+| `code_insert_in_procedure` | Insert text right after a routine's `begin`; an overloaded name is refused with the candidates, `line` picks one |
+| `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end`; an overloaded name is refused with the candidates, `line` picks one |
 | `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
 | `code_complete` | Code completion as Ctrl+Shift+C does it: method bodies, property fields and setters, forward procedures, local variables, event handlers. Returns the changed lines |
 | `code_format` | Format a file or a range of lines with JEDI Code Format, using the IDE's JCF settings; one undo step. Returns the changed lines |
@@ -237,7 +237,7 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 | `ide_report` | Writes versions, plugin and project settings, packages and the last 200 lines of the three logs into one Markdown file in the Lazarus config folder (`mcp-report-<UTC time>.md`, three newest kept) and returns its path; the same as Tools > MCP Assistant > Write Report. For bug reports: read it before posting |
 | `ide_get_messages` | Everything in the Messages window, all urgency levels |
 | `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
-| `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s |
+| `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s. Refused, changing nothing, while an editor or a package has unsaved changes (`save_unsaved` saves them first; a package that was never saved, or has a file missing on disk, still stops it) or the package does not compile (`skip_compile` skips that check); a build that fails leaves the IDE running, reopens the editors and brings the server back, with the errors as the answer (ADR-026) |
 | `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML; `suite` runs one class or test, `env` sets environment variables for the run (for example `MCP_DEBUG_TESTS`) |
 | `ide_show_markdown` | Show a Markdown document to the user in an IDE window (tabs, without taking the focus), rendered by `TIpHtmlPanel`: headings, lists, tables, code, http(s) links, and images from a project-relative path or a Base64 `data:` URI. Display only; returns `{shown, tab}`; `tab` replaces that document ([ADR-024](docs/adr/0024-show-markdown-tool.md)) |
 | *(menu)* | Tools > MCP Assistant > View Markdown..., View > Markdown Viewer... and the source editor's "View as Markdown" show the active `.md` file (or one you pick) in the same window, one tab per file; relative links to other `.md` files open in it |

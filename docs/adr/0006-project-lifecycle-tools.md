@@ -1,6 +1,6 @@
 # ADR-006 — Project Lifecycle Tools
 
-**Status:** Proposed  
+**Status:** Accepted and implemented (v0.8; tool names changed by ADR-010; checked against the code 2026-11-15)  
 **Date:** 2026-10-05
 
 ## Context
@@ -229,3 +229,26 @@ updated reference is injected at launch and available via `get_lazarus_reference
   preferred tool for structured error processing.
 - A new **Project Management API** knowledge section in `lazarus-knowledge.md`
   reduces hallucination risk for obscure IDEIntf surface area.
+
+## As built (checked 2026-11-15)
+
+Every tool of this ADR exists, under the names of ADR-010 (`<category>_<action>`). The text above keeps
+the original names and parameters; the built ones are in the tool list (`tools/list`, README).
+
+| Proposed | Built as | Note |
+|---|---|---|
+| `add_file_to_project` | `project_add_file` | |
+| `remove_file_from_project` | `project_remove_file` | |
+| `create_form` | `form_create` (and `project_create_unit` for a plain unit) | `form_create` also makes data modules and frames (`kind`) and can add to a package instead of the project |
+| `set_project_settings` | `project_set_settings` (with `project_get_settings`) | |
+| `open_file` | `editor_open` | |
+| `search_components` | `form_search_palette` | |
+| `run_with_args` | `project_run` with an `args` parameter | later grew output, exit code and stdin (ADR-016) |
+| `get_messages` | `ide_get_messages` | |
+| `create_project` (deferred here) | `project_create` (with `project_list_templates`) | |
+
+The knowledge section this ADR asked for is "Project Management API (IDEIntf)" in
+`docs/lazarus-knowledge.md`; it is served as the MCP resource `lazarus-ide://reference`, not through a
+`get_lazarus_reference` tool. The tool count of the Consequences section is long out of date (README
+states the current one). The out-of-scope list is overtaken too: the debugger is ADR-009 and the run
+parameters beyond `args` are read from the project's run parameters (ADR-016, decision 4).

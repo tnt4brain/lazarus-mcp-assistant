@@ -128,6 +128,17 @@ The fallback is matched on class name. Unknown dialogs aren't answered: guessing
   a session. The second one is one reason for the debug session lease (ADR-012),
   which keeps other clients from building while a session is live.
 
+## Amendment (2026-11-15): the disk-diffs answer keeps unsaved edits
+
+Decision 3 said the "files changed on disk" dialog keeps unsaved edits. That was wrong for
+some files. The cause is in the IDE's `diskdiffsdialog.pas`: it pre-checks every file whose
+**project unit** is not modified (`Project1.UnitInfoWithFilename(...).Modified`), so a file
+open in an editor but not in the project counts as unmodified, is checked, and OK reloads it
+over the unsaved edit.
+
+Decision 3's answer to `TDiskDiffsDlg` therefore first takes the check off every file
+whose open editor is modified (`UncheckModifiedEditors`, looked up by file name). Not yet
+triggered live: the dialog only opens on a focus change or a build.
 ## Amendment (2026-10-17): dialogs we can't prevent are reported, not answered
 
 Decision 3 answers a few known dialogs and leaves the rest blocking. A tool call

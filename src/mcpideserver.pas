@@ -1511,7 +1511,8 @@ begin
     Proc.Parameters.Add('--short');
     Proc.Parameters.Add('HEAD');
     Proc.CurrentDirectory := SrcDir;
-    Proc.Options          := [poUsePipes, poWaitOnExit, poStderrToOutPut];
+    Proc.Options          := [poUsePipes, poWaitOnExit, poStderrToOutPut, poNoConsole];
+    Proc.ShowWindow       := swoHide;
     try
       Proc.Execute;
       SL.LoadFromStream(Proc.Output);
@@ -1956,9 +1957,20 @@ begin
     LazarusIDE.AddHandlerOnIDEClose(@IDEHook.OnIDEClose);
 end;
 
+procedure RestartServerNow;
+begin
+  FinalizeMcpServer;
+  InitializeMcpServer;
+end;
+
 initialization
   GCallLock := TCriticalSection.Create;
+  GMcpRestartServer := @RestartServerNow;
+  // Tool results are read by a model, which pays for every character: AsJSON then writes
+  // no blanks around the colons and commas. Class-wide; put back when the plugin unloads.
+  TJSONData.CompressedJSON := True;
 finalization
+  TJSONData.CompressedJSON := False;
   FinalizeMcpServer; // safety net — normally called by the IDE-close hook
   FreeAndNil(IDEHook);
   McpRemoveDialogWatch;
