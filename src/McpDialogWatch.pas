@@ -41,7 +41,7 @@ implementation
 uses
   Classes, SysUtils, SyncObjs, TypInfo, System.UITypes
   {$IFDEF WINDOWS}, Windows{$ENDIF},
-  LazMsgWorker;
+  LCLStrConsts, LazMsgWorker;
 
 type
   TOpenDialog_ = record
@@ -115,28 +115,82 @@ begin
     end;
 end;
 
-{ QuestionDlg's array of const: result codes and button captions mixed; the
-  strings are the captions. }
+{ The caption QuestionDlg gives a button whose result code has no string after
+  it: the LCL's own text for that code, so the same words the dialog shows. }
+function DefaultButtonCaption(AResult: Integer): string;
+begin
+  case AResult of
+    mrOk       : Result := rsmbOk;
+    mrCancel   : Result := rsmbCancel;
+    mrYes      : Result := rsmbYes;
+    mrNo       : Result := rsmbNo;
+    mrAbort    : Result := rsmbAbort;
+    mrRetry    : Result := rsmbRetry;
+    mrIgnore   : Result := rsmbIgnore;
+    mrAll      : Result := rsmbAll;
+    mrYesToAll : Result := rsmbYesToAll;
+    mrNoToAll  : Result := rsmbNoToAll;
+  else
+    Result := '';
+  end;
+end;
+
+{ QuestionDlg's array of const: a result code starts a button, the strings
+  after it are its caption and the flags 'isdefault' / 'iscancel'.  A code
+  with no caption string is a button with the default caption (the IDE's
+  "Source modified" dialog ends in a bare mrAbort). }
 function ButtonArrayText(const AButtons: array of const): string;
 var
-  I : Integer;
-  S : string;
+  I       : Integer;
+  S       : string;
+  Caption : string;
+  HasText : Boolean;
+  Code    : Integer;
+
+  procedure Flush;
+  begin
+    if Code = MaxInt then Exit;
+    if not HasText then Caption := DefaultButtonCaption(Code);
+    if Caption <> '' then
+    begin
+      if Result <> '' then Result := Result + ', ';
+      Result := Result + Caption;
+    end;
+    Code := MaxInt;
+  end;
+
 begin
   Result := '';
+  Code := MaxInt;
+  Caption := '';
+  HasText := False;
   for I := 0 to High(AButtons) do
-  begin
-    S := '';
-    case AButtons[I].VType of
-      vtAnsiString    : S := string(AButtons[I].VAnsiString);
-      vtUnicodeString : S := UnicodeString(AButtons[I].VUnicodeString);
-      vtString        : S := string(AButtons[I].VString^);
-      vtWideString    : S := WideString(AButtons[I].VWideString);
-      vtPChar         : S := string(AButtons[I].VPChar);
+    if AButtons[I].VType = vtInteger then
+    begin
+      Flush;
+      Code := AButtons[I].VInteger;
+      Caption := '';
+      HasText := False;
+    end
+    else
+    begin
+      S := '';
+      case AButtons[I].VType of
+        vtAnsiString    : S := string(AButtons[I].VAnsiString);
+        vtUnicodeString : S := UnicodeString(AButtons[I].VUnicodeString);
+        vtString        : S := string(AButtons[I].VString^);
+        vtWideString    : S := WideString(AButtons[I].VWideString);
+        vtPChar         : S := string(AButtons[I].VPChar);
+        vtChar          : S := AButtons[I].VChar;
+      end;
+      if SameText(S, 'isdefault') or SameText(S, 'iscancel') then Continue;
+      if (S <> '') and not HasText then
+      begin
+        Caption := S;
+        HasText := True;
+      end;
     end;
-    if (S = '') or (S = 'isdefault') or (S = 'iscancel') then Continue;
-    if Result <> '' then Result := Result + ', ';
-    Result := Result + S;
-  end;
+  Flush;
 end;
 
 function TDialogWatch.Msg(const aCaption, aMsg: string; DlgType: TMsgDlgType;
