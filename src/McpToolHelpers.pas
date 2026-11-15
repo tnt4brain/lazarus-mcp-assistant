@@ -250,7 +250,8 @@ begin
     if AClean then
       Proc.Parameters.Add('-B');   { rebuild everything }
     Proc.Parameters.Add(LpkPath);
-    Proc.Options    := [poUsePipes, poStdErrToOutput];
+    Proc.Options    := [poUsePipes, poStdErrToOutput, poNoConsole];
+    Proc.ShowWindow := swoHide;
     Proc.Execute;
     repeat
       SetLength(Chunk, BufSize);
@@ -386,7 +387,8 @@ begin
   try
     Proc.Executable := LazbuildExe;
     Proc.Parameters.Add(ResolvedLpi);
-    Proc.Options := [poUsePipes, poStdErrToOutput];
+    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];   { no console window, no focus grab }
+    Proc.ShowWindow := swoHide;
     Proc.Execute;
     repeat
       SetLength(Chunk, BufSize);
@@ -451,7 +453,8 @@ begin
     Proc.Parameters.Add('--format=plain');
     if JUnitOut <> '' then
       Proc.Parameters.Add('--junit-out=' + JUnitOut);
-    Proc.Options := [poUsePipes, poStdErrToOutput];
+    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
+    Proc.ShowWindow := swoHide;
     Proc.Execute;
     repeat
       SetLength(Chunk, BufSize);

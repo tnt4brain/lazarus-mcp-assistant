@@ -1511,7 +1511,8 @@ begin
     Proc.Parameters.Add('--short');
     Proc.Parameters.Add('HEAD');
     Proc.CurrentDirectory := SrcDir;
-    Proc.Options          := [poUsePipes, poWaitOnExit, poStderrToOutPut];
+    Proc.Options          := [poUsePipes, poWaitOnExit, poStderrToOutPut, poNoConsole];
+    Proc.ShowWindow       := swoHide;
     try
       Proc.Execute;
       SL.LoadFromStream(Proc.Output);

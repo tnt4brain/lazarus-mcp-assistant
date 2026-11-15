@@ -150,7 +150,8 @@ begin
     Proc.Executable := GitExe;
     for I := 0 to High(Args) do
       Proc.Parameters.Add(Args[I]);
-    Proc.Options := [poUsePipes, poStdErrToOutput];
+    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
+    Proc.ShowWindow := swoHide;
     if WorkDir <> '' then
       Proc.CurrentDirectory := WorkDir;
     Proc.Execute;
