@@ -16,9 +16,14 @@ close every editor with `cfQuiet`, stop the MCP server, start the IDE's build. T
 
 ## Decision
 
-1. **Unsaved editors stop the call.** Before anything is changed the call refuses, naming the
-   files (`status: "not_started"`). `save_unsaved: true` saves them first (the caller says so
-   explicitly; the plugin never saves a user's buffer on its own).
+1. **Unsaved editors and packages stop the call.** Before anything is changed the call refuses,
+   naming the files and packages (`status: "not_started"`). `save_unsaved: true` saves them
+   first (the caller says so explicitly; the plugin never saves a user's buffer on its own).
+   A package counts because the IDE would otherwise stop on a "Save package?" question after the
+   server is already down (seen live 2026-11-15, after `package_add_file` left the `.lpk` unsaved).
+   Packages are saved only when none of the modified ones could make the IDE ask something
+   (a package never saved, or with a file missing on disk, is never saved this way and stays on
+   the list); `DoSaveAllPackages` takes every modified package, so it is all or nothing.
 2. **Compile first.** The package that is rebuilt (the plugin, or the `.lpk` of `package_install`)
    is compiled with the IDE's own compiler while the IDE is whole. Errors come back as the
    result, nothing is changed. `skip_compile: true` skips the check. A package that is not

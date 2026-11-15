@@ -313,12 +313,35 @@ begin
   inherited Destroy;
 end;
 
-{ Main thread: which open editors hold unsaved changes?  They are saved when the
-  caller said so (save_unsaved); closing an editor for the rebuild would drop them. }
-procedure TBuildSyncHelper.CheckUnsaved;
+{ Can the IDE save APkg without asking anything?  A package that was never saved
+  has no file to write, and one with a file missing on disk makes the IDE ask what
+  to do: a question nobody answers while the server waits for this call. }
+function PackageSavesQuietly(APkg: TIDEPackage): Boolean;
 var
   I  : Integer;
-  Ed : TSourceEditorInterface;
+  FN : string;
+begin
+  Result := False;
+  if APkg.IsVirtual or APkg.ReadOnly then Exit;
+  for I := 0 to APkg.FileCount - 1 do
+  begin
+    FN := APkg.Files[I].GetFullFilename;
+    if (APkg.Files[I].FileType = pftVirtualUnit) or (Pos('$(', FN) > 0) then Continue;
+    if not FileExists(FN) then Exit;
+  end;
+  Result := True;
+end;
+
+{ Main thread: which open editors and packages hold unsaved changes?  They are saved
+  when the caller said so (save_unsaved); a rebuild would drop an editor's text, and
+  an unsaved package makes the IDE stop on a "Save package?" question with the server
+  already down. }
+procedure TBuildSyncHelper.CheckUnsaved;
+var
+  I       : Integer;
+  Ed      : TSourceEditorInterface;
+  Pkg     : TIDEPackage;
+  Savable : Boolean;
 begin
   Unsaved.Clear;
   for I := 0 to SourceEditorManagerIntf.UniqueSourceEditorCount - 1 do
@@ -334,6 +357,32 @@ begin
       if Assigned(Ed) and (LazarusIDE.DoSaveEditorFile(Ed, []) = mrOk) then
         Unsaved.Delete(I);
     end;
+
+  { Packages, after the editors: saving a package writes its modified files too.
+    DoSaveAllPackages takes every modified package, so it is called only when none of
+    them could make the IDE ask something; otherwise they are all reported below. }
+  if SaveUnsaved then
+  begin
+    Savable := False;
+    for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+    begin
+      Pkg := PackageEditingInterface.GetPackages(I);
+      if not Pkg.Modified then Continue;
+      Savable := PackageSavesQuietly(Pkg);
+      if not Savable then Break;
+    end;
+    if Savable then
+      PackageEditingInterface.DoSaveAllPackages([]);
+  end;
+  for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+  begin
+    Pkg := PackageEditingInterface.GetPackages(I);
+    if not Pkg.Modified then Continue;
+    if Pkg.IsVirtual then
+      Unsaved.Add('package ' + Pkg.Name + ' (never saved)')
+    else
+      Unsaved.Add('package ' + Pkg.Name + ' (' + Pkg.Filename + ')');
+  end;
 end;
 
 { Main thread: compile what the rebuild will compile, with the IDE's own compiler,
@@ -575,10 +624,12 @@ begin
   if GBuildHelper.Unsaved.Count > 0 then
   begin
     Ctx.Error  := True;
-    Ctx.Result := '{"status":"not_started","message":"Nothing was changed. These files have ' +
-      'unsaved changes, and the rebuild closes every editor without asking: ' +
+    Ctx.Result := '{"status":"not_started","message":"Nothing was changed. These files and ' +
+      'packages have unsaved changes; the rebuild closes every editor without asking, and an ' +
+      'unsaved package stops it on a question: ' +
       StringReplace(Trim(GBuildHelper.Unsaved.Text), LineEnding, '; ', [rfReplaceAll]) +
-      '. Save them (editor_save), or pass save_unsaved=true to have them saved first."}';
+      '. Save them (editor_save, or the package editor), or pass save_unsaved=true to have ' +
+      'them saved first."}';
     Exit;
   end;
   TThread.Synchronize(nil, @GBuildHelper.PreCompile);
@@ -660,7 +711,8 @@ begin
     'Rebuild and restart the IDE with its installed packages; the server is ' +
     'down for about a minute (the result says how to wait). Run package_compile ' +
     'first. To install a package, use package_install. Refused, with nothing changed, while ' +
-    'an editor has unsaved changes (save_unsaved) or the package does not compile (skip_compile); ' +
+    'an editor or a package has unsaved changes (save_unsaved) or the package does not compile ' +
+    '(skip_compile); ' +
     'a failed build leaves the IDE running with the errors as the answer.',
     SCHEMA_REBUILD_IDE, MCP_ANN_DEST));
   Tools.Add(MakeTool('ide_run_tests',
