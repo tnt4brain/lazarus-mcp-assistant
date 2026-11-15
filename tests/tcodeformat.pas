@@ -113,13 +113,13 @@ begin
   Before := Disk;
   T := RunFormat;
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"changed" : true', T) > 0, 'changed: ' + T);
+  CheckTrue(Pos('"changed":true', T) > 0, 'changed: ' + T);
   Formatted1 := Buffer;
   CheckTrue(Pos(Formatted, Formatted1) > 0, 'formatted in the editor: ' + Formatted1);
   CheckEquals(Before, Disk, 'not on disk');
   { what the editor holds is what JCF produced: formatting it again changes nothing }
   T := RunFormat;
-  CheckTrue(Pos('"changed" : false', T) > 0, 'second run: ' + T);
+  CheckTrue(Pos('"changed":false', T) > 0, 'second run: ' + T);
   CheckEquals(Formatted1, Buffer, 'buffer unchanged by the second run');
 end;
 
@@ -178,7 +178,7 @@ var
 begin
   T := RunFormat(',"auto_save":true');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"saved" : true', T) > 0, 'saved: ' + T);
+  CheckTrue(Pos('"saved":true', T) > 0, 'saved: ' + T);
   CheckTrue(Pos(Formatted, Disk) > 0, 'on disk');
 end;
 
@@ -211,7 +211,7 @@ begin
     CheckFalse(IsError(T), T);
     CheckTrue(Pos('for i := 1 to 2 do', T) > 0, 'formatted: ' + T);
     T := CallToolText('code_format', Args, []);
-    CheckTrue(Pos('"changed" : false', T) > 0, 'second run: ' + T);
+    CheckTrue(Pos('"changed":false', T) > 0, 'second run: ' + T);
   finally
     CallToolText('editor_revert', '{"file":' + JsonStr(F) + '}', []);
     CallToolText('editor_close', '{"file":' + JsonStr(F) + '}', []);
@@ -231,9 +231,9 @@ begin
     LineEnding + LineEnding + LineEnding + LineEnding);
   T := RunFormat;
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"removed_lines" : 3, "added_lines" : 0', T) > 0, 'blank lines removed: ' + T);
+  CheckTrue(Pos('"removed_lines":3,"added_lines":0', T) > 0, 'blank lines removed: ' + T);
   T := RunFormat;
-  CheckTrue(Pos('"changed" : false', T) > 0, 'second run: ' + T);
+  CheckTrue(Pos('"changed":false', T) > 0, 'second run: ' + T);
 end;
 
 end.

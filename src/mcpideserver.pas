@@ -1966,7 +1966,11 @@ end;
 initialization
   GCallLock := TCriticalSection.Create;
   GMcpRestartServer := @RestartServerNow;
+  // Tool results are read by a model, which pays for every character: AsJSON then writes
+  // no blanks around the colons and commas. Class-wide; put back when the plugin unloads.
+  TJSONData.CompressedJSON := True;
 finalization
+  TJSONData.CompressedJSON := False;
   FinalizeMcpServer; // safety net — normally called by the IDE-close hook
   FreeAndNil(IDEHook);
   McpRemoveDialogWatch;

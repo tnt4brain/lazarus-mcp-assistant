@@ -94,7 +94,7 @@ begin
   T := Call('form_undo', '');
   CheckTrue(IsError(T), 'a fresh form has nothing to undo: ' + T);
   CheckTrue(Pos('nothing to undo', T) > 0, T);
-  CheckTrue(Pos('"can_redo" : false', T) > 0, T);
+  CheckTrue(Pos('"can_redo":false', T) > 0, T);
 end;
 
 procedure TTestFormUndo.TestPropertiesAreOneStep;
@@ -104,10 +104,10 @@ begin
   T := Call('form_set_properties', ',"component_name":"btnOK","properties":' +
             '{"Caption":"Go","Left":20,"Visible":false,"Name":"btnGo"}');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"undoable" : true', T) > 0, T);
+  CheckTrue(Pos('"undoable":true', T) > 0, T);
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"can_undo" : false', T) > 0, 'one call is one step: ' + T);
+  CheckTrue(Pos('"can_undo":false', T) > 0, 'one call is one step: ' + T);
   T := Lfm;
   CheckTrue(Pos('object btnOK: TButton', T) > 0, 'renamed back: ' + T);
   CheckTrue(Pos('Caption = ''OK''', T) > 0, T);
@@ -148,7 +148,7 @@ begin
   T := Call('form_set_properties', ',"component_name":"btnOK","properties":' +
             '{"Font.Color":"clRed","Caption":"Go"}');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"undoable" : true', T) > 0, T);
+  CheckTrue(Pos('"undoable":true', T) > 0, T);
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   T := Lfm('btnOK');
@@ -168,11 +168,11 @@ begin
   T := Call('form_add_component', ',"class_name":"TButton","name":"btnIn","parent_name":"pnlB","left":6,"top":5');
   CheckFalse(IsError(T), T);
   T := Call('form_set_properties', ',"component_name":"btnIn","properties":{"Font.Color":"clRed"}');
-  CheckTrue(Pos('"undoable" : true', T) > 0, T);
+  CheckTrue(Pos('"undoable":true', T) > 0, T);
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   T := Call('form_list_components', '');
-  CheckTrue(Pos('"name" : "btnIn", "class" : "TButton", "parent" : "pnlB", "left" : 6, "top" : 5', T) > 0,
+  CheckTrue(Pos('"name":"btnIn","class":"TButton","parent":"pnlB","left":6,"top":5', T) > 0,
             'back in its panel, at its place: ' + T);
 end;
 
@@ -184,7 +184,7 @@ begin
   T := Call('form_set_properties', ',"component_name":"btnOK","properties":' +
             '{"Font.Color":"clRed","Name":"btnGo"}');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"component_name_now" : "btnGo"', T) > 0, T);
+  CheckTrue(Pos('"component_name_now":"btnGo"', T) > 0, T);
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   T := Lfm('btnOK');
@@ -246,17 +246,17 @@ begin
             '{"AnchorSideTop.Control":"btnOK","AnchorSideTop.Side":"asrBottom","BorderSpacing.Top":6}');
   CheckFalse(IsError(T), T);
   CheckEquals(0, Pos('"error"', T), T);
-  CheckTrue(Pos('"undoable" : true', T) > 0, T);
+  CheckTrue(Pos('"undoable":true', T) > 0, T);
   T := Lfm('lblB');
   CheckTrue(Pos('AnchorSideTop.Control = btnOK', T) > 0, T);
   CheckTrue(Pos('AnchorSideTop.Side = asrBottom', T) > 0, T);
   { and read back with form_get_properties }
   T := Call('form_get_properties', ',"component_name":"lblB"');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"name" : "AnchorSideTop.Control", "value" : "btnOK"', T) > 0, 'listed: ' + T);
+  CheckTrue(Pos('"name":"AnchorSideTop.Control","value":"btnOK"', T) > 0, 'listed: ' + T);
   CheckEquals(0, Pos('AnchorSideLeft', T), 'unanchored sides left out: ' + T);
   T := Call('form_get_properties', ',"component_name":"lblB","names":["AnchorSideTop"]');
-  CheckTrue(Pos('"name" : "AnchorSideTop.Side", "value" : "asrBottom"', T) > 0, T);
+  CheckTrue(Pos('"name":"AnchorSideTop.Side","value":"asrBottom"', T) > 0, T);
   CheckTrue(Pos('"asrCenter"', T) > 0, 'with the allowed values: ' + T);
   CheckEquals(0, Pos('AnchorSide', Call('form_get_properties', ',"component_name":"btnOK"')),
               'no anchors, none listed');
@@ -272,13 +272,13 @@ var
 begin
   T := Call('form_create_event_handler', ',"component_name":"btnOK","event_name":"OnEnter"');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"status" : "created"', T) > 0, T);
-  CheckTrue(Pos('"handler_name" : "btnOKEnter"', T) > 0, T);
+  CheckTrue(Pos('"status":"created"', T) > 0, T);
+  CheckTrue(Pos('"handler_name":"btnOKEnter"', T) > 0, T);
   CheckTrue(Pos('OnEnter = btnOKEnter', Lfm('btnOK')) > 0, 'assigned');
   T := CallToolText('editor_read_file', '{"path":' + JsonStr(FUnit) + '}', []);
   CheckTrue(Pos('procedure TFixtureForm.btnOKEnter(Sender: TObject);', T) > 0, 'stub in the source: ' + T);
   T := Call('form_create_event_handler', ',"component_name":"btnOK","event_name":"OnEnter"');
-  CheckTrue(Pos('"status" : "existing"', T) > 0, 'second call shows it: ' + T);
+  CheckTrue(Pos('"status":"existing"', T) > 0, 'second call shows it: ' + T);
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   CheckEquals(0, Pos('OnEnter', Lfm('btnOK')), 'undo unassigns the event');
@@ -294,7 +294,7 @@ begin
   CheckFalse(IsError(T), T);
   T := Call('form_add_menu_item', ',"parent_name":"miFile","caption":"&Open","name":"miOpen"');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"undoable" : true', T) > 0, T);
+  CheckTrue(Pos('"undoable":true', T) > 0, T);
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   T := Lfm;
@@ -347,7 +347,7 @@ begin
   T := Call('form_set_properties', ',"component_name":"FixtureForm","properties":' +
             '{"Font.Color":"clBlue","Caption":"C"}');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"undoable" : false', T) > 0, 'the form cannot be replaced: ' + T);
+  CheckTrue(Pos('"undoable":false', T) > 0, 'the form cannot be replaced: ' + T);
   T := Call('form_undo', '');
   CheckFalse(IsError(T), T);
   T := Lfm;

@@ -54,8 +54,8 @@ begin
     CheckTrue(Pos('"created":true', T) > 0, 'created: ' + T);
     CheckTrue(FileExists(Lpk), '.lpk written');
     CheckTrue(FileExists(Dir + 'mcptmpunita.pas'), 'unit written');
-    CheckTrue(Pos('"version" : "1.2', T) > 0, 'version: ' + T);
-    CheckTrue(Pos('"unit" : "McpTmpUnitA"', T) > 0, 'unit listed: ' + T);
+    CheckTrue(Pos('"version":"1.2', T) > 0, 'version: ' + T);
+    CheckTrue(Pos('"unit":"McpTmpUnitA"', T) > 0, 'unit listed: ' + T);
 
     T := Call('project_list_files', '{' + A + '}');
     CheckTrue(Pos('mcptmpunita.pas', LowerCase(T)) > 0, 'the package''s files: ' + T);
@@ -65,25 +65,25 @@ begin
 
     T := Call('package_get_settings', '{' + A + '}');
     CheckFalse(IsError(T), T);
-    CheckTrue(Pos('"package_type" : "RunTime"', T) > 0, 'type: ' + T);
+    CheckTrue(Pos('"package_type":"RunTime"', T) > 0, 'type: ' + T);
 
     T := Call('package_set_settings', '{' + A + ',"custom_options":"-dMCPTMP"}');
     CheckFalse(IsError(T), T);
     CheckTrue(Pos('-dMCPTMP', T) > 0, 'changed: ' + T);
-    if Pos('"saved" : false', T) > 0 then
+    if Pos('"saved":false', T) > 0 then
       Ignore('the IDE has unsaved package changes: ' + T);
     T := Call('package_get_info', '{' + A + '}');
     CheckTrue(Pos('-dMCPTMP', T) > 0, 'info shows it: ' + T);
 
     T := Call('package_compile', '{' + A + ',"method":"ide"}');
     CheckFalse(IsError(T), T);
-    CheckTrue(Pos('"method" : "ide"', T) > 0, 'IDE compiler: ' + T);
-    CheckTrue(Pos('"success" : true', T) > 0, 'compiles: ' + T);
+    CheckTrue(Pos('"method":"ide"', T) > 0, 'IDE compiler: ' + T);
+    CheckTrue(Pos('"success":true', T) > 0, 'compiles: ' + T);
 
     T := Call('package_compile', '{' + A + ',"method":"lazbuild"}');
     CheckFalse(IsError(T), T);
-    CheckTrue(Pos('"method" : "lazbuild"', T) > 0, 'lazbuild: ' + T);
-    CheckTrue(Pos('"success" : true', T) > 0, 'compiles: ' + T);
+    CheckTrue(Pos('"method":"lazbuild"', T) > 0, 'lazbuild: ' + T);
+    CheckTrue(Pos('"success":true', T) > 0, 'compiles: ' + T);
 
     { a compile error comes back as data }
     Call('editor_open', '{"file":' + JsonStr(Dir + 'mcptmpunita.pas') + '}');
@@ -98,7 +98,7 @@ begin
       Free;
     end;
     T := Call('package_compile', '{' + A + ',"method":"ide","clean":true}');
-    CheckTrue(Pos('"success" : false', T) > 0, 'fails: ' + T);
+    CheckTrue(Pos('"success":false', T) > 0, 'fails: ' + T);
     CheckTrue(Pos('NoSuchIdent', T) > 0, 'says what: ' + T);
   finally
     { a compile error may have opened the unit: close it before its file goes }
@@ -139,11 +139,11 @@ begin
   CheckTrue(Pos('Package not loaded', T) > 0, T);
   T := Call('package_list', '{"name_contains":"LazMcpAssistant"}');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"name" : "LazMcpAssistant"', T) > 0, 'the plugin is listed: ' + T);
+  CheckTrue(Pos('"name":"LazMcpAssistant"', T) > 0, 'the plugin is listed: ' + T);
   T := Call('package_list', '{"name_contains":"LazUtils"}');
-  CheckTrue(Pos('"count" : 0', T) > 0, 'IDE packages hidden by default: ' + T);
+  CheckTrue(Pos('"count":0', T) > 0, 'IDE packages hidden by default: ' + T);
   T := Call('package_list', '{"name_contains":"LazUtils","include_ide":true}');
-  CheckTrue(Pos('"name" : "LazUtils"', T) > 0, 'and shown on request: ' + T);
+  CheckTrue(Pos('"name":"LazUtils"', T) > 0, 'and shown on request: ' + T);
 end;
 
 initialization

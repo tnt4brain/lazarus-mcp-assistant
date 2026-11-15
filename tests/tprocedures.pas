@@ -133,8 +133,8 @@ begin
     ',"proc_name":"Put","new_body":"  Halt;","auto_save":true}');
   CheckTrue(IsError(T), 'refused: ' + T);
   CheckTrue(Pos('Ambiguous', T) > 0, T);
-  CheckTrue(Pos('"line" : 23', T) > 0, 'first overload: ' + T);
-  CheckTrue(Pos('"line" : 27', T) > 0, 'second overload: ' + T);
+  CheckTrue(Pos('"line":23', T) > 0, 'first overload: ' + T);
+  CheckTrue(Pos('"line":27', T) > 0, 'second overload: ' + T);
   CheckTrue(Pos('Put(A: Integer)', T) > 0, 'its header: ' + T);
   CheckTrue(Pos('Halt', DiskText) = 0, 'the file is untouched');
 end;
@@ -229,10 +229,10 @@ begin
   T := Call('code_get_procedure_ast', '{"file":' + JsonStr(FUnit) +
     ',"proc_name":"Put","line":27}');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"begin_line" : 28', T) > 0, 'the second overload: ' + T);
+  CheckTrue(Pos('"begin_line":28', T) > 0, 'the second overload: ' + T);
   T := Call('code_get_procedure_ast', '{"file":' + JsonStr(FUnit) + ',"proc_name":"Solo"}');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"begin_line" : 32', T) > 0, T);
+  CheckTrue(Pos('"begin_line":32', T) > 0, T);
 end;
 
 initialization

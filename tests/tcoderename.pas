@@ -242,7 +242,7 @@ var
 begin
   T := Rename(FUnitB, LineVar, ColVar, ',"new_name":"TBar","auto_save":true');
   CheckFalse(IsError(T), T);
-  CheckTrue(Pos('"saved" : true', T) > 0, 'saved: ' + T);
+  CheckTrue(Pos('"saved":true', T) > 0, 'saved: ' + T);
   CheckTrue(Pos('TBar = class', Disk(FUnitA)) > 0, 'A on disk');
   CheckTrue(Pos('F := TBar.Create;', Disk(FUnitB)) > 0, 'B on disk');
 end;

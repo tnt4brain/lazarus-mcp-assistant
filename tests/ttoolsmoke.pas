@@ -18,6 +18,7 @@ type
   TTestToolSmoke = class(TTestCase)
   published
     procedure TestEditorListOpen;
+    procedure TestResultsAreCompactJson;
     procedure TestCodeGetOutline;
     procedure TestCodeGetOutlineWholeUnit;
     procedure TestCodeGetUnitInterface;
@@ -68,6 +69,18 @@ procedure CheckNoError(ACase: TTestCase; const ATool, AText: string);
 begin
   ACase.CheckFalse((Pos('TOOL ERROR', AText) = 1) or (Pos('RPC ERROR', AText) = 1) or
     (Pos('HTTP ', AText) = 1), ATool + ' failed: ' + AText);
+end;
+
+{ Tool results cost a model every character: no blanks around the colons and commas. }
+procedure TTestToolSmoke.TestResultsAreCompactJson;
+var
+  T : string;
+begin
+  T := Call('project_get_directory', '{}');
+  CheckNoError(Self, 'project_get_directory', T);
+  CheckTrue(Pos('" : ', T) = 0, 'no blanks around a colon: ' + T);
+  CheckTrue(Pos('", "', T) = 0, 'no blank after a comma: ' + T);
+  CheckTrue(Pos('":', T) > 0, 'still JSON: ' + T);
 end;
 
 procedure TTestToolSmoke.TestEditorListOpen;
@@ -132,14 +145,14 @@ begin
   try
     T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');
     CheckNoError(Self, 'code_get_outline', T);
-    CheckTrue(Pos('"line" : 7, "name" : "FCount"', T) > 0, 'private field: ' + T);
-    CheckTrue(Pos('"line" : 10, "name" : "Count"', T) > 0, 'property: ' + T);
-    CheckTrue(Pos('"line" : 13, "name" : "Helper"', T) > 0, 'implementation routine: ' + T);
-    CheckTrue(Pos('"line" : 16, "name" : "TShown.Bump"', T) > 0, 'method body: ' + T);
+    CheckTrue(Pos('"line":7,"name":"FCount"', T) > 0, 'private field: ' + T);
+    CheckTrue(Pos('"line":10,"name":"Count"', T) > 0, 'property: ' + T);
+    CheckTrue(Pos('"line":13,"name":"Helper"', T) > 0, 'implementation routine: ' + T);
+    CheckTrue(Pos('"line":16,"name":"TShown.Bump"', T) > 0, 'method body: ' + T);
     Call('editor_replace_range', '{"file":' + JsonStr(F) +
       ',"start_line":4,"start_col":1,"new_text":"// a\n// b\n"}');
     T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');
-    CheckTrue(Pos('"line" : 18, "name" : "TShown.Bump"', T) > 0, 'unsaved edit followed: ' + T);
+    CheckTrue(Pos('"line":18,"name":"TShown.Bump"', T) > 0, 'unsaved edit followed: ' + T);
   finally
     Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
@@ -194,7 +207,7 @@ begin
     WriteUnit(Second, 'McpSecond');
     T := Call('code_get_outline', '{"file":' + JsonStr(Second) + '}');
     CheckNoError(Self, 'code_get_outline on the new file', T);
-    CheckTrue(Pos('"name" : "PMcpSecond"', T) > 0, 'procedures by name: ' + T);
+    CheckTrue(Pos('"name":"PMcpSecond"', T) > 0, 'procedures by name: ' + T);
   finally
     DeleteFile(First);
     DeleteFile(Second);
@@ -274,13 +287,13 @@ begin
     T := Call('editor_open', '{"file_path":' + JsonStr(Slashes) + '}');
     CheckNoError(Self, 'editor_open', T);
     T := Call('editor_open', '{"file_path":' + JsonStr(Detour) + '}');
-    CheckTrue(Pos('"already_open" : true', T) > 0, 'same file through ..: ' + T);
+    CheckTrue(Pos('"already_open":true', T) > 0, 'same file through ..: ' + T);
     T := Call('editor_list_open', '{}');
     CheckTrue(Pos(JsonStr(FixtureUnit), T) > 0, 'listed with the native path: ' + T);
   finally
     T := Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
   end;
-  CheckTrue(Pos('"closed" : true', T) > 0, 'closed by its native path: ' + T);
+  CheckTrue(Pos('"closed":true', T) > 0, 'closed by its native path: ' + T);
 end;
 
 procedure TTestToolSmoke.TestGitStatus;
@@ -313,17 +326,17 @@ begin
     T := Call('git_blame', '{}');
     if Pos('TOOL ERROR', T) = 1 then
       Ignore('git not usable here: ' + T);
-    CheckTrue(Pos('"line" : 1, "commit" : "', T) > 0, 'cursor line blamed: ' + T);
+    CheckTrue(Pos('"line":1,"commit":"', T) > 0, 'cursor line blamed: ' + T);
     CheckEquals(0, Pos('uncommitted', T), 'saved fixture is committed: ' + T);
     Call('editor_replace_range',
       '{"start_line":1,"start_col":1,"new_text":"// scratch\n"}');
     T := Call('git_blame', '{"start_line":1,"end_line":2}');
-    CheckTrue(Pos('"editor_modified" : true', T) > 0, 'buffer blamed: ' + T);
-    CheckTrue(Pos('"line" : 1, "commit" : "uncommitted"', T) > 0, 'new line: ' + T);
-    CheckEquals(0, Pos('"line" : 2, "commit" : "uncommitted"', T),
+    CheckTrue(Pos('"editor_modified":true', T) > 0, 'buffer blamed: ' + T);
+    CheckTrue(Pos('"line":1,"commit":"uncommitted"', T) > 0, 'new line: ' + T);
+    CheckEquals(0, Pos('"line":2,"commit":"uncommitted"', T),
       'old line keeps its commit: ' + T);
     T := Call('git_diff', '{"active_file":true}');
-    CheckTrue(Pos('"editor_modified" : true', T) > 0, 'diff warns about unsaved edits: ' + T);
+    CheckTrue(Pos('"editor_modified":true', T) > 0, 'diff warns about unsaved edits: ' + T);
   finally
     Call('editor_revert', '{"file":' + JsonStr(FixtureUnit) + '}');
     Call('editor_close', '{"file":' + JsonStr(FixtureUnit) + '}');
@@ -400,7 +413,7 @@ begin
     Call('editor_edit_text', '{"file":' + JsonStr(F) +
       ',"old_string":"// alpha on disk","new_string":"// zeta only in the editor"}');
     T := Call('project_search', '{"query":"zeta only","directory":' + JsonStr(Dir) + '}');
-    CheckTrue(Pos('"line" : 2', T) > 0, 'unsaved edit found: ' + T);
+    CheckTrue(Pos('"line":2', T) > 0, 'unsaved edit found: ' + T);
     T := Call('project_search', '{"query":"x","directory":' + JsonStr(Dir + 'missing') + '}');
     CheckTrue(Pos('Directory not found', T) > 0, 'missing directory: ' + T);
   finally
@@ -600,9 +613,9 @@ var
 begin
   T := Call('package_get_info', '{"package_name":"LazMcpAssistant","files":true}');
   CheckNoError(Self, 'package_get_info', T);
-  CheckTrue(Pos('"name" : "IDEIntf", "status" : "ok"', T) > 0, 'IDEIntf resolved: ' + T);
-  CheckTrue(Pos('"unit" : "McpToolsPackages"', T) > 0, 'files listed: ' + T);
-  CheckTrue(Pos('"required_by" : ["IDE"]', T) > 0, 'installed in the IDE: ' + T);
+  CheckTrue(Pos('"name":"IDEIntf","status":"ok"', T) > 0, 'IDEIntf resolved: ' + T);
+  CheckTrue(Pos('"unit":"McpToolsPackages"', T) > 0, 'files listed: ' + T);
+  CheckTrue(Pos('"required_by":["IDE"]', T) > 0, 'installed in the IDE: ' + T);
 end;
 
 procedure TTestToolSmoke.TestPackageFindUnit;
@@ -611,9 +624,9 @@ var
 begin
   T := Call('package_find_unit', '{"unit_name":"synedit"}');
   CheckNoError(Self, 'package_find_unit', T);
-  CheckTrue(Pos('"package" : "SynEdit"', T) > 0, 'SynEdit unit is in package SynEdit: ' + T);
+  CheckTrue(Pos('"package":"SynEdit"', T) > 0, 'SynEdit unit is in package SynEdit: ' + T);
   T := Call('package_find_unit', '{"unit_name":"NoSuchUnitXyz"}');
-  CheckTrue(Pos('"packages" : []', T) > 0, 'unknown unit: no packages: ' + T);
+  CheckTrue(Pos('"packages":[]', T) > 0, 'unknown unit: no packages: ' + T);
 end;
 
 { package_uninstall runs on ide_rebuild's path now: an unknown package is
