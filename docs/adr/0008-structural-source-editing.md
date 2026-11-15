@@ -1,6 +1,6 @@
 # ADR-008 — Token-Aware / Structural Source Editing
 
-**Status:** Proposed  
+**Status:** Tiers 1 and 2 built (renamed by ADR-010); overload disambiguation built 2026-11-15 (gap 1); tier 3 only partly: locals, no statement nodes (gaps 2 and 3 open)  
 **Date:** 2026-10-06
 
 ## Context
@@ -162,3 +162,50 @@ Smoke call after each step: modify a known file, verify result with
 `get_file_content`, revert with `revert_file`.  For `get_ast_partial`: call on a
 known procedure and verify the returned node list matches a manual reading of the
 source.
+
+## As built (checked 2026-11-15, by reading the code and calling the tools on a unit with overloads)
+
+| Proposed | Built as | Where | Matches the ADR? |
+|---|---|---|---|
+| `edit_at_position` | `editor_replace_range` (`start_line`, `start_col`, and `end_line`/`end_col` or `delete_len`; no end inserts) | `McpToolsEditor.pas` | Yes, and more: it takes a range end, opens the file if needed, `auto_save` |
+| `insert_after_uses` | `code_add_uses` (`in_interface` selects the section; duplicates handled) | `McpToolsCodeTools.pas` | Yes |
+| `insert_in_procedure` | `code_insert_in_procedure` | same | Located by name, see gap 1 |
+| `replace_procedure_body` | `code_replace_procedure_body` | same | Located by name, see gap 1 |
+| `add_to_class_section` | `code_add_to_class` (indents like the members around it) | same | Yes; tests in `tfinddeclaration.pas`, `tcodecomplete.pas` |
+| `get_ast_partial` | `code_get_procedure_ast` (`proc_name` + `class_name`, or `line`) | same | **Partly**, see gaps 2 and 3 |
+
+`edit_text` and `replace_text` stayed as promised (now `editor_edit_text` and `editor_replace_range`).
+
+### Gaps against the decision
+
+1. **Overloads and same-named methods were not detected (fixed 2026-11-15, see Follow-up).** `FindProcBodyLines` returns at the first
+   match, and all three of `code_insert_in_procedure`, `code_replace_procedure_body` and
+   `code_get_procedure_ast` use it. The ADR's consequence ("return an error listing the candidates and
+   require a qualified name") was not built. Seen live: a unit with `Put(Integer)` and `Put(string)`:
+   `proc_name: "Put"` answered for the first overload without a word, the second is reachable only by
+   `line`. Without `class_name`, a name also matches the method of any class by its suffix (`.Create`),
+   and the first one wins. For the two *writing* tools this edits the wrong routine silently.
+2. **`code_get_procedure_ast` reports no statements.** `nodes` came back `[]` for a body with an
+   `if ... then` statement (two procedures tried), because CodeTools' tree does not go below the
+   `begin` block, and the `PScanner` token walk the ADR planned for statement level was never written.
+   The tool description and the README row ("block-level control flow, if/for/while/try/case") say more
+   than it delivers; what works is `scope`, `begin_line`, `end_line` and `locals`.
+3. **Locals carry a name and a line, no type** (the ADR's example has `"type"`).
+4. **Tests** (fixed for gap 1 and the three tools' basic results; the statement nodes of gap 2 have none yet, because there are none to test).
+
+Not checked: the LF normalisation of inserted text and the cache flush before the CodeTools query
+(implementation notes above).
+
+## Follow-up
+
+**Gap 1, done.** `FindProcBodyLines` collects every routine with a body that matches. One match: as
+before. Several: nothing is changed and the error lists them (`Ambiguous: "Put" matches 2 routines`, each
+with its line and its header line). The three tools take a `line` (any line inside the routine meant, so a
+line from the candidate list works) next to `class_name`; no routine contains that line: "not found", never a
+guess. Tests: `tests/tprocedures.pas` (8, live: overloads refused and picked by line for replace, insert and
+the AST tool; the same method in two classes refused and picked by `class_name`; a unique name and an
+unknown one as before; the file is untouched after a refusal).
+
+Gaps 2 and 3 are either built (a
+`PScanner` walk over the body's range, as the ADR describes) or the description and README are cut back
+to what the tool returns. Both need tests that read the result.

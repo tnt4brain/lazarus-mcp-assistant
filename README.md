@@ -73,8 +73,8 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
 | `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
 | `code_add_uses` | Add a unit to the interface or implementation uses clause |
-| `code_insert_in_procedure` | Insert text right after a routine's `begin` |
-| `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end` |
+| `code_insert_in_procedure` | Insert text right after a routine's `begin`; an overloaded name is refused with the candidates, `line` picks one |
+| `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end`; an overloaded name is refused with the candidates, `line` picks one |
 | `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
 | `code_complete` | Code completion as Ctrl+Shift+C does it: method bodies, property fields and setters, forward procedures, local variables, event handlers. Returns the changed lines |
 | `code_format` | Format a file or a range of lines with JEDI Code Format, using the IDE's JCF settings; one undo step. Returns the changed lines |

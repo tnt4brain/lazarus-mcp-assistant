@@ -166,6 +166,7 @@ const
     '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
+    '"line":{"type":"integer","description":"A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
     '"text":{"type":"string","description":"Pascal text to insert at the start of the procedure body, immediately after begin"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","proc_name","text"]}';
@@ -175,6 +176,7 @@ const
     '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
+    '"line":{"type":"integer","description":"A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
     '"new_body":{"type":"string","description":"New body content placed between begin and end; replaces everything currently there"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","proc_name","new_body"]}';
@@ -227,58 +229,90 @@ begin
 end;
 
 { Find the begin..end block of a named procedure/function.
-  Returns line numbers of begin and end (1-based). }
+  Returns line numbers of begin and end (1-based).  When the name matches more than one
+  routine (overloads, or the same method name in several classes) nothing is returned and
+  Problem lists the candidates; PickLine (a line inside the one meant, 0 for none) narrows
+  the matches.  Problem is empty when there is simply no such routine. }
 function FindProcBodyLines(Tool: TCodeTool; CodeBuf: TCodeBuffer;
-  const ProcName, ClassName: string;
-  out BeginLine, EndLine: Integer): Boolean;
+  const ProcName, ClassName: string; PickLine: Integer;
+  out BeginLine, EndLine: Integer; out Problem: string): Boolean;
 var
-  Node      : TCodeTreeNode;
-  Child     : TCodeTreeNode;
-  BeginNode : TCodeTreeNode;
-  NodeName  : string;
-  SearchKey : string;
-  C         : Integer;
+  Node, Child, BeginNode : TCodeTreeNode;
+  NodeName, SearchKey, Header : string;
+  C, ProcFrom, ProcTo, BL, EL : Integer;
+  Found : TJSONArray;
+  Item  : TJSONObject;
+  Count : Integer;
 begin
   Result    := False;
   BeginLine := 0;
   EndLine   := 0;
+  Problem   := '';
+  Count     := 0;
   if ClassName <> '' then
     SearchKey := LowerCase(ClassName + '.' + ProcName)
   else
     SearchKey := LowerCase(ProcName);
-  Node := Tool.Tree.Root;
-  while Assigned(Node) do
-  begin
-    if Node.Desc = ctnProcedure then
+  Found := TJSONArray.Create;
+  try
+    Node := Tool.Tree.Root;
+    while Assigned(Node) do
     begin
-      BeginNode := nil;
-      Child := Node.FirstChild;
-      while Assigned(Child) do
+      if Node.Desc = ctnProcedure then
       begin
-        if Child.Desc = ctnBeginBlock then begin BeginNode := Child; Break; end;
-        Child := Child.NextBrother;
-      end;
-      if Assigned(BeginNode) then
-      begin
-        NodeName := ExtractProcNodeName(CodeBuf, Node);
-        if (NodeName = SearchKey) or
-           ((ClassName = '') and
-            (RightStr(NodeName, Length(SearchKey) + 1) = '.' + SearchKey)) then
+        BeginNode := nil;
+        Child := Node.FirstChild;
+        while Assigned(Child) do
         begin
-          CodeBuf.AbsoluteToLineCol(BeginNode.StartPos,     BeginLine, C);
-          CodeBuf.AbsoluteToLineCol(BeginNode.EndPos - 1,   EndLine,   C);
-          Result := True;
-          Exit;
+          if Child.Desc = ctnBeginBlock then begin BeginNode := Child; Break; end;
+          Child := Child.NextBrother;
+        end;
+        if Assigned(BeginNode) then
+        begin
+          NodeName := ExtractProcNodeName(CodeBuf, Node);
+          if (NodeName = SearchKey) or
+             ((ClassName = '') and
+              (RightStr(NodeName, Length(SearchKey) + 1) = '.' + SearchKey)) then
+          begin
+            CodeBuf.AbsoluteToLineCol(Node.StartPos, ProcFrom, C);
+            CodeBuf.AbsoluteToLineCol(Node.EndPos - 1, ProcTo, C);
+            if (PickLine <= 0) or ((PickLine >= ProcFrom) and (PickLine <= ProcTo)) then
+            begin
+              CodeBuf.AbsoluteToLineCol(BeginNode.StartPos, BL, C);
+              CodeBuf.AbsoluteToLineCol(BeginNode.EndPos - 1, EL, C);
+              Header := Trim(CodeBuf.GetLine(ProcFrom - 1, False));
+              Item := TJSONObject.Create;
+              Item.Add('line', ProcFrom);
+              Item.Add('header', Header);
+              Found.Add(Item);
+              Inc(Count);
+              if Count = 1 then
+              begin
+                BeginLine := BL;
+                EndLine   := EL;
+              end;
+            end;
+          end;
         end;
       end;
+      if Assigned(Node.FirstChild) then Node := Node.FirstChild
+      else if Assigned(Node.NextBrother) then Node := Node.NextBrother
+      else
+      begin
+        repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
+        if Assigned(Node) then Node := Node.NextBrother;
+      end;
     end;
-    if Assigned(Node.FirstChild) then Node := Node.FirstChild
-    else if Assigned(Node.NextBrother) then Node := Node.NextBrother
-    else
+    if Count = 1 then Result := True
+    else if Count > 1 then
     begin
-      repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
-      if Assigned(Node) then Node := Node.NextBrother;
+      BeginLine := 0;
+      EndLine   := 0;
+      Problem := 'Ambiguous: "' + ProcName + '" matches ' + IntToStr(Count) + ' routines; ' +
+        'give class_name, or line (a line inside the one you mean). Candidates: ' + Found.AsJSON;
     end;
+  finally
+    Found.Free;
   end;
 end;
 
@@ -1529,6 +1563,7 @@ begin
     NewName  := Ctx.Params.Get('class_name', '');
     Snippet  := Ctx.Params.Get('text',       '');
     AutoSave := Ctx.Params.Get('auto_save',  False);
+    Line     := Ctx.Params.Get('line', 0);
     if (FilePath = '') or (Symbol = '') then
     begin
       Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
@@ -1550,9 +1585,11 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
     end;
-    if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, BeginLine, EndLine) then
+    if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, Line, BeginLine, EndLine, Why) then
     begin
-      Ctx.Error := True; Ctx.Result := 'Procedure not found: ' + Symbol; Exit;
+      Ctx.Error := True;
+      if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
+      Exit;
     end;
     if not Assigned(Ed) then
     begin
@@ -1596,6 +1633,7 @@ begin
     NewName  := Ctx.Params.Get('class_name', '');
     Snippet  := Ctx.Params.Get('new_body',   '');
     AutoSave := Ctx.Params.Get('auto_save',  False);
+    Line     := Ctx.Params.Get('line', 0);
     if (FilePath = '') or (Symbol = '') then
     begin
       Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
@@ -1617,9 +1655,11 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
     end;
-    if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, BeginLine, EndLine) then
+    if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, Line, BeginLine, EndLine, Why) then
     begin
-      Ctx.Error := True; Ctx.Result := 'Procedure not found: ' + Symbol; Exit;
+      Ctx.Error := True;
+      if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
+      Exit;
     end;
     if not Assigned(Ed) then
     begin
@@ -1764,9 +1804,11 @@ begin
     if Symbol <> '' then
     begin
       { Name-based: use FindProcBodyLines to get lines, then find BeginBlock node }
-      if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, BeginLine, EndLine) then
+      if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, NewY, BeginLine, EndLine, Why) then
       begin
-        Ctx.Error := True; Ctx.Result := 'Procedure not found: ' + Symbol; Exit;
+        Ctx.Error := True;
+        if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
+        Exit;
       end;
       TreeNode := Tool.Tree.Root;
       while Assigned(TreeNode) do
@@ -1963,12 +2005,16 @@ begin
   Tools.Add(MakeTool('code_insert_in_procedure',
     'Insert text at the start of a named procedure or function body (immediately ' +
     'after begin), located via CodeTools AST. No string matching — robust to ' +
-    'whitespace and formatting changes. Uses the editor undo stack (Ctrl+Z works).',
+    'whitespace and formatting changes. Uses the editor undo stack (Ctrl+Z works). ' +
+    'An overloaded name, or one that exists in several classes, is refused with the candidates; ' +
+    'pass line (inside the one you mean) or class_name.',
     SCHEMA_INSERT_IN_PROCEDURE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_replace_procedure_body',
     'Replace the entire body of a named procedure or function (everything between ' +
     'begin and end) with new_body, located via CodeTools AST. No string matching. ' +
-    'Uses the editor undo stack (Ctrl+Z works).',
+    'Uses the editor undo stack (Ctrl+Z works). ' +
+    'An overloaded name, or one that exists in several classes, is refused with the candidates; ' +
+    'pass line (inside the one you mean) or class_name.',
     SCHEMA_REPLACE_PROCEDURE_BODY, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_add_to_class',
     'Append a declaration to a named section of a class (public, private, ' +
