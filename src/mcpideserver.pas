@@ -1956,8 +1956,15 @@ begin
     LazarusIDE.AddHandlerOnIDEClose(@IDEHook.OnIDEClose);
 end;
 
+procedure RestartServerNow;
+begin
+  FinalizeMcpServer;
+  InitializeMcpServer;
+end;
+
 initialization
   GCallLock := TCriticalSection.Create;
+  GMcpRestartServer := @RestartServerNow;
 finalization
   FinalizeMcpServer; // safety net — normally called by the IDE-close hook
   FreeAndNil(IDEHook);

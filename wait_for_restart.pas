@@ -221,5 +221,12 @@ begin
   end;
 
   WriteLn(Format('ERROR: MCP server did not respond within %ds.', [Timeout]));
+  if HasProcess(ProcessNames, 'lazarus') then
+    WriteLn('The IDE process is running but its MCP server does not answer: the build may have ',
+            'failed and left it as it was, or the plugin is not loaded. Look at the Messages window.')
+  else if Launched then
+    WriteLn('No IDE was running; this script started one, and it did not come up.')
+  else
+    WriteLn('No IDE process is running and no build is: the rebuild failed and the IDE is gone.');
   Halt(1);
 end.

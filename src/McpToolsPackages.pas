@@ -105,12 +105,12 @@ const
 
   SCHEMA_INSTALL_PACKAGE =
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +
-    '"description":"Absolute path to the .lpk package file to install into the IDE"}},' +
+    '"description":"Absolute path to the .lpk package file to install into the IDE"},' + MCP_REBUILD_FLAGS + '},' +
     '"required":["lpk_path"]}';
 
   SCHEMA_UNINSTALL_PACKAGE =
     '{"type":"object","properties":{"package_name":{"type":"string",' +
-    '"description":"Package name to uninstall from the IDE"}},' +
+    '"description":"Package name to uninstall from the IDE"},' + MCP_REBUILD_FLAGS + '},' +
     '"required":["package_name"]}';
 
   SCHEMA_SEARCH_ONLINE =

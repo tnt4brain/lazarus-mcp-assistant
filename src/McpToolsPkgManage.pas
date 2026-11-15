@@ -19,6 +19,10 @@ uses
   {file, line, column, message}; warnings are capped. }
 procedure McpCompilerMessages(AErrors, AWarnings: TJSONArray);
 
+{ The IDE-side compile of package_compile as its JSON answer (success, errors and so on; or use_lazbuild when the package is not loaded); AErr is set when it cannot be
+  tried at all.  Main thread. }
+function McpCompilePackageIde(AParams: TJSONObject; out AErr: string): string;
+
 implementation
 
 uses
@@ -578,6 +582,11 @@ begin
     Unsaved.Free;
     Obj.Free;
   end;
+end;
+
+function McpCompilePackageIde(AParams: TJSONObject; out AErr: string): string;
+begin
+  Result := PackageCompileIde(AParams, AErr);
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
