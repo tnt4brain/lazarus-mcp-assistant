@@ -47,7 +47,8 @@ const
 
   SCHEMA_LIST =
     '{"type":"object","properties":{' +
-    '"name_contains":{"type":"string"},' +
+    '"name_contains":{"type":"string","description":"Only packages whose name contains this ' +
+      'text (case does not matter)"},' +
     '"modified_only":{"type":"boolean","description":"Only packages with unsaved changes"},' +
     '"include_ide":{"type":"boolean","description":"Also the packages that come with ' +
       'Lazarus (default false: only others, e.g. yours and downloaded ones)"}}}';
@@ -67,7 +68,9 @@ const
     '"requires":{"type":"array","items":{"type":"string"},"description":"Packages to ' +
       'require (default [\"FCL\"]); each must be loaded or known to the IDE"},' +
     '"version":{"type":"string","description":"major.minor[.release[.build]]"},' +
-    '"description":{"type":"string"},"author":{"type":"string"},"license":{"type":"string"},' +
+    '"description":{"type":"string","description":"The package''s description text"},' +
+    '"author":{"type":"string","description":"The package''s author"},' +
+    '"license":{"type":"string","description":"The package''s license, free text, e.g. BSD-3-Clause"},' +
     '"unit_name":{"type":"string","description":"Also write this unit skeleton in the ' +
       'directory and list it in the package"}},' +
     '"required":["name","directory"]}';
@@ -79,15 +82,21 @@ const
     '{"type":"object","properties":{' + PKG_TARGET + ',' +
     '"package_type":{"type":"string","description":"RunTime, DesignTime, ' +
       'RunAndDesignTime or RunTimeOnly"},' +
-    '"unit_output_dir":{"type":"string"},' +
+    '"unit_output_dir":{"type":"string","description":"Where the compiled units go, relative ' +
+      'to the .lpk, e.g. lib/$(TargetCPU)-$(TargetOS)"},' +
     '"unit_search_path":{"type":"string","description":"Other unit files, ;-separated, ' +
       'relative to the .lpk"},' +
-    '"include_path":{"type":"string"},' +
+    '"include_path":{"type":"string","description":"Include file directories, ;-separated, ' +
+      'relative to the .lpk"},' +
     '"custom_options":{"type":"string","description":"Replaces the compiler options text"},' +
-    '"target_os":{"type":"string"},"target_cpu":{"type":"string"},' +
+    '"target_os":{"type":"string","description":"Target operating system, e.g. win32 or linux; ' +
+      'empty means the build''s default"},' +
+    '"target_cpu":{"type":"string","description":"Target processor, e.g. x86_64 or aarch64; ' +
+      'empty means the build''s default"},' +
     '"usage_unit_path":{"type":"string","description":"Unit path added to the projects ' +
       'that use the package"},' +
-    '"usage_include_path":{"type":"string"}}}';
+    '"usage_include_path":{"type":"string","description":"Include path added to the projects ' +
+      'that use the package"}}}';
 
 { ── Messages ─────────────────────────────────────────────────────────────── }
 

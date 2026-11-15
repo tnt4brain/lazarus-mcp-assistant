@@ -78,19 +78,19 @@ const
     '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
     '"required_package":{"type":"string","description":"Name of the package to require"},' +
     '"min_version":{"type":"string","description":"e.g. 1.2"},' +
-    '"max_version":{"type":"string"}},' +
+    '"max_version":{"type":"string","description":"Highest accepted version, same format as min_version"}},' +
     '"required":["required_package"]}';
 
   SCHEMA_PKG_SET_INFO =
     '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
     '"version":{"type":"string","description":"major.minor[.release[.build]], e.g. 1.0"},' +
-    '"description":{"type":"string"},' +
-    '"author":{"type":"string"},' +
-    '"license":{"type":"string"}}}';
+    '"description":{"type":"string","description":"The package''s description text"},' +
+    '"author":{"type":"string","description":"The package''s author"},' +
+    '"license":{"type":"string","description":"The package''s license, free text, e.g. BSD-3-Clause"}}}';
 
   SCHEMA_PKG_REMOVE_DEP =
     '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
-    '"required_package":{"type":"string"}},' +
+    '"required_package":{"type":"string","description":"Name of the required package to remove"}},' +
     '"required":["required_package"]}';
 
   SCHEMA_ADD_PACKAGE_TO_PROJECT =

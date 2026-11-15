@@ -41,8 +41,8 @@ const
   SCHEMA_GIT_BLAME =
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Default: the active editor''s file"},' +
-    '"start_line":{"type":"integer","description":"Default: the cursor line of the active editor"},' +
-    '"end_line":{"type":"integer","description":"Default: start_line; at most 200 lines"}}}';
+    '"start_line":{"type":"integer","description":"First line (1-based). Default: the cursor line of the active editor"},' +
+    '"end_line":{"type":"integer","description":"Last line (1-based, inclusive). Default: start_line; at most 200 lines"}}}';
 
   SCHEMA_GIT_LOG =
     '{"type":"object","properties":{' +
