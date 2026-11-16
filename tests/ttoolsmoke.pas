@@ -38,6 +38,7 @@ type
     procedure TestPackageGetInfo;
     procedure TestPackageFindUnit;
     procedure TestPackageUninstallUnknown;
+    procedure TestShowMarkdownFile;
     procedure TestArgsValidated;
     procedure TestCodeToolsKeepDiskUntouched;
     procedure TestAddUnknownPackageRefused;
@@ -627,6 +628,40 @@ begin
   CheckTrue(Pos('"package":"SynEdit"', T) > 0, 'SynEdit unit is in package SynEdit: ' + T);
   T := Call('package_find_unit', '{"unit_name":"NoSuchUnitXyz"}');
   CheckTrue(Pos('"packages":[]', T) > 0, 'unknown unit: no packages: ' + T);
+end;
+
+{ ide_show_markdown with file: either-or with markdown, a tab per file that follows it.
+  The argument rules need no window; showing a tab does, so it only runs with
+  MCP_DEBUG_TESTS like the other window tests. }
+procedure TTestToolSmoke.TestShowMarkdownFile;
+var
+  T, T2, F : string;
+  SL : TStringList;
+begin
+  T := Call('ide_show_markdown', '{}');
+  CheckTrue(Pos('is required', T) > 0, 'neither: ' + T);
+  F := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpshowmd.md';
+  T := Call('ide_show_markdown', '{"markdown":"# x","file":' + JsonStr(F) + '}');
+  CheckTrue(Pos('not both', T) > 0, 'both: ' + T);
+  T := Call('ide_show_markdown', '{"file":' + JsonStr(F + '.nothere') + '}');
+  CheckTrue(Pos('no such file', T) > 0, 'missing file: ' + T);
+  if GetEnvironmentVariable('MCP_DEBUG_TESTS') = '' then Exit;
+  SL := TStringList.Create;
+  try
+    SL.Text := '# Shown from a file' + LineEnding;
+    SL.SaveToFile(F);
+  finally
+    SL.Free;
+  end;
+  try
+    T := Call('ide_show_markdown', '{"file":' + JsonStr(F) + '}');
+    CheckTrue(Pos('"follows_file":true', T) > 0, 'shown: ' + T);
+    T2 := Call('ide_show_markdown', '{"file":' + JsonStr(F) + '}');
+    CheckEquals(Copy(T, Pos('"tab":', T), 12), Copy(T2, Pos('"tab":', T2), 12),
+      'the same file reuses its tab');
+  finally
+    DeleteFile(F);
+  end;
 end;
 
 { package_uninstall runs on ide_rebuild's path now: an unknown package is

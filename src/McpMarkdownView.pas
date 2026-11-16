@@ -28,7 +28,8 @@ function McpMarkdownShow(const AMarkdown, ATitle, ATab, ABaseDir: string;
 { Show a Markdown file (the user's View command): a tab per file, so opening it again
   refreshes that tab.  AText <> '' is used instead of the file's content (an editor buffer
   with unsaved changes). }
-function McpMarkdownOpenFile(const AFile, AText: string; out AError: string): Boolean;
+function McpMarkdownOpenFile(const AFile, AText: string; out AError: string): Boolean; overload;
+function McpMarkdownOpenFile(const AFile, AText: string; out ATabId, AError: string): Boolean; overload;
 
 { The user's "View Markdown" commands: the active source editor when it holds a Markdown file,
   else a file dialog.  Errors are shown in the IDE's message line, never as a modal box. }
@@ -53,12 +54,13 @@ function McpLoadMarkdownPicture(const AUrl, ABaseDir: string; AImages: TStrings;
 implementation
 
 uses
-  Controls, ComCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
+  Controls, ComCtrls, ExtCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
   LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEMsgIntf, IDEExternToolIntf,
   McpMarkdown, McpImageInfo, McpMessages;
 
 const
   MD_FORM_ID = 'McpMarkdownFormID';
+  MD_MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 type
   { One document: its panel, its images, the handlers of its panel }
@@ -70,6 +72,9 @@ type
     FBaseDir : string;
     FId      : string;
     FFile    : string;     { the file this tab shows ('' = a document from ide_show_markdown) }
+    FSource  : string;     { the text last rendered for FFile (LF line ends, no BOM) }
+    FStamp   : string;     { age and size of FFile when it was last read from disk }
+    procedure RestoreScroll(Data: PtrInt);
     function  LoadImage(const AUrl: string; out AWhy: string): TPicture;
     procedure GetImage(Sender: TIpHtmlNode; const URL: string; var Picture: TPicture);
     function  CanHandle(Sender: TObject; const URL: string): Boolean;
@@ -78,6 +83,8 @@ type
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure SetDocument(const AMarkdown: string);
+    procedure Follow(const AText: string);
+    procedure CheckSource;
     property Id: string read FId;
   end;
 
@@ -85,6 +92,8 @@ type
   private
     FPages : TPageControl;
     FLink  : string;       { a relative .md link clicked, opened after the click returns }
+    FTimer : TTimer;
+    procedure Tick(Sender: TObject);
     procedure OpenLink(Data: PtrInt);
     procedure CloseTab(Sender: TObject);
     procedure WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
@@ -347,6 +356,80 @@ begin
   FPanel.SetHtmlFromStr(Html);
 end;
 
+{ Text as the tab compares it: LF line ends, no byte order mark. }
+function NormalizedText(const AText: string): string;
+begin
+  Result := StringReplace(AText, #13#10, #10, [rfReplaceAll]);
+  if (Length(Result) >= 3) and (Result[1] = #$EF) and (Result[2] = #$BB) and (Result[3] = #$BF) then
+    Delete(Result, 1, 3);
+end;
+
+function FileStamp(const AFile: string): string;
+var
+  F : TSearchRec;
+begin
+  Result := '';
+  if FindFirst(AFile, faAnyFile, F) = 0 then
+  begin
+    Result := IntToStr(F.Time) + ':' + IntToStr(F.Size);
+    FindClose(F);
+  end;
+end;
+
+procedure TMdTab.RestoreScroll(Data: PtrInt);
+begin
+  FPanel.VScrollPos := Data;
+end;
+
+{ The file changed: show the new text where the reader was (the layout of a new page
+  is built after SetHtmlFromStr returns, so the position is set again once it is). }
+procedure TMdTab.Follow(const AText: string);
+var
+  Y : Integer;
+begin
+  FSource := NormalizedText(AText);
+  Y := FPanel.VScrollPos;
+  SetDocument(FSource);
+  FPanel.VScrollPos := Y;
+  Application.QueueAsyncCall(@RestoreScroll, Y);
+end;
+
+{ Called by the window's timer: an editor holding the file is the truth (also while the
+  user types), else the file on disk when its age or size changed. }
+procedure TMdTab.CheckSource;
+var
+  Ed    : TSourceEditorInterface;
+  Raw  : string;
+  Stamp : string;
+  S     : TFileStream;
+begin
+  if FFile = '' then Exit;
+  try
+    Ed := nil;
+    if Assigned(SourceEditorManagerIntf) then
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FFile);
+    if Assigned(Ed) then
+      Raw := Ed.Lines.Text
+    else
+    begin
+      Stamp := FileStamp(FFile);
+      if (Stamp = '') or (Stamp = FStamp) then Exit;
+      FStamp := Stamp;
+      S := TFileStream.Create(FFile, fmOpenRead or fmShareDenyNone);
+      try
+        if S.Size > MD_MAX_FILE_BYTES then Exit;
+        SetLength(Raw, S.Size);
+        if S.Size > 0 then S.ReadBuffer(Raw[1], S.Size);
+      finally
+        S.Free;
+      end;
+    end;
+    if NormalizedText(Raw) <> FSource then Follow(Raw);
+  except
+    { a file being written or an editor going away: the next tick tries again }
+  end;
+end;
+
 { ── The window ───────────────────────────────────────────────────────────── }
 
 constructor TMdForm.Create(AOwner: TComponent);
@@ -363,6 +446,9 @@ begin
   FPages.Options := FPages.Options + [nboShowCloseButtons];
   FPages.OnCloseTabClicked := @CloseTab;
   OnClose := @WindowClosed;
+  FTimer := TTimer.Create(Self);
+  FTimer.Interval := 700;
+  FTimer.OnTimer := @Tick;
   { on the monitor of the IDE's main window, about two thirds of its work area }
   R := Screen.PrimaryMonitor.WorkareaRect;
   if Assigned(Application.MainForm) and Application.MainForm.HandleAllocated then
@@ -380,6 +466,15 @@ begin
   if GForm = Self then GForm := nil;
   Application.RemoveAsyncCalls(Self);
   inherited Destroy;
+end;
+
+procedure TMdForm.Tick(Sender: TObject);
+var
+  I : Integer;
+begin
+  if not Visible then Exit;
+  for I := 0 to FPages.PageCount - 1 do
+    if FPages.Pages[I] is TMdTab then TMdTab(FPages.Pages[I]).CheckSource;
 end;
 
 { The IDE re-creates its windows at start when they were open at exit; documents are not
@@ -539,9 +634,6 @@ end;
 
 { ── The user's commands ──────────────────────────────────────────────────── }
 
-const
-  MD_MAX_FILE_BYTES = 8 * 1024 * 1024;
-
 function IsMarkdownName(const AName: string): Boolean;
 var
   Ext : string;
@@ -552,6 +644,13 @@ end;
 
 function McpMarkdownOpenFile(const AFile, AText: string; out AError: string): Boolean;
 var
+  TabId : string;
+begin
+  Result := McpMarkdownOpenFile(AFile, AText, TabId, AError);
+end;
+
+function McpMarkdownOpenFile(const AFile, AText: string; out ATabId, AError: string): Boolean;
+var
   Text, TabId, Err : string;
   S    : TFileStream;
   Tab  : TMdTab;
@@ -559,6 +658,7 @@ var
 begin
   Result := False;
   AError := '';
+  ATabId := '';
   Text := AText;
   if Text = '' then
   begin
@@ -592,8 +692,14 @@ begin
   if Assigned(GForm) then
   begin
     Tab := GForm.FindTab(TabId);
-    if Assigned(Tab) then Tab.FFile := AFile;
+    if Assigned(Tab) then
+    begin
+      Tab.FFile   := AFile;
+      Tab.FSource := NormalizedText(Text);
+      Tab.FStamp  := FileStamp(AFile);
+    end;
   end;
+  ATabId := TabId;
   Result := True;
 end;
 
