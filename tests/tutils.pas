@@ -27,12 +27,45 @@ type
     procedure TestNormalizePathRelativeUnchanged;
     procedure TestNormalizePathArgs;
     procedure TestRenameLegacyFileArg;
+    procedure TestPathIsUnder;
+    procedure TestPathHasSegment;
   end;
 
 implementation
 
 uses
   SysUtils, Sockets, fpjson, jsonparser;
+
+procedure TTestUtils.TestPathIsUnder;
+var
+  Root, Sep, DiskRoot : string;
+begin
+  Sep := PathDelim;
+  Root := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcproot';
+  AssertTrue('a file', McpPathIsUnder(Root + Sep + 'a.pas', Root));
+  AssertTrue('a file below a folder', McpPathIsUnder(Root + Sep + 'sub' + Sep + 'a.pas', Root));
+  AssertTrue('the root written with a trailing separator', McpPathIsUnder(Root + Sep + 'a.pas', Root + Sep));
+  AssertFalse('the root itself', McpPathIsUnder(Root, Root));
+  AssertFalse('a sibling with the same start', McpPathIsUnder(Root + '2' + Sep + 'a.pas', Root));
+  AssertFalse('.. leaves the root', McpPathIsUnder(Root + Sep + '..' + Sep + 'a.pas', Root));
+  AssertTrue('.. that stays inside', McpPathIsUnder(Root + Sep + 'x' + Sep + '..' + Sep + 'a.pas', Root));
+  AssertFalse('a relative path', McpPathIsUnder('a.pas', Root));
+  AssertFalse('a relative root', McpPathIsUnder(Root + Sep + 'a.pas', 'mcproot'));
+  DiskRoot := IncludeTrailingPathDelimiter(ExtractFileDrive(Root));
+  AssertFalse('a disk root contains nothing', McpPathIsUnder(Root + Sep + 'a.pas', DiskRoot));
+  {$IFDEF WINDOWS}
+  AssertTrue('Windows does not care about case', McpPathIsUnder(UpperCase(Root) + Sep + 'A.PAS', Root));
+  {$ENDIF}
+end;
+
+procedure TTestUtils.TestPathHasSegment;
+begin
+  AssertTrue(McpPathHasSegment('/a/.git/hooks/pre-push', '.git'));
+  AssertTrue(McpPathHasSegment('C:\a\.GIT\config', '.git'));
+  AssertFalse(McpPathHasSegment('/a/.github/x', '.git'));
+  AssertFalse(McpPathHasSegment('/a/b.git/x', '.git'));
+  AssertTrue(McpPathHasSegment('/a/b/.git', '.git'));
+end;
 
 procedure TTestUtils.TestGenerateTokenIs64Chars;
 begin

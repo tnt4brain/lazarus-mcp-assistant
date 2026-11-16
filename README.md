@@ -52,6 +52,7 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `editor_list_open` | All open editor tabs |
 | `editor_read_file` | Read any file by absolute path; prefers the live editor buffer (unsaved changes) over disk |
 | `editor_open` | Open a file in the editor without moving the cursor; returns `already_open` |
+| `editor_create_file` | Create a new text file on the IDE's machine and open it; only inside the project, a loaded package's folder or the temp folder, never in `.git`, no overwrite unless `overwrite:true` (and not while open) |
 | `editor_get_cursor` / `editor_set_cursor` | Read / move the cursor (opens the file if needed) |
 | `editor_get_selection` | Selected text and its range |
 | `editor_edit_text` | **Preferred edit.** Replace `old_string` with `new_string`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
