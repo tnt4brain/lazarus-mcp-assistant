@@ -37,12 +37,13 @@ type
     procedure TestAnswerDialogSchema;
     procedure TestAnswerDialogRefusesWithoutButton;
     procedure TestAnswerDialogNoDialogOpen;
+    procedure TestListDirectory;
   end;
 
 implementation
 
 uses
-  SysUtils, fpjson, jsonparser;
+  SysUtils, Classes, fpjson, jsonparser;
 
 function ParseJSON(const S: string): TJSONObject;
 var
@@ -410,6 +411,68 @@ begin
   finally
     Tools.Free;
   end;
+end;
+
+procedure TTestProjectTools.TestListDirectory;
+var
+  Dir, T : string;
+  Obj    : TJSONObject;
+  Arr    : TJSONArray;
+
+  procedure Touch(const ARel, AText: string);
+  var
+    SL : TStringList;
+  begin
+    SL := TStringList.Create;
+    try
+      SL.Text := AText;
+      SL.SaveToFile(Dir + ARel);
+    finally
+      SL.Free;
+    end;
+  end;
+
+begin
+  Dir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcplistdir' +
+         IntToStr(GetTickCount64) + PathDelim;
+  ForceDirectories(Dir + 'sub');
+  Touch('b.txt', 'bb');
+  Touch('A.txt', 'a');
+  Touch('.hidden', 'h');
+  Touch('sub' + PathDelim + 'c.txt', 'c');
+  T := CallToolText('project_list_directory', '{"directory":' + JsonStr(Dir) + '}', []);
+  CheckFalse(Pos('TOOL ERROR', T) = 1, T);
+  Obj := TJSONObject(GetJSON(T));
+  try
+    Arr := Obj.Arrays['entries'];
+    CheckEquals(3, Arr.Count, 'sub, A.txt, b.txt; the dot file is hidden: ' + T);
+    CheckEquals('sub', Arr.Objects[0].Strings['path'], 'folders first');
+    CheckEquals('dir', Arr.Objects[0].Strings['type']);
+    CheckEquals('A.txt', Arr.Objects[1].Strings['path'], 'then the files by name');
+    CheckEquals('file', Arr.Objects[1].Strings['type']);
+    CheckFalse(Obj.Booleans['truncated']);
+  finally
+    Obj.Free;
+  end;
+  { deeper, with the hidden ones }
+  T := CallToolText('project_list_directory',
+    '{"directory":' + JsonStr(Dir) + ',"depth":2,"include_hidden":true}', []);
+  CheckTrue(Pos('sub/c.txt', T) > 0, 'one level down: ' + T);
+  CheckTrue(Pos('.hidden', T) > 0, 'hidden listed on request: ' + T);
+  { a cap says so }
+  T := CallToolText('project_list_directory',
+    '{"directory":' + JsonStr(Dir) + ',"max_entries":1}', []);
+  CheckTrue(Pos('"truncated":true', T) > 0, T);
+  { not a folder }
+  T := CallToolText('project_list_directory',
+    '{"directory":' + JsonStr(Dir + 'nope') + '}', []);
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'missing folder refused: ' + T);
+  DeleteFile(Dir + 'b.txt');
+  DeleteFile(Dir + 'A.txt');
+  DeleteFile(Dir + '.hidden');
+  DeleteFile(Dir + 'sub' + PathDelim + 'c.txt');
+  RemoveDir(Dir + 'sub');
+  RemoveDir(Dir);
 end;
 
 procedure TTestProjectTools.TestGetOpenDialogsReturnsCount;

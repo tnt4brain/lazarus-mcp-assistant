@@ -123,6 +123,13 @@ const
     '"dry_run":{"type":"boolean","description":"List the stray files without deleting them ' +
     '(default true); pass false to actually delete"}}}';
 
+  SCHEMA_LIST_DIRECTORY =
+    '{"type":"object","properties":{' +
+    '"directory":{"type":"string","description":"The folder to list: absolute, or relative to the project''s folder (default: the project''s folder)"},' +
+    '"depth":{"type":"integer","description":"Levels to list, 1..5 (default 1: the folder''s own entries)"},' +
+    '"max_entries":{"type":"integer","description":"At most this many entries, 1..5000 (default 500); the result says truncated"},' +
+    '"include_hidden":{"type":"boolean","description":"Also list names that start with a dot, .git included (default false)"}}}';
+
   SCHEMA_OPEN_PROJECT =
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path of the project''s .lpi, or of a program''s .lpr: without an .lpi next to it one is written (debug info on; LCL required when it uses Forms or Interfaces)"},' +
@@ -929,6 +936,124 @@ begin
     end;
   finally
     Found.Free;
+  end;
+end;
+
+{ ── project_list_directory ───────────────────────────────────────────────── }
+
+{ The entries of ABase + ASub, folders first, then files, each sorted by name; ASub is
+  '' or ends with '/'.  Stops (AStop) once AEntries holds AMax of them. }
+procedure ListDirectoryInto(const ABase, ASub: string; ADepth, AMax: Integer;
+  AHidden: Boolean; AEntries: TJSONArray; var AStop: Boolean);
+var
+  SR      : TSearchRec;
+  Names   : TStringList;
+  Key     : string;
+  Name    : string;
+  IsDir   : Boolean;
+  Entry   : TJSONObject;
+begin
+  Names := TStringList.Create;
+  try
+    Names.CaseSensitive := False;
+    Names.Sorted := True;
+    Names.Duplicates := dupAccept;
+    if FindFirst(ABase + ASub + '*', faAnyFile, SR) = 0 then
+    try
+      repeat
+        if (SR.Name = '.') or (SR.Name = '..') then Continue;
+        if (not AHidden) and (SR.Name[1] = '.') then Continue;
+        { '0' sorts the folders before the files ('1') }
+        if (SR.Attr and faDirectory) <> 0 then Names.Add('0' + SR.Name)
+        else Names.Add('1' + SR.Name);
+      until FindNext(SR) <> 0;
+    finally
+      FindClose(SR);
+    end;
+    for Key in Names do
+    begin
+      if AEntries.Count >= AMax then
+      begin
+        AStop := True;
+        Exit;
+      end;
+      IsDir := Key[1] = '0';
+      Name := Copy(Key, 2, MaxInt);
+      Entry := TJSONObject.Create;
+      Entry.Add('path', ASub + Name);
+      if IsDir then
+        Entry.Add('type', 'dir')
+      else
+      begin
+        Entry.Add('type', 'file');
+        Entry.Add('size', FileSize(ABase + ASub + Name));
+      end;
+      AEntries.Add(Entry);
+      if IsDir and (ADepth > 1) then
+      begin
+        ListDirectoryInto(ABase, ASub + Name + '/', ADepth - 1, AMax, AHidden, AEntries, AStop);
+        if AStop then Exit;
+      end;
+    end;
+  finally
+    Names.Free;
+  end;
+end;
+
+procedure DoListDirectory(var Ctx: TMcpToolCall);
+var
+  Dir     : string;
+  Depth   : Integer = 1;
+  MaxN    : Integer = 500;
+  Hidden  : Boolean = False;
+  Stopped : Boolean = False;
+  Entries : TJSONArray;
+  Obj     : TJSONObject;
+begin
+  Dir := '';
+  if Assigned(Ctx.Params) then
+  begin
+    Dir    := Trim(Ctx.Params.Get('directory', ''));
+    Depth  := Ctx.Params.Get('depth', 1);
+    MaxN   := Ctx.Params.Get('max_entries', 500);
+    Hidden := Ctx.Params.Get('include_hidden', False);
+  end;
+  if Depth < 1 then Depth := 1;
+  if Depth > 5 then Depth := 5;
+  if MaxN < 1 then MaxN := 1;
+  if MaxN > 5000 then MaxN := 5000;
+  { relative to the project's folder, which is also the default }
+  if (Dir = '') or not FilenameIsAbsolute(Dir) then
+  begin
+    if not (Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+            (LazarusIDE.ActiveProject.ProjectInfoFile <> '')) then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'No saved project: give an absolute directory';
+      Exit;
+    end;
+    Dir := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile) + Dir;
+  end;
+  Dir := IncludeTrailingPathDelimiter(ExpandFileName(Dir));
+  if not DirectoryExists(Dir) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'Not a directory: ' + Dir;
+    Exit;
+  end;
+  Entries := TJSONArray.Create;
+  Obj := TJSONObject.Create;
+  try
+    ListDirectoryInto(Dir, '', Depth, MaxN, Hidden, Entries, Stopped);
+    Obj.Add('directory', Dir);
+    Obj.Add('count', Entries.Count);
+    Obj.Add('truncated', Stopped);
+    Obj.Add('entries', Entries);
+    Entries := nil;
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Entries.Free;
+    Obj.Free;
   end;
 end;
 
@@ -1774,6 +1899,12 @@ begin
     DoProjectClean(Ctx);
   end
 
+  else if Name = 'project_list_directory' then
+  begin
+    Result := True;
+    DoListDirectory(Ctx);
+  end
+
   else if Name = 'ide_answer_dialog' then
   begin
     Result := True;
@@ -1839,6 +1970,13 @@ begin
     'output pointed at the wrong directory. Defaults to the active project; pass ' +
     'package_name or lpk_path to target a package instead. dry_run defaults to true.',
     SCHEMA_CLEAN_PROJECT, MCP_ANN_DEST_IDEM));
+  Tools.Add(MakeTool('project_list_directory',
+    'List the files and folders of a directory on disk, not only the project''s own files ' +
+    '(project_list_files): docs, tests, tools and the like. Folders first, then files, ' +
+    'each sorted by name; paths are relative to the listed directory, with forward slashes; ' +
+    'files carry their size. depth goes down at most 5 levels; a result stops at ' +
+    'max_entries and says truncated.',
+    SCHEMA_LIST_DIRECTORY, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_answer_dialog',
     'Click a button on the dialog currently blocking the IDE''s main thread ' +
     '(see ide_get_open_dialogs for what''s open and its button captions). An LCL dialog is ' +
