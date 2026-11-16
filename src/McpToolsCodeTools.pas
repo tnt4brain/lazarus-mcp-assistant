@@ -558,6 +558,7 @@ end;
   Main thread. }
 procedure DoRenameIdentifier(var Ctx: TMcpToolCall);
 var
+  Ptr : Pointer;
   En : TJSONEnum;
   FilePath, NewName, Ident : string;
   Refused                  : string;
@@ -700,8 +701,8 @@ begin
     end;
     { all or nothing: a reference in a file that may not be changed (the RTL, the LCL, another
       project's sources) stops the rename before anything is touched }
-    for I := 0 to Bufs.Count - 1 do
-      if not McpCheckWritable(TCodeBuffer(Bufs[I]).Filename, Refused) then
+    for Ptr in Bufs do
+      if not McpCheckWritable(TCodeBuffer(Ptr).Filename, Refused) then
       begin
         Ctx.Error := True;
         Ctx.Result := 'Nothing was renamed. ' + Refused + ' (dry_run lists every reference.)';

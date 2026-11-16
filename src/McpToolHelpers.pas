@@ -434,6 +434,7 @@ function McpTestArgsError(const ASuite: string; AEnv: TJSONObject): string;
 var
   I, J : Integer;
   N    : string;
+  En   : TJSONEnum;
 begin
   Result := '';
   for I := 1 to Length(ASuite) do
@@ -441,15 +442,15 @@ begin
       Exit('suite must be a test class or Class.Test name (letters, digits, _ and .)');
   if not Assigned(AEnv) then Exit;
   if AEnv.Count > 32 then Exit('env: at most 32 variables');
-  for I := 0 to AEnv.Count - 1 do
+  for En in AEnv do
   begin
-    N := AEnv.Names[I];
+    N := En.Key;
     if (N = '') or (N[1] in ['0'..'9']) then
       Exit('env: "' + N + '" is not a variable name');
     for J := 1 to Length(N) do
       if not (N[J] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) then
         Exit('env: "' + N + '" is not a variable name');
-    if AEnv.Items[I].JSONType <> jtString then
+    if En.Value.JSONType <> jtString then
       Exit('env: the value of ' + N + ' must be a string');
   end;
 end;
@@ -468,6 +469,7 @@ var
   Parsed      : Boolean;
   Obj         : TJSONObject;
   I           : Integer;
+  En          : TJSONEnum;
 const
   BufSize = 4096;
 begin
@@ -549,8 +551,8 @@ begin
     begin
       for I := 0 to GetEnvironmentVariableCount - 1 do
         Proc.Environment.Add(GetEnvironmentString(I + 1));
-      for I := 0 to AEnv.Count - 1 do
-        Proc.Environment.Add(AEnv.Names[I] + '=' + AEnv.Items[I].AsString);
+      for En in AEnv do
+        Proc.Environment.Add(En.Key + '=' + En.Value.AsString);
     end;
     if ASuite <> '' then
       Proc.Parameters.Add('--suite=' + ASuite)

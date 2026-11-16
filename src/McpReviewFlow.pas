@@ -135,13 +135,13 @@ end;
 
 function FindSession(const AFile: string): TSession;
 var
-  I: Integer;
+  Ptr : Pointer;
 begin
   Result := nil;
   if GSessions = nil then Exit;
-  for I := 0 to GSessions.Count - 1 do
-    if CompareFilenames(TSession(GSessions[I]).FileName, AFile) = 0 then
-      Exit(TSession(GSessions[I]));
+  for Ptr in GSessions do
+    if CompareFilenames(TSession(Ptr).FileName, AFile) = 0 then
+      Exit(TSession(Ptr));
 end;
 
 function LinesOf(const AText: string): TDiffLines;
@@ -200,6 +200,7 @@ end;
   the window and the remembered base goes (a file reopened later starts afresh). }
 procedure TFlow.EditorDestroyed(Sender: TObject);
 var
+  Ptr : Pointer;
   S    : TSession;
   Name : string;
   I    : Integer;
@@ -208,9 +209,9 @@ begin
     already, and so is its file name }
   S := nil;
   if GSessions <> nil then
-    for I := 0 to GSessions.Count - 1 do
-      if TObject(TSession(GSessions[I]).Editor) = Sender then
-        S := TSession(GSessions[I]);
+    for Ptr in GSessions do
+      if TObject(TSession(Ptr).Editor) = Sender then
+        S := TSession(Ptr);
   if S = nil then Exit;
   Name := S.FileName;
   GSessions.Remove(S);
@@ -277,29 +278,31 @@ begin
   Policy := 'ask';
   if McpSettings <> nil then Policy := McpSettings.ReviewPolicy;
   Name := ExtractFileName(AEditor.FileName);
-  if Policy = 'editor' then
-  begin
-    { the editor keeps its text; the disk version is saved beside the file, never over it }
-    if not CopyFile(AEditor.FileName, AEditor.FileName + '.agent', [cffOverwriteFile]) then
+  case Policy of
+    'editor':
     begin
-      McpAddMessage(mluImportant, 'Review: ' + Name + ' could not be copied to ' + Name +
-        '.agent; the review window is opened instead');
-      Exit;
+      { the editor keeps its text; the disk version is saved beside the file, never over it }
+      if not CopyFile(AEditor.FileName, AEditor.FileName + '.agent', [cffOverwriteFile]) then
+      begin
+        McpAddMessage(mluImportant, 'Review: ' + Name + ' could not be copied to ' + Name +
+          '.agent; the review window is opened instead');
+        Exit;
+      end;
+      MarkSeen(AEditor.FileName, ADiskText);
+      McpAddMessage(mluProgress, 'Review: ' + Name + ' changed on disk; the editor keeps its text, ' +
+        'the disk version is in ' + Name + '.agent');
+      AOutcome := roEditorWon;
+      Result := True;
     end;
-    MarkSeen(AEditor.FileName, ADiskText);
-    McpAddMessage(mluProgress, 'Review: ' + Name + ' changed on disk; the editor keeps its text, ' +
-      'the disk version is in ' + Name + '.agent');
-    AOutcome := roEditorWon;
-    Result := True;
-  end
-  else if Policy = 'disk' then
-  begin
-    ReplaceWholeText(AEditor, ADiskText);
-    MarkSeen(AEditor.FileName, ADiskText);
-    McpAddMessage(mluProgress, 'Review: ' + Name + ' changed on disk; the editor took the disk ' +
-      'text (Ctrl+Z undoes it)');
-    AOutcome := roDiskWon;
-    Result := True;
+    'disk':
+    begin
+      ReplaceWholeText(AEditor, ADiskText);
+      MarkSeen(AEditor.FileName, ADiskText);
+      McpAddMessage(mluProgress, 'Review: ' + Name + ' changed on disk; the editor took the disk ' +
+        'text (Ctrl+Z undoes it)');
+      AOutcome := roDiskWon;
+      Result := True;
+    end;
   end;
 end;
 

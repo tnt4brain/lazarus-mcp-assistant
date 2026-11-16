@@ -213,10 +213,10 @@ end;
 
 destructor TEditorPool.Destroy;
 var
-  I : Integer;
+  Ptr : Pointer;
 begin
-  for I := 0 to FAll.Count - 1 do
-    TPropertyEditor(FAll[I]).Free;
+  for Ptr in FAll do
+    TPropertyEditor(Ptr).Free;
   FAll.Free;
   FLevel.Free;
   inherited Destroy;
@@ -242,11 +242,11 @@ end;
 
 function TEditorPool.FindInLevel(const AName: string): TPropertyEditor;
 var
-  I : Integer;
+  Ptr : Pointer;
 begin
-  for I := 0 to FLevel.Count - 1 do
-    if SameText(TPropertyEditor(FLevel[I]).GetName, AName) then
-      Exit(TPropertyEditor(FLevel[I]));
+  for Ptr in FLevel do
+    if SameText(TPropertyEditor(Ptr).GetName, AName) then
+      Exit(TPropertyEditor(Ptr));
   Result := nil;
 end;
 
@@ -646,8 +646,8 @@ end;
 procedure ListLevel(Pool: TEditorPool; const APrefix: string; ADepth: Integer;
   AFilter: TStringList; AArr: TJSONArray);
 var
+  Ptr : Pointer;
   Snapshot : TFPList;
-  I        : Integer;
   Ed       : TPropertyEditor;
   PName    : string;
   Obj      : TJSONObject;
@@ -657,9 +657,9 @@ begin
   Snapshot := TFPList.Create;
   try
     Snapshot.Assign(Pool.Level);
-    for I := 0 to Snapshot.Count - 1 do
+    for Ptr in Snapshot do
     begin
-      Ed    := TPropertyEditor(Snapshot[I]);
+      Ed    := TPropertyEditor(Ptr);
       PName := APrefix + Ed.GetName;
       if not FilterMatch(AFilter, PName, Report) then Continue;
       if Report then
@@ -1317,7 +1317,7 @@ end;
 function AllNativeUndoable(AComp: TComponent; AProps: TJSONObject): Boolean;
 var
   Pool   : TEditorPool;
-  I      : Integer;
+  En     : TJSONEnum;
   Key    : string;
   Target : TPersistent;
   Rest, Err : string;
@@ -1326,9 +1326,9 @@ begin
   Result := True;
   Pool := TEditorPool.Create;
   try
-    for I := 0 to AProps.Count - 1 do
+    for En in AProps do
     begin
-      Key := AProps.Names[I];
+      Key := En.Key;
       if SameText(Key, 'Parent') then Continue;
       { paths that do not resolve fail without changing anything }
       if not ResolveItemPath(AComp, Key, Target, Rest, Err) or (Rest = '') then Continue;
@@ -1609,90 +1609,92 @@ begin
     Obj.Add('component_name', AComp.Name);
     Obj.Add('property', Ctx.Params.Get('property', ''));
 
-    if Name = 'form_list_collection_items' then
-    begin
-      Obj.Add('collection_class', Coll.ClassName);
-      Obj.Add('item_class', Coll.ItemClass.ClassName);
-      Obj.Add('count', Coll.Count);
-      Arr  := TJSONArray.Create;
-      Obj.Add('items', Arr);
-      Pool := TEditorPool.Create;
-      try
-        for I := 0 to Coll.Count - 1 do
-        begin
-          IObj := TJSONObject.Create;
-          IObj.Add('index', I);
-          IObj.Add('display_name', Coll.Items[I].DisplayName);
-          if Ctx.Params.Get('include_properties', True) then
+    case Name of
+      'form_list_collection_items':
+      begin
+        Obj.Add('collection_class', Coll.ClassName);
+        Obj.Add('item_class', Coll.ItemClass.ClassName);
+        Obj.Add('count', Coll.Count);
+        Arr  := TJSONArray.Create;
+        Obj.Add('items', Arr);
+        Pool := TEditorPool.Create;
+        try
+          for I := 0 to Coll.Count - 1 do
           begin
-            Res := TJSONArray.Create;
-            Pool.CollectTop(Coll.Items[I], tkProperties);
-            ListLevel(Pool, '', 0, nil, Res);
-            IObj.Add('properties', Res);
+            IObj := TJSONObject.Create;
+            IObj.Add('index', I);
+            IObj.Add('display_name', Coll.Items[I].DisplayName);
+            if Ctx.Params.Get('include_properties', True) then
+            begin
+              Res := TJSONArray.Create;
+              Pool.CollectTop(Coll.Items[I], tkProperties);
+              ListLevel(Pool, '', 0, nil, Res);
+              IObj.Add('properties', Res);
+            end;
+            Arr.Add(IObj);
           end;
-          Arr.Add(IObj);
+        finally
+          Pool.Free;
         end;
-      finally
-        Pool.Free;
       end;
-    end
 
-    else if Name = 'form_add_collection_item' then
-    begin
-      Snapped := SnapBegin(Snap, ADesigner, [AComp]);
-      Item := Coll.Add;
-      Idx  := Ctx.Params.Get('index', -1);
-      if (Idx >= 0) and (Idx < Coll.Count) then
-        Item.Index := Idx;
-      Props := Ctx.Params.Get('properties', TJSONObject(nil));
-      Failed := 0;
-      if Assigned(Props) and (Props.Count > 0) then
+      'form_add_collection_item':
       begin
-        Res := TJSONArray.Create;
-        Obj.Add('results', Res);
-        Failed := ApplyProperties(ADesigner, Item, Props, Res, nil);
-        if Failed > 0 then
-          Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
+        Snapped := SnapBegin(Snap, ADesigner, [AComp]);
+        Item := Coll.Add;
+        Idx  := Ctx.Params.Get('index', -1);
+        if (Idx >= 0) and (Idx < Coll.Count) then
+          Item.Index := Idx;
+        Props := Ctx.Params.Get('properties', TJSONObject(nil));
+        Failed := 0;
+        if Assigned(Props) and (Props.Count > 0) then
+        begin
+          Res := TJSONArray.Create;
+          Obj.Add('results', Res);
+          Failed := ApplyProperties(ADesigner, Item, Props, Res, nil);
+          if Failed > 0 then
+            Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
+        end;
+        Obj.Add('status', 'added');
+        Obj.Add('index', Item.Index);
+        Obj.Add('display_name', Item.DisplayName);
+        Obj.Add('count', Coll.Count);
       end;
-      Obj.Add('status', 'added');
-      Obj.Add('index', Item.Index);
-      Obj.Add('display_name', Item.DisplayName);
-      Obj.Add('count', Coll.Count);
-    end
 
-    else if Name = 'form_delete_collection_item' then
-    begin
-      Idx := Ctx.Params.Get('index', -1);
-      if (Idx < 0) or (Idx >= Coll.Count) then
+      'form_delete_collection_item':
       begin
-        Ctx.Error := True;
-        Ctx.Result := Format('index out of range (count %d)', [Coll.Count]);
-        Exit;
+        Idx := Ctx.Params.Get('index', -1);
+        if (Idx < 0) or (Idx >= Coll.Count) then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := Format('index out of range (count %d)', [Coll.Count]);
+          Exit;
+        end;
+        Obj.Add('display_name', Coll.Items[Idx].DisplayName);
+        { The Object Inspector may show the item; never free it under its feet. }
+        SelectOnly(AComp);
+        Snapped := SnapBegin(Snap, ADesigner, [AComp]);
+        Coll.Items[Idx].Free;
+        Obj.Add('status', 'deleted');
+        Obj.Add('count', Coll.Count);
       end;
-      Obj.Add('display_name', Coll.Items[Idx].DisplayName);
-      { The Object Inspector may show the item; never free it under its feet. }
-      SelectOnly(AComp);
-      Snapped := SnapBegin(Snap, ADesigner, [AComp]);
-      Coll.Items[Idx].Free;
-      Obj.Add('status', 'deleted');
-      Obj.Add('count', Coll.Count);
-    end
 
-    else if Name = 'form_move_collection_item' then
-    begin
-      Idx    := Ctx.Params.Get('index', -1);
-      NewIdx := Ctx.Params.Get('new_index', -1);
-      if (Idx < 0) or (Idx >= Coll.Count) or (NewIdx < 0) or (NewIdx >= Coll.Count) then
+      'form_move_collection_item':
       begin
-        Ctx.Error := True;
-        Ctx.Result := Format('index or new_index out of range (count %d)', [Coll.Count]);
-        Exit;
+        Idx    := Ctx.Params.Get('index', -1);
+        NewIdx := Ctx.Params.Get('new_index', -1);
+        if (Idx < 0) or (Idx >= Coll.Count) or (NewIdx < 0) or (NewIdx >= Coll.Count) then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := Format('index or new_index out of range (count %d)', [Coll.Count]);
+          Exit;
+        end;
+        Snapped := SnapBegin(Snap, ADesigner, [AComp]);
+        Coll.Items[Idx].Index := NewIdx;
+        Obj.Add('status', 'moved');
+        Obj.Add('display_name', Coll.Items[NewIdx].DisplayName);
+        Obj.Add('index', NewIdx);
       end;
-      Snapped := SnapBegin(Snap, ADesigner, [AComp]);
-      Coll.Items[Idx].Index := NewIdx;
-      Obj.Add('status', 'moved');
-      Obj.Add('display_name', Coll.Items[NewIdx].DisplayName);
-      Obj.Add('index', NewIdx);
     end;
 
     if Name <> 'form_list_collection_items' then
@@ -1714,6 +1716,7 @@ end;
 procedure DoMenuTool(const Name: string; ADesigner: TIDesigner;
   AComp: TComponent; var Ctx: TMcpToolCall);
 var
+  En         : TJSONEnum;
   Root       : TComponent;
   Target     : TComponent;
   Items      : TMenuItem;
@@ -1721,7 +1724,7 @@ var
   Obj, Props : TJSONObject;
   Given      : TJSONObject;
   Res        : TJSONArray;
-  Idx, I, Failed : Integer;
+  Idx, Failed : Integer;
   Caption, NewName : string;
   Walk       : TMenuItem;
   Snap       : TSnapshot;
@@ -1767,75 +1770,8 @@ begin
       Exit;
     end;
 
-    if Name = 'form_add_menu_item' then
-    begin
-      Target := FindComp(ADesigner, Ctx.Params.Get('parent_name', ''));
-      Items  := nil;
-      if Assigned(Target) then
-        Items := MenuItemsOf(Target);
-      if Items = nil then
-      begin
-        Ctx.Error := True;
-        Ctx.Result := 'parent_name must name a TMainMenu/TPopupMenu or a menu item: ' +
-                      Ctx.Params.Get('parent_name', '');
-        Exit;
-      end;
-      if not (ADesigner is TComponentEditorDesigner) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'Designer cannot create menu items'; Exit;
-      end;
-      Obj.Add('menu_editor_hidden', HideMenuEditor);
-      Snapped := SnapBegin(Snap, ADesigner, [Target]);
-      Caption := Ctx.Params.Get('caption', '');
-      MI := TMenuItem.Create(Root);
-      if Caption = cLineCaption then
-        NewName := 'Separator'
-      else
-        NewName := MI.ClassName;
-      MI.Name    := TComponentEditorDesigner(ADesigner).CreateUniqueComponentName(NewName);
-      MI.Caption := Caption;
-      Idx := Ctx.Params.Get('index', -1);
-      if (Idx < 0) or (Idx > Items.Count) then
-        Idx := Items.Count;
-      Items.Insert(Idx, MI);
-      { adds the field to the class, as for a palette drop }
-      GlobalDesignHook.PersistentAdded(MI, False);
-      GlobalDesignHook.Modified(MI);
-      Props := TJSONObject.Create;
-      try
-        Given := Ctx.Params.Get('properties', TJSONObject(nil));
-        if Assigned(Given) then
-          for I := 0 to Given.Count - 1 do
-            if not SameText(Given.Names[I], 'Name') then
-              Props.Add(Given.Names[I], Given.Items[I].Clone);
-        if Ctx.Params.Get('name', '') <> '' then
-          Props.Add('Name', Ctx.Params.Get('name', ''));
-        if Props.Count > 0 then
-        begin
-          Res := TJSONArray.Create;
-          Obj.Add('results', Res);
-          Failed := ApplyProperties(ADesigner, MI, Props, Res, nil);
-          if Failed > 0 then
-            Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
-        end;
-      finally
-        Props.Free;
-      end;
-      Obj.Add('status', 'added');
-      Obj.Add('name',   MI.Name);
-      Obj.Add('parent', MenuParentName(MI));
-      Obj.Add('index',  MI.MenuIndex);
-    end
-
-    else if Name = 'form_move_menu_item' then
-    begin
-      if not (AComp is TMenuItem) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'component_name must name a menu item'; Exit;
-      end;
-      MI := TMenuItem(AComp);
-      Items := MI.Parent;
-      if Ctx.Params.Get('parent_name', '') <> '' then
+    case Name of
+      'form_add_menu_item':
       begin
         Target := FindComp(ADesigner, Ctx.Params.Get('parent_name', ''));
         Items  := nil;
@@ -1844,38 +1780,107 @@ begin
         if Items = nil then
         begin
           Ctx.Error := True;
-          Ctx.Result := 'parent_name must name a menu or a menu item: ' +
+          Ctx.Result := 'parent_name must name a TMainMenu/TPopupMenu or a menu item: ' +
                         Ctx.Params.Get('parent_name', '');
           Exit;
         end;
-        Walk := Items;  { refuse moving an item into itself or its own submenu }
-        while Assigned(Walk) and (Walk <> MI) do
-          Walk := Walk.Parent;
-        if Walk = MI then
+        if not (ADesigner is TComponentEditorDesigner) then
         begin
-          Ctx.Error := True; Ctx.Result := 'cannot move a menu item into its own submenu'; Exit;
+          Ctx.Error := True; Ctx.Result := 'Designer cannot create menu items'; Exit;
         end;
+        Obj.Add('menu_editor_hidden', HideMenuEditor);
+        Snapped := SnapBegin(Snap, ADesigner, [Target]);
+        Caption := Ctx.Params.Get('caption', '');
+        MI := TMenuItem.Create(Root);
+        if Caption = cLineCaption then
+          NewName := 'Separator'
+        else
+          NewName := MI.ClassName;
+        MI.Name    := TComponentEditorDesigner(ADesigner).CreateUniqueComponentName(NewName);
+        MI.Caption := Caption;
+        Idx := Ctx.Params.Get('index', -1);
+        if (Idx < 0) or (Idx > Items.Count) then
+          Idx := Items.Count;
+        Items.Insert(Idx, MI);
+        { adds the field to the class, as for a palette drop }
+        GlobalDesignHook.PersistentAdded(MI, False);
+        GlobalDesignHook.Modified(MI);
+        Props := TJSONObject.Create;
+        try
+          Given := Ctx.Params.Get('properties', TJSONObject(nil));
+          if Assigned(Given) then
+            for En in Given do
+              if not SameText(En.Key, 'Name') then
+                Props.Add(En.Key, En.Value.Clone);
+          if Ctx.Params.Get('name', '') <> '' then
+            Props.Add('Name', Ctx.Params.Get('name', ''));
+          if Props.Count > 0 then
+          begin
+            Res := TJSONArray.Create;
+            Obj.Add('results', Res);
+            Failed := ApplyProperties(ADesigner, MI, Props, Res, nil);
+            if Failed > 0 then
+              Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
+          end;
+        finally
+          Props.Free;
+        end;
+        Obj.Add('status', 'added');
+        Obj.Add('name',   MI.Name);
+        Obj.Add('parent', MenuParentName(MI));
+        Obj.Add('index',  MI.MenuIndex);
       end;
-      if Items = nil then
+
+      'form_move_menu_item':
       begin
-        Ctx.Error := True; Ctx.Result := 'menu item has no parent'; Exit;
+        if not (AComp is TMenuItem) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'component_name must name a menu item'; Exit;
+        end;
+        MI := TMenuItem(AComp);
+        Items := MI.Parent;
+        if Ctx.Params.Get('parent_name', '') <> '' then
+        begin
+          Target := FindComp(ADesigner, Ctx.Params.Get('parent_name', ''));
+          Items  := nil;
+          if Assigned(Target) then
+            Items := MenuItemsOf(Target);
+          if Items = nil then
+          begin
+            Ctx.Error := True;
+            Ctx.Result := 'parent_name must name a menu or a menu item: ' +
+                          Ctx.Params.Get('parent_name', '');
+            Exit;
+          end;
+          Walk := Items;  { refuse moving an item into itself or its own submenu }
+          while Assigned(Walk) and (Walk <> MI) do
+            Walk := Walk.Parent;
+          if Walk = MI then
+          begin
+            Ctx.Error := True; Ctx.Result := 'cannot move a menu item into its own submenu'; Exit;
+          end;
+        end;
+        if Items = nil then
+        begin
+          Ctx.Error := True; Ctx.Result := 'menu item has no parent'; Exit;
+        end;
+        Obj.Add('menu_editor_hidden', HideMenuEditor);
+        if Assigned(Target) then
+          Snapped := SnapBegin(Snap, ADesigner, [MI, Target])
+        else
+          Snapped := SnapBegin(Snap, ADesigner, [MI]);
+        if Assigned(MI.Parent) then
+          MI.Parent.Remove(MI);
+        Idx := Ctx.Params.Get('index', -1);
+        if (Idx < 0) or (Idx > Items.Count) then
+          Idx := Items.Count;
+        Items.Insert(Idx, MI);
+        GlobalDesignHook.Modified(MI);
+        Obj.Add('status', 'moved');
+        Obj.Add('name',   MI.Name);
+        Obj.Add('parent', MenuParentName(MI));
+        Obj.Add('index',  MI.MenuIndex);
       end;
-      Obj.Add('menu_editor_hidden', HideMenuEditor);
-      if Assigned(Target) then
-        Snapped := SnapBegin(Snap, ADesigner, [MI, Target])
-      else
-        Snapped := SnapBegin(Snap, ADesigner, [MI]);
-      if Assigned(MI.Parent) then
-        MI.Parent.Remove(MI);
-      Idx := Ctx.Params.Get('index', -1);
-      if (Idx < 0) or (Idx > Items.Count) then
-        Idx := Items.Count;
-      Items.Insert(Idx, MI);
-      GlobalDesignHook.Modified(MI);
-      Obj.Add('status', 'moved');
-      Obj.Add('name',   MI.Name);
-      Obj.Add('parent', MenuParentName(MI));
-      Obj.Add('index',  MI.MenuIndex);
     end;
 
     if Snapped then
@@ -1901,7 +1906,7 @@ var
   Pool         : TEditorPool;
   Kinds        : TTypeKinds;
   I, Failed    : Integer;
-  RegComp      : TRegisteredComponent;
+  RegComp, Cand : TRegisteredComponent;
   ActionCls    : TComponentClass;
   NewClass     : TComponentClass;
   NewUnit      : string;
@@ -1938,9 +1943,8 @@ begin
     Arr := TJSONArray.Create;
     try
       if Assigned(IDEComponentPalette) then
-        for I := 0 to IDEComponentPalette.Comps.Count - 1 do
+        for RegComp in IDEComponentPalette.Comps do
         begin
-          RegComp := IDEComponentPalette.Comps[I];
           if Pos(Query, LowerCase(RegComp.ComponentClass.ClassName)) > 0 then
           begin
             Obj := TJSONObject.Create;
@@ -2117,10 +2121,10 @@ begin
         end;
         RegComp := nil;
         if Assigned(IDEComponentPalette) then
-          for I := 0 to IDEComponentPalette.Comps.Count - 1 do
-            if SameText(IDEComponentPalette.Comps[I].ComponentClass.ClassName, NewCompClass) then
+          for Cand in IDEComponentPalette.Comps do
+            if SameText(Cand.ComponentClass.ClassName, NewCompClass) then
             begin
-              RegComp := IDEComponentPalette.Comps[I];
+              RegComp := Cand;
               Break;
             end;
         ActionCls := nil;
@@ -2197,9 +2201,9 @@ begin
           { name last, after the requested properties }
           Props := Ctx.Params.Get('properties', TJSONObject(nil));
           if Assigned(Props) then
-            for I := 0 to Props.Count - 1 do
-              if not SameText(Props.Names[I], 'Name') then
-                NameProps.Add(Props.Names[I], Props.Items[I].Clone);
+            for En in Props do
+              if not SameText(En.Key, 'Name') then
+                NameProps.Add(En.Key, En.Value.Clone);
           if Ctx.Params.Get('name', '') <> '' then
             NameProps.Add('Name', Ctx.Params.Get('name', ''));
           Failed := 0;

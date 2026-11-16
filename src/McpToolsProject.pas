@@ -1710,14 +1710,13 @@ begin
         Ctx.Error := True; Ctx.Result := PkgErr; Exit;
       end;
       Kind := LowerCase(Ctx.Params.Get('kind', 'form'));
-      if Kind = 'form' then
-        Desc := FileDescriptorForm
-      else if Kind = 'datamodule' then
-        Desc := FileDescriptorDatamodule
-      else if Kind = 'frame' then
-        Desc := ProjectFileDescriptors.FindByName(FileDescNameFrame)
+      case Kind of
+        'form':       Desc := FileDescriptorForm;
+        'datamodule': Desc := FileDescriptorDatamodule;
+        'frame':      Desc := ProjectFileDescriptors.FindByName(FileDescNameFrame);
       else
         Desc := nil;
+      end;
       if Desc = nil then
       begin
         Ctx.Error  := True;

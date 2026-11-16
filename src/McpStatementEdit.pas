@@ -243,106 +243,110 @@ begin
   Ind := IndentOf(LineAt(ALines, N.Line));
   Text := Prepare(AText);
 
-  if Op = 'replace' then
-  begin
-    if Text = '' then Exit(Fail('replace needs text'));
-    if Text[Length(Text)] = ';' then SetLength(Text, Length(Text) - 1);
-    Exit(Range(N.Line, N.Col, N.EndLine, N.EndCol, IndentLines(Text, Ind, False)));
-  end;
-
-  if Op = 'delete' then
-  begin
-    if not IsListParent(P) then
-      Exit(Fail('This statement is the only one of its ' + P.Kind +
-        ': delete would leave it empty (and change what follows). Use replace.'));
-    EC := N.EndCol;
-    S := LineAt(ALines, N.EndLine);
-    Q := EC;
-    while (Q <= Length(S)) and (S[Q] in [' ', #9]) do Inc(Q);
-    if (Q <= Length(S)) and (S[Q] = ';') then EC := Q + 1;
-    if IsBlank(Copy(LineAt(ALines, N.Line), 1, N.Col - 1)) and IsBlank(Copy(S, EC, MaxInt)) then
+  case Op of
+    'replace':
     begin
-      if N.EndLine < ALines.Count then
-        Exit(Range(N.Line, 1, N.EndLine + 1, 1, ''))
+      if Text = '' then Exit(Fail('replace needs text'));
+      if Text[Length(Text)] = ';' then SetLength(Text, Length(Text) - 1);
+      Exit(Range(N.Line, N.Col, N.EndLine, N.EndCol, IndentLines(Text, Ind, False)));
+    end;
+
+    'delete':
+    begin
+      if not IsListParent(P) then
+        Exit(Fail('This statement is the only one of its ' + P.Kind +
+          ': delete would leave it empty (and change what follows). Use replace.'));
+      EC := N.EndCol;
+      S := LineAt(ALines, N.EndLine);
+      Q := EC;
+      while (Q <= Length(S)) and (S[Q] in [' ', #9]) do Inc(Q);
+      if (Q <= Length(S)) and (S[Q] = ';') then EC := Q + 1;
+      if IsBlank(Copy(LineAt(ALines, N.Line), 1, N.Col - 1)) and IsBlank(Copy(S, EC, MaxInt)) then
+      begin
+        if N.EndLine < ALines.Count then
+          Exit(Range(N.Line, 1, N.EndLine + 1, 1, ''))
+        else
+          Exit(Range(N.Line, 1, N.EndLine, Length(S) + 1, ''));
+      end;
+      while (EC <= Length(S)) and (S[EC] in [' ', #9]) do Inc(EC);
+      Q := N.Col;
+      if IsBlank(Copy(S, EC, MaxInt)) and (N.Line = N.EndLine) then
+        while (Q > 1) and (S[Q - 1] in [' ', #9]) do Dec(Q);   { it was the last on its line }
+      Exit(Range(N.Line, Q, N.EndLine, EC, ''));
+    end;
+
+    'insert_before', 'insert_after':
+    begin
+      if not IsListParent(P) then
+        Exit(Fail('This statement is the only one of its ' + P.Kind + ': nothing to insert next to. Use wrap with begin, or replace.'));
+      if Text = '' then Exit(Fail(Op + ' needs text'));
+      Text := EnsureSemi(Text);
+      if Op = 'insert_before' then
+      begin
+        if IsBlank(Copy(LineAt(ALines, N.Line), 1, N.Col - 1)) then
+          Exit(Range(N.Line, 1, N.Line, 1, IndentLines(Text, Ind, True) + #10))
+        else
+          Exit(Range(N.Line, N.Col, N.Line, N.Col, IndentLines(Text, Ind, False) + ' '));
+      end;
+      { insert_after: the statement must be closed by a ; before something follows it }
+      S := LineAt(ALines, N.EndLine);
+      Q := N.EndCol;
+      while (Q <= Length(S)) and (S[Q] in [' ', #9]) do Inc(Q);
+      HasSemi := (Q <= Length(S)) and (S[Q] = ';');
+      if HasSemi then Inc(Q) else Q := N.EndCol;
+      Rest := Copy(S, Q, MaxInt);
+      TR := TrimLeft(Rest);
+      if (TR = '') or (Copy(TR, 1, 2) = '//') then
+      begin
+        Result := Range(N.EndLine, N.EndCol, N.EndLine, Length(S) + 1, '');
+        Result.NewText := Copy(S, N.EndCol, MaxInt);
+        if not HasSemi then Result.NewText := ';' + Result.NewText;
+        Result.NewText := Result.NewText + #10 + IndentLines(Text, Ind, True);
+        Exit;
+      end;
+      if HasSemi then
+        Exit(Range(N.EndLine, Q, N.EndLine, Q, ' ' + IndentLines(Text, Ind, False)))
       else
-        Exit(Range(N.Line, 1, N.EndLine, Length(S) + 1, ''));
+        Exit(Range(N.EndLine, N.EndCol, N.EndLine, N.EndCol, '; ' + IndentLines(Text, Ind, False)));
     end;
-    while (EC <= Length(S)) and (S[EC] in [' ', #9]) do Inc(EC);
-    Q := N.Col;
-    if IsBlank(Copy(S, EC, MaxInt)) and (N.Line = N.EndLine) then
-      while (Q > 1) and (S[Q - 1] in [' ', #9]) do Dec(Q);   { it was the last on its line }
-    Exit(Range(N.Line, Q, N.EndLine, EC, ''));
-  end;
 
-  if (Op = 'insert_before') or (Op = 'insert_after') then
-  begin
-    if not IsListParent(P) then
-      Exit(Fail('This statement is the only one of its ' + P.Kind + ': nothing to insert next to. Use wrap with begin, or replace.'));
-    if Text = '' then Exit(Fail(Op + ' needs text'));
-    Text := EnsureSemi(Text);
-    if Op = 'insert_before' then
+    'wrap':
     begin
-      if IsBlank(Copy(LineAt(ALines, N.Line), 1, N.Col - 1)) then
-        Exit(Range(N.Line, 1, N.Line, 1, IndentLines(Text, Ind, True) + #10))
+      if (N.Kind = 'of') or (N.Kind = 'on') or (N.Kind = 'else') then
+        Exit(Fail('A case branch or a handler cannot be wrapped; wrap the statement inside it.'));
+      if W = '' then Exit(Fail('wrap needs "with": begin, try_finally, try_except, if, while, for or with'));
+      if (W <> 'begin') and (Text = '') then
+        Exit(Fail('wrap with ' + W + ' needs text (the cleanup, the handler, the condition, the loop header or the expression)'));
+      if W = 'if' then
+        for I := 0 to P.Children.Count - 1 do
+          if (TStmtNode(P.Children[I]).Role = 'else') and (P.Kind = 'if') and (N.Role = 'then') then
+            Exit(Fail('Wrapping this in an if would take the else of the outer if. Wrap with begin first.'));
+      NodeText := TextBetween(ALines, N.Line, N.Col, N.EndLine, N.EndCol);
+      Body := IndentLines(NodeText, Step, False);
+      Close := '';
+      case W of
+        'begin':
+        begin
+          Open := 'begin';
+          Body := Body + ';';
+          Close := #10 + Ind + 'end';
+        end;
+        'try_finally', 'try_except':
+        begin
+          Open := 'try';
+          Body := Body + ';';
+          if W = 'try_finally' then S := 'finally' else S := 'except';
+          Close := #10 + Ind + S + #10 + IndentLines(Text, Ind + Step, True) + #10 + Ind + 'end';
+        end;
+        'if':
+          Open := 'if ' + Text + ' then';
+        'while', 'for', 'with':
+          Open := W + ' ' + Text + ' do';
       else
-        Exit(Range(N.Line, N.Col, N.Line, N.Col, IndentLines(Text, Ind, False) + ' '));
+        Exit(Fail('Unknown wrapper "' + AWith + '": begin, try_finally, try_except, if, while, for or with'));
+      end;
+      Exit(Range(N.Line, N.Col, N.EndLine, N.EndCol, Open + #10 + Ind + Step + Body + Close));
     end;
-    { insert_after: the statement must be closed by a ; before something follows it }
-    S := LineAt(ALines, N.EndLine);
-    Q := N.EndCol;
-    while (Q <= Length(S)) and (S[Q] in [' ', #9]) do Inc(Q);
-    HasSemi := (Q <= Length(S)) and (S[Q] = ';');
-    if HasSemi then Inc(Q) else Q := N.EndCol;
-    Rest := Copy(S, Q, MaxInt);
-    TR := TrimLeft(Rest);
-    if (TR = '') or (Copy(TR, 1, 2) = '//') then
-    begin
-      Result := Range(N.EndLine, N.EndCol, N.EndLine, Length(S) + 1, '');
-      Result.NewText := Copy(S, N.EndCol, MaxInt);
-      if not HasSemi then Result.NewText := ';' + Result.NewText;
-      Result.NewText := Result.NewText + #10 + IndentLines(Text, Ind, True);
-      Exit;
-    end;
-    if HasSemi then
-      Exit(Range(N.EndLine, Q, N.EndLine, Q, ' ' + IndentLines(Text, Ind, False)))
-    else
-      Exit(Range(N.EndLine, N.EndCol, N.EndLine, N.EndCol, '; ' + IndentLines(Text, Ind, False)));
-  end;
-
-  if Op = 'wrap' then
-  begin
-    if (N.Kind = 'of') or (N.Kind = 'on') or (N.Kind = 'else') then
-      Exit(Fail('A case branch or a handler cannot be wrapped; wrap the statement inside it.'));
-    if W = '' then Exit(Fail('wrap needs "with": begin, try_finally, try_except, if, while, for or with'));
-    if (W <> 'begin') and (Text = '') then
-      Exit(Fail('wrap with ' + W + ' needs text (the cleanup, the handler, the condition, the loop header or the expression)'));
-    if W = 'if' then
-      for I := 0 to P.Children.Count - 1 do
-        if (TStmtNode(P.Children[I]).Role = 'else') and (P.Kind = 'if') and (N.Role = 'then') then
-          Exit(Fail('Wrapping this in an if would take the else of the outer if. Wrap with begin first.'));
-    NodeText := TextBetween(ALines, N.Line, N.Col, N.EndLine, N.EndCol);
-    Body := IndentLines(NodeText, Step, False);
-    Close := '';
-    if W = 'begin' then
-    begin
-      Open := 'begin';
-      Body := Body + ';';
-      Close := #10 + Ind + 'end';
-    end
-    else if (W = 'try_finally') or (W = 'try_except') then
-    begin
-      Open := 'try';
-      Body := Body + ';';
-      if W = 'try_finally' then S := 'finally' else S := 'except';
-      Close := #10 + Ind + S + #10 + IndentLines(Text, Ind + Step, True) + #10 + Ind + 'end';
-    end
-    else if W = 'if' then
-      Open := 'if ' + Text + ' then'
-    else if (W = 'while') or (W = 'for') or (W = 'with') then
-      Open := W + ' ' + Text + ' do'
-    else
-      Exit(Fail('Unknown wrapper "' + AWith + '": begin, try_finally, try_except, if, while, for or with'));
-    Exit(Range(N.Line, N.Col, N.EndLine, N.EndCol, Open + #10 + Ind + Step + Body + Close));
   end;
 
   Result := Fail('Unknown op "' + AOp + '": replace, delete, insert_before, insert_after or wrap');

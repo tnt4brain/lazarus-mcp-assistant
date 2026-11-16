@@ -1020,21 +1020,21 @@ end;
 
 function TReviewWindow.FindPage(const AFile: string): TReviewPage;
 var
-  I: Integer;
+  Ptr : Pointer;
 begin
   Result := nil;
-  for I := 0 to FPages.Count - 1 do
-    if CompareFilenames(TReviewPage(FPages[I]).FileName, AFile) = 0 then
-      Exit(TReviewPage(FPages[I]));
+  for Ptr in FPages do
+    if CompareFilenames(TReviewPage(Ptr).FileName, AFile) = 0 then
+      Exit(TReviewPage(Ptr));
 end;
 
 function TReviewWindow.Pending: Integer;
 var
-  I: Integer;
+  Ptr : Pointer;
 begin
   Result := 0;
-  for I := 0 to FPages.Count - 1 do
-    if not TReviewPage(FPages[I]).Finished then Inc(Result);
+  for Ptr in FPages do
+    if not TReviewPage(Ptr).Finished then Inc(Result);
 end;
 
 function TReviewWindow.NextPending: TReviewPage;
@@ -1060,7 +1060,8 @@ end;
 
 procedure TReviewWindow.RefreshTree;
 var
-  I, J: Integer;
+  Ptr : Pointer;
+  J   : Integer;
   Page: TReviewPage;
   Parts: TPathParts;
   Outside: Boolean;
@@ -1072,9 +1073,9 @@ begin
     FTree.Items.Clear;
     OutNode := nil;
     Sel := nil;
-    for I := 0 to FPages.Count - 1 do
+    for Ptr in FPages do
     begin
-      Page := TReviewPage(FPages[I]);
+      Page := TReviewPage(Ptr);
       Parts := ReviewPathParts(Page.FileName, FRoot, Outside);
       if Outside then
       begin
@@ -1149,24 +1150,24 @@ end;
 
 procedure TReviewWindow.ApplyCleanClick(Sender: TObject);
 var
-  I: Integer;
+  Ptr : Pointer;
   P: TReviewPage;
 begin
-  for I := 0 to FPages.Count - 1 do
+  for Ptr in FPages do
   begin
-    P := TReviewPage(FPages[I]);
+    P := TReviewPage(Ptr);
     if (not P.Finished) and (P.Conflicts = 0) then P.Apply;
   end;
 end;
 
 procedure TReviewWindow.KeepAllClick(Sender: TObject);
 var
-  I: Integer;
+  Ptr : Pointer;
 begin
   if (Pending > 0) and (MessageDlg('Keep the editor text of all ' + IntToStr(Pending) +
                                    ' file(s) waiting? Nothing from the disk is taken.',
                                    mtConfirmation, [mbYes, mbNo], 0) <> mrYes) then Exit;
-  for I := 0 to FPages.Count - 1 do TReviewPage(FPages[I]).Keep(False);
+  for Ptr in FPages do TReviewPage(Ptr).Keep(False);
 end;
 
 { The window only hides; the files not answered yet stay waiting in it. }

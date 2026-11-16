@@ -268,7 +268,6 @@ var
   Req     : TJSONArray;
   Reqs    : TStringList;
   V       : TPkgVersion;
-  I       : Integer;
   SL      : TStringList;
   Pkg     : TLazPackage;
   Other   : TLazPackage;
@@ -358,10 +357,10 @@ begin
     if Reqs.Count > 0 then
     begin
       Text := Text + '    <RequiredPkgs>' + LineEnding;
-      for I := 0 to Reqs.Count - 1 do
+      for Item in Reqs do
         Text := Text +
           '      <Item>' + LineEnding +
-          '        <PackageName Value="' + XmlAttr(Reqs[I]) + '"/>' + LineEnding +
+          '        <PackageName Value="' + XmlAttr(Item) + '"/>' + LineEnding +
           '      </Item>' + LineEnding;
       Text := Text + '    </RequiredPkgs>' + LineEnding;
     end;

@@ -507,10 +507,10 @@ begin
       InBpKind  := bpkData;
       InBpData  := Trim(P.Get('data', ''));
       S := LowerCase(P.Get('scope', 'global'));
-      if S = 'global' then InBpScope := wpsGlobal
-      else if S = 'local' then InBpScope := wpsLocal
+      case S of
+        'global': InBpScope := wpsGlobal;
+        'local':  InBpScope := wpsLocal;
       else
-      begin
         AErr := 'scope must be global or local';
         Exit;
       end;

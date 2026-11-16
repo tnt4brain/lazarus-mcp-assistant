@@ -507,6 +507,7 @@ var
 
   procedure Visit(V: Integer);
   var
+    Ptr : Pointer;
     K, W : Integer;
     Comp : TFPList;
     Arr  : TJSONArray;
@@ -516,9 +517,9 @@ var
     Stack.Add(Pointer(PtrInt(V)));
     OnStack[V] := True;
     Edges := TFPList(Adj[V]);
-    for K := 0 to Edges.Count - 1 do
+    for Ptr in Edges do
     begin
-      W := PtrInt(Edges[K]);
+      W := PtrInt(Ptr);
       if Index[W] < 0 then
       begin
         Visit(W);
@@ -590,6 +591,7 @@ end;
 
 function DoDependencies(var Ctx: TMcpToolCall): Boolean;
 var
+  Ptr : Pointer;
   En : TJSONEnum;
   Item : string;
   Handled : Boolean;
@@ -631,9 +633,9 @@ begin
       U.Name := LowerCase(ExtractFileNameOnly(FileArg));
       Units.Add(U);
     end;
-    for I := 0 to Units.Count - 1 do
+    for Ptr in Units do
     begin
-      U := TUnitRec(Units[I]);
+      U := TUnitRec(Ptr);
       Code := LoadCode(U.FileName);
       if Code = nil then begin U.Error := 'could not load'; Continue; end;
       MainU := nil; ImplU := nil;
@@ -673,9 +675,9 @@ begin
         end;
         Obj.Add('uses_implementation', Arr);
         Arr := TJSONArray.Create;
-        for J := 0 to Units.Count - 1 do
+        for Ptr in Units do
         begin
-          U := TUnitRec(Units[J]);
+          U := TUnitRec(Ptr);
           if U = One then Continue;
           if U.IntfUses.IndexOf(One.Name) >= 0 then
           begin
@@ -709,7 +711,7 @@ begin
     { the whole project: edges between its own units, and the cycles }
     AdjAll := TFPList.Create; AdjIntf := TFPList.Create;
     try
-      for I := 0 to Units.Count - 1 do
+      for Ptr in Units do
       begin
         AdjAll.Add(TFPList.Create);
         AdjIntf.Add(TFPList.Create);
@@ -777,7 +779,7 @@ begin
       AdjAll.Free; AdjIntf.Free;
     end;
   finally
-    for I := 0 to Units.Count - 1 do TUnitRec(Units[I]).Free;
+    for Ptr in Units do TUnitRec(Ptr).Free;
     Units.Free;
     List.Free;
   end;

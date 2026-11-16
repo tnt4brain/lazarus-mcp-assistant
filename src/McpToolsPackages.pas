@@ -879,12 +879,12 @@ end;
 
 function ProjectPackagesJSON(Proj: TProject; Recursive: Boolean): string;
 var
+  Ptr : Pointer;
   Obj, PObj : TJSONObject;
   Arr       : TJSONArray;
   Dep       : TPkgDependency;
   List      : TFPList;
   Pkg       : TLazPackage;
-  I         : Integer;
 begin
   Obj := TJSONObject.Create;
   try
@@ -904,10 +904,10 @@ begin
       Obj.Add('compile_order', Arr);
       if Assigned(List) then
       try
-        for I := 0 to List.Count - 1 do
+        for Ptr in List do
         begin
-          if not (TObject(List[I]) is TLazPackage) then Continue;
-          Pkg  := TLazPackage(List[I]);
+          if not (TObject(Ptr) is TLazPackage) then Continue;
+          Pkg  := TLazPackage(Ptr);
           PObj := TJSONObject.Create;
           Arr.Add(PObj);
           PObj.Add('name', Pkg.Name);
@@ -1462,16 +1462,16 @@ end;
   them. }
 function PackageIsInIDE(const AName: string): Boolean;
 var
+  Ptr : Pointer;
   List : TFPList;
-  I    : Integer;
 begin
   Result := Assigned(PackageEditingInterface.IsPackageInstalled(AName));
   if Result then Exit;
   PackageEditingInterface.GetRequiredPackages(PackageEditingInterface, List);
   if List = nil then Exit;
   try
-    for I := 0 to List.Count - 1 do
-      if (TObject(List[I]) is TIDEPackage) and SameText(TIDEPackage(List[I]).Name, AName) then
+    for Ptr in List do
+      if (TObject(Ptr) is TIDEPackage) and SameText(TIDEPackage(Ptr).Name, AName) then
         Exit(True);
   finally
     List.Free;
@@ -1650,13 +1650,13 @@ end;
 
 function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  Ptr : Pointer;
   PkgName  : string;
   PkgErr   : string;
   FPList   : TFPList;
   RefArr   : TJSONArray;
   Obj      : TJSONObject;
   Proj     : TLazProject;
-  I        : Integer;
 begin
   Result := False;
 
@@ -1668,18 +1668,15 @@ begin
       begin
         Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
       end;
-      if Name = 'package_save' then
-        Ctx.Result := PackageSave(Ctx.Params, PkgName)
-      else if Name = 'package_add_file' then
-        Ctx.Result := PackageAddFile(Ctx.Params, PkgName)
-      else if Name = 'package_remove_file' then
-        Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
-      else if Name = 'package_add_dependency' then
-        Ctx.Result := PackageAddDependency(Ctx.Params, PkgName)
-      else if Name = 'package_set_info' then
-        Ctx.Result := PackageSetInfo(Ctx.Params, PkgName)
+      case Name of
+        'package_save':              Ctx.Result := PackageSave(Ctx.Params, PkgName);
+        'package_add_file':          Ctx.Result := PackageAddFile(Ctx.Params, PkgName);
+        'package_remove_file':       Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName);
+        'package_add_dependency':    Ctx.Result := PackageAddDependency(Ctx.Params, PkgName);
+        'package_set_info':          Ctx.Result := PackageSetInfo(Ctx.Params, PkgName);
       else
         Ctx.Result := PackageRemoveDependency(Ctx.Params, PkgName);
+      end;
       if PkgName <> '' then
       begin
         Ctx.Error := True; Ctx.Result := PkgName;
@@ -1749,8 +1746,8 @@ begin
         RefArr := TJSONArray.Create;
         if Assigned(FPList) then
         begin
-          for I := 0 to FPList.Count - 1 do
-            RefArr.Add(TIDEPackage(FPList[I]).Name);
+          for Ptr in FPList do
+            RefArr.Add(TIDEPackage(Ptr).Name);
           FreeAndNil(FPList);
         end;
         Obj.Add('package_name',        PkgName);
@@ -1787,8 +1784,8 @@ begin
         RefArr := TJSONArray.Create;
         if Assigned(FPList) then
         begin
-          for I := 0 to FPList.Count - 1 do
-            RefArr.Add(TIDEPackage(FPList[I]).Name);
+          for Ptr in FPList do
+            RefArr.Add(TIDEPackage(Ptr).Name);
           FreeAndNil(FPList);
         end;
         Obj.Add('package_name',        PkgName);

@@ -1164,41 +1164,43 @@ begin
     Exit(RPCError(ID, -32602, 'Missing params'));
   Name := Params.Get('name', '');
 
-  if Name = 'explain_compiler_errors' then
-  begin
-    Out := CallOnMain('project_get_compiler_errors', nil, '', Err);
-    if Err or (Out = '') then
-      Text := 'No compiler output is available. Please build the project first ' +
-              '(Build → Build Project), then invoke this prompt again.'
-    else
-      Text := 'The Lazarus IDE compiler produced the following output:' + LineEnding + LineEnding +
-              Out + LineEnding + LineEnding +
-              'Please explain each error or warning, identify the root cause, ' +
-              'and suggest a specific code fix for each one.';
-  end
-  else if Name = 'review_active_file' then
-  begin
-    Out := CallOnMain('editor_get_active', nil, '', Err);
-    FilePath := '';
-    if not Err and (Out <> '') then
+  case Name of
+    'explain_compiler_errors':
     begin
-      FileData := GetJSON(Out);
-      try
-        if FileData is TJSONObject then
-          FilePath := TJSONObject(FileData).Get('file', '');
-      finally
-        FileData.Free;
-      end;
+      Out := CallOnMain('project_get_compiler_errors', nil, '', Err);
+      if Err or (Out = '') then
+        Text := 'No compiler output is available. Please build the project first ' +
+                '(Build → Build Project), then invoke this prompt again.'
+      else
+        Text := 'The Lazarus IDE compiler produced the following output:' + LineEnding + LineEnding +
+                Out + LineEnding + LineEnding +
+                'Please explain each error or warning, identify the root cause, ' +
+                'and suggest a specific code fix for each one.';
     end;
-    if FilePath = '' then
-      Text := 'No file is currently active in the editor. Please open a file first.'
-    else
-      Text := 'Please review the file "' + FilePath + '" for code quality, potential bugs, ' +
-              'adherence to Pascal/FPC best practices, and improvement opportunities. ' +
-              'Read its content via: file://' + FilePath;
-  end
+    'review_active_file':
+    begin
+      Out := CallOnMain('editor_get_active', nil, '', Err);
+      FilePath := '';
+      if not Err and (Out <> '') then
+      begin
+        FileData := GetJSON(Out);
+        try
+          if FileData is TJSONObject then
+            FilePath := TJSONObject(FileData).Get('file', '');
+        finally
+          FileData.Free;
+        end;
+      end;
+      if FilePath = '' then
+        Text := 'No file is currently active in the editor. Please open a file first.'
+      else
+        Text := 'Please review the file "' + FilePath + '" for code quality, potential bugs, ' +
+                'adherence to Pascal/FPC best practices, and improvement opportunities. ' +
+                'Read its content via: file://' + FilePath;
+    end;
   else
     Exit(RPCError(ID, -32602, 'Unknown prompt: ' + Name));
+  end;
 
   Content := TJSONObject.Create;
   Content.Add('type', 'text');
@@ -1318,120 +1320,122 @@ begin
   end
   else
   try
-  if ToolName = 'package_compile' then
-  begin
-    if not Assigned(Args) or ((Args.Get('lpk_path', '') = '') and
-                              (Args.Get('package_name', '') = '')) then
+  case ToolName of
+    'package_compile':
     begin
-      Text := 'package_name or lpk_path required';
-      Err  := True;
-    end else
-    begin
-      { the IDE compiles a package that is loaded; lazbuild the rest }
-      Text := CallOnMain('package_compile_ide', Args, AClientId, Err);
-      if not Err and (Pos('"use_lazbuild"', Text) > 0) then
+      if not Assigned(Args) or ((Args.Get('lpk_path', '') = '') and
+                                (Args.Get('package_name', '') = '')) then
       begin
-        if Args.Get('lpk_path', '') = '' then
+        Text := 'package_name or lpk_path required';
+        Err  := True;
+      end else
+      begin
+        { the IDE compiles a package that is loaded; lazbuild the rest }
+        Text := CallOnMain('package_compile_ide', Args, AClientId, Err);
+        if not Err and (Pos('"use_lazbuild"', Text) > 0) then
         begin
-          Text := 'method lazbuild needs lpk_path';
-          Err  := True;
-        end else
-          Text := McpLazbuildJSON(Args.Strings['lpk_path'], Err, Args.Get('clean', False));
+          if Args.Get('lpk_path', '') = '' then
+          begin
+            Text := 'method lazbuild needs lpk_path';
+            Err  := True;
+          end else
+            Text := McpLazbuildJSON(Args.Strings['lpk_path'], Err, Args.Get('clean', False));
+        end;
       end;
     end;
-  end
-  else if ToolName = 'project_run' then
-  begin
-    { the IDE builds and starts the program on the main thread; the wait for its
-      end happens here (ADR-016) }
-    Text := CallOnMain(ToolName, Args, AClientId, Err);
-    if not Err then
-      if Assigned(Args) then
-        Text := McpRunFinish(Text, Args.Get('wait_seconds', 10))
-      else
-        Text := McpRunFinish(Text, 10);
-  end
-  else if ToolName = 'ide_run_tests' then
-  begin
-    { Default: the plugin's own test project (tests/ next to src/), whatever
-      project is open; else tests/ in the active project.  A relative
-      test_project is relative to the active project's directory. }
-    ResolvedLpi := IfThen(Assigned(Args), Args.Get('test_project', ''), '');
-    ProjDir := '';
-    Text := CallOnMain('project_get_directory', nil, AClientId, Err);
-    if not Err and (Text <> '') then
+    'project_run':
     begin
-      DirData := GetJSON(Text);
-      try
-        if DirData is TJSONObject then
-          ProjDir := TJSONObject(DirData).Get('directory', '');
-      finally
-        DirData.Free;
-      end;
+      { the IDE builds and starts the program on the main thread; the wait for its
+        end happens here (ADR-016) }
+      Text := CallOnMain(ToolName, Args, AClientId, Err);
+      if not Err then
+        if Assigned(Args) then
+          Text := McpRunFinish(Text, Args.Get('wait_seconds', 10))
+        else
+          Text := McpRunFinish(Text, 10);
     end;
-    Err := False;
-    if (ResolvedLpi <> '') and not FilenameIsAbsolute(ResolvedLpi) and (ProjDir <> '') then
-      ResolvedLpi := CreateAbsolutePath(ResolvedLpi, ProjDir);
-    if ResolvedLpi = '' then
+    'ide_run_tests':
     begin
-      PkgArgs := TJSONObject.Create(['package_name', 'LazMcpAssistant']);
-      try
-        Text := CallOnMain('package_get_info', PkgArgs, AClientId, Err);
-      finally
-        PkgArgs.Free;
-      end;
+      { Default: the plugin's own test project (tests/ next to src/), whatever
+        project is open; else tests/ in the active project.  A relative
+        test_project is relative to the active project's directory. }
+      ResolvedLpi := IfThen(Assigned(Args), Args.Get('test_project', ''), '');
+      ProjDir := '';
+      Text := CallOnMain('project_get_directory', nil, AClientId, Err);
       if not Err and (Text <> '') then
       begin
         DirData := GetJSON(Text);
         try
           if DirData is TJSONObject then
-            ResolvedLpi := TJSONObject(DirData).Get('package_file', '');
+            ProjDir := TJSONObject(DirData).Get('directory', '');
         finally
           DirData.Free;
         end;
-        if ResolvedLpi <> '' then
-          ResolvedLpi := ExtractFilePath(ExcludeTrailingPathDelimiter(
-                           ExtractFilePath(ResolvedLpi))) +
-                         'tests' + PathDelim + 'mcpserver_tests.lpi';
       end;
       Err := False;
-      if ((ResolvedLpi = '') or not FileExists(ResolvedLpi)) and (ProjDir <> '') then
-        ResolvedLpi := IncludeTrailingPathDelimiter(ProjDir) +
-                       'tests' + PathDelim + 'mcpserver_tests.lpi';
+      if (ResolvedLpi <> '') and not FilenameIsAbsolute(ResolvedLpi) and (ProjDir <> '') then
+        ResolvedLpi := CreateAbsolutePath(ResolvedLpi, ProjDir);
       if ResolvedLpi = '' then
       begin
-        Text := 'No test_project given, and no default found (the plugin''s ' +
-                'tests/mcpserver_tests.lpi, or tests/ in the active project)';
-        Err  := True;
+        PkgArgs := TJSONObject.Create(['package_name', 'LazMcpAssistant']);
+        try
+          Text := CallOnMain('package_get_info', PkgArgs, AClientId, Err);
+        finally
+          PkgArgs.Free;
+        end;
+        if not Err and (Text <> '') then
+        begin
+          DirData := GetJSON(Text);
+          try
+            if DirData is TJSONObject then
+              ResolvedLpi := TJSONObject(DirData).Get('package_file', '');
+          finally
+            DirData.Free;
+          end;
+          if ResolvedLpi <> '' then
+            ResolvedLpi := ExtractFilePath(ExcludeTrailingPathDelimiter(
+                             ExtractFilePath(ResolvedLpi))) +
+                           'tests' + PathDelim + 'mcpserver_tests.lpi';
+        end;
+        Err := False;
+        if ((ResolvedLpi = '') or not FileExists(ResolvedLpi)) and (ProjDir <> '') then
+          ResolvedLpi := IncludeTrailingPathDelimiter(ProjDir) +
+                         'tests' + PathDelim + 'mcpserver_tests.lpi';
+        if ResolvedLpi = '' then
+        begin
+          Text := 'No test_project given, and no default found (the plugin''s ' +
+                  'tests/mcpserver_tests.lpi, or tests/ in the active project)';
+          Err  := True;
+        end;
+      end;
+      if not Err then
+      begin
+        RunSuite := IfThen(Assigned(Args), Args.Get('suite', ''), '');
+        RunEnv   := nil;
+        if Assigned(Args) and (Args.Find('env') is TJSONObject) then
+          RunEnv := TJSONObject(Args.Find('env'));
+        Text := McpTestArgsError(RunSuite, RunEnv);
+        Err  := Text <> '';
+        if not Err then
+          Text := McpRunTests(ResolvedLpi,
+            IfThen(Assigned(Args), Args.Get('junit_out', ''), ''), RunSuite, RunEnv, Err);
       end;
     end;
-    if not Err then
-    begin
-      RunSuite := IfThen(Assigned(Args), Args.Get('suite', ''), '');
-      RunEnv   := nil;
-      if Assigned(Args) and (Args.Find('env') is TJSONObject) then
-        RunEnv := TJSONObject(Args.Find('env'));
-      Text := McpTestArgsError(RunSuite, RunEnv);
-      Err  := Text <> '';
-      if not Err then
-        Text := McpRunTests(ResolvedLpi,
-          IfThen(Assigned(Args), Args.Get('junit_out', ''), ''), RunSuite, RunEnv, Err);
-    end;
-  end
   else
-  begin
-    BCtx.Params := Args; BCtx.Result := ''; BCtx.Error := False; BCtx.Images := nil;
-    BCtx.ClientId := AClientId; BCtx.StopServer := @Self.StopServer;
-    McpBlockingDispatch(ToolName, BCtx, BHandled);
-    if BHandled then
     begin
-      Text := BCtx.Result;
-      Err  := BCtx.Error;
-      Images := BCtx.Images;
-    end
-    else
-      // Default: IDE API — must run on main thread.
-      Text := CallOnMain(ToolName, Args, AClientId, Err, Images);
+      BCtx.Params := Args; BCtx.Result := ''; BCtx.Error := False; BCtx.Images := nil;
+      BCtx.ClientId := AClientId; BCtx.StopServer := @Self.StopServer;
+      McpBlockingDispatch(ToolName, BCtx, BHandled);
+      if BHandled then
+      begin
+        Text := BCtx.Result;
+        Err  := BCtx.Error;
+        Images := BCtx.Images;
+      end
+      else
+        // Default: IDE API — must run on main thread.
+        Text := CallOnMain(ToolName, Args, AClientId, Err, Images);
+    end;
   end;
   finally
     McpGateLeave(ToolName, AClientId);
