@@ -1249,7 +1249,7 @@ begin
   else if Name = 'ide_get_open_dialogs' then
   begin
     Result := True;
-    Arr := McpOpenDialogs;
+    Arr := McpOpenDialogs(True);
     Obj := TJSONObject.Create;
     try
       Obj.Add('count', Arr.Count);
@@ -1784,7 +1784,9 @@ begin
     SCHEMA_REPORT, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_get_open_dialogs',
     'List modal dialogs currently blocking the IDE''s main thread: caption, text and ' +
-    'buttons for each (a short "summary" line too, when any are open). While one is ' +
+    'buttons for each (a short "summary" line too, when any are open). Message boxes, ' +
+    'the IDE''s own modal forms ("Some files have changed on disk", this plugin''s consent ' +
+    'dialogs; source "modal form") and, on Windows, native dialogs are listed. While one is ' +
     'open, no other tool call can make progress on the main thread -- ask the user to ' +
     'close or answer it; nothing here answers a dialog for you.',
     SCHEMA_GET_OPEN_DIALOGS, MCP_ANN_RO));

@@ -134,6 +134,11 @@ begin
     CheckEquals(1, Pos('TOOL ERROR:', T), 'refused: ' + T);
     CheckTrue(Pos('asks the user for consent', T) > 0, 'says why: ' + T);
     CheckTrue(Pos('answered', T) = 0, 'nothing was clicked: ' + T);
+    { an ordinary modal form is listed, with its text and buttons }
+    T := CallToolText('ide_get_open_dialogs', '{}', []);
+    CheckTrue(Pos('clone a repository', T) > 0, 'the dialog is listed: ' + T);
+    CheckTrue(Pos('invalid.invalid', T) > 0, 'with the address it asks about: ' + T);
+    CheckTrue(Pos('Clone', T) > 0, 'and its buttons: ' + T);
     { the dialog is still there: a refusal must not have closed it }
     T := CallToolText('ide_answer_dialog', '{"button":"Clone"}', []);
     CheckTrue(Pos('asks the user for consent', T) > 0, 'still refused, still open: ' + T);
