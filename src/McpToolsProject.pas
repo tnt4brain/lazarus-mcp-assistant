@@ -21,7 +21,7 @@ uses
   Classes, SysUtils,
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil, CompOptsIntf,
   MacroIntf, Controls, Forms, StdCtrls, IDEDialogs, LCLPlatformDef, StrUtils, MenuIntf, ExtCtrls,
-  Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
+  Project, ProjectIcon, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpToolsPackages, McpDialogWatch, McpIdeListeners,
@@ -67,6 +67,9 @@ const
     '"output_dir":{"type":"string","description":"Unit output directory; macros like $(TargetOS) are expanded at build time"},' +
     '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read project_get_settings first to preserve existing flags)"},' +
     '"debug_info":{"type":"string","description":"Debug information (-g): none, dwarf3, dwarf2, dwarf2set, stabs or auto. The FpDebug debugger (debug_run) needs a dwarf format; rebuild afterwards"},' +
+    '"build_mode":{"type":"string","description":"Make this build mode the active one (name as listed in build_modes of project_get_settings). Applied first: target_os, widgetset, the switches and the other settings in the same call change this mode. The other modes keep theirs"},' +
+    '"icon":{"type":"string","description":"Application icon: the path of a Windows .ico file (relative to the project folder), \"default\" for the IDE''s icon, or \"none\" to remove it. Stored in the project and written next to it as <project>.ico at the next build"},' +
+    '"use_manifest":{"type":"boolean","description":"Embed the Windows application manifest (visual styles, DPI awareness; Windows targets)"},' +
     '"heaptrc":{"type":"boolean","description":"Heap-leak report at exit (-gh, unit heaptrc). The report goes to stderr; project_run returns it as heap_report. Rebuild afterwards"},' +
     '"trash_variables":{"type":"boolean","description":"Fill new variables and heap blocks with junk to expose use of uninitialised data (-gt)"},' +
     '"line_info":{"type":"boolean","description":"Source lines in run-time error and heaptrc call stacks (-gl, unit lineinfo)"},' +
@@ -449,6 +452,123 @@ begin
   Proj.Modified := True;
   IncreaseBuildMacroChangeStamp;
   LazarusIDE.PrepareBuildTarget(True);
+end;
+
+{ ── Build modes ──────────────────────────────────────────────────────────── }
+
+{ The build mode named AName: exact first, then ignoring case; nil if none.  AKnown is
+  the list of identifiers, for the refusal text. }
+function FindBuildMode(Proj: TProject; const AName: string;
+  out AKnown: string): TProjectBuildMode;
+var
+  I : Integer;
+begin
+  Result := nil;
+  AKnown := '';
+  for I := 0 to Proj.BuildModes.Count - 1 do
+  begin
+    AKnown := AKnown + IfThen(AKnown <> '', ', ') + Proj.BuildModes[I].Identifier;
+    if Proj.BuildModes[I].Identifier = AName then
+      Result := Proj.BuildModes[I];
+  end;
+  if Result = nil then
+    for I := 0 to Proj.BuildModes.Count - 1 do
+      if SameText(Proj.BuildModes[I].Identifier, AName) then
+        Exit(Proj.BuildModes[I]);
+end;
+
+{ build_mode (the active one) and build_modes (all) of project_get/set_settings }
+procedure AddBuildModes(AObj: TJSONObject; Proj: TProject);
+var
+  Arr : TJSONArray;
+  I   : Integer;
+begin
+  Arr := TJSONArray.Create;
+  for I := 0 to Proj.BuildModes.Count - 1 do
+    Arr.Add(Proj.BuildModes[I].Identifier);
+  AObj.Add('build_mode',  Proj.ActiveBuildMode.Identifier);
+  AObj.Add('build_modes', Arr);
+end;
+
+{ ── Application icon and manifest ────────────────────────────────────────── }
+
+const
+  ICON_MAX_BYTES = 1024 * 1024;
+
+{ The .ico file named by the icon parameter, '' when it is none/default/empty. }
+function IconParamFile(Proj: TProject; const AValue: string): string;
+var
+  V : string;
+begin
+  V := LowerCase(Trim(AValue));
+  if (V = '') or (V = 'none') or (V = 'default') then Exit('');
+  Result := CleanAndExpandFilename(
+    CreateAbsolutePath(Trim(AValue), ExtractFilePath(Proj.ProjectInfoFile)));
+end;
+
+{ '' when the icon parameter can be applied: none, default or a readable .ico of a sane
+  size.  Called before anything changes. }
+function CheckIconParam(Proj: TProject; const AValue: string): string;
+var
+  F   : string;
+  S   : TFileStream;
+  Hdr : array[0..3] of Byte;
+begin
+  Result := '';
+  F := IconParamFile(Proj, AValue);
+  if F = '' then Exit;
+  if not FileExists(F) then Exit('icon: file not found: ' + F);
+  try
+    S := TFileStream.Create(F, fmOpenRead or fmShareDenyNone);
+    try
+      if S.Size > ICON_MAX_BYTES then Exit('icon: file is larger than 1 MB');
+      FillChar(Hdr, SizeOf(Hdr), 0);
+      if S.Size >= 4 then S.ReadBuffer(Hdr, 4);
+      { ICONDIR: reserved 0, type 1 = icon }
+      if (Hdr[0] <> 0) or (Hdr[1] <> 0) or (Hdr[2] <> 1) or (Hdr[3] <> 0) then
+        Exit('icon: not a Windows .ico file (convert a PNG to .ico first): ' + F);
+    finally
+      S.Free;
+    end;
+  except
+    on E: Exception do Result := 'icon: cannot read ' + F + ': ' + E.Message;
+  end;
+end;
+
+procedure ApplyIconParam(Proj: TProject; const AValue: string);
+var
+  Icon : TProjectIcon;
+  V, F : string;
+  S    : TFileStream;
+begin
+  Icon := TProjectIcon(Proj.ProjResources[TProjectIcon]);
+  V := LowerCase(Trim(AValue));
+  F := IconParamFile(Proj, AValue);
+  if F <> '' then
+  begin
+    S := TFileStream.Create(F, fmOpenRead or fmShareDenyNone);
+    try
+      Icon.SetStream(S);
+    finally
+      S.Free;
+    end;
+  end
+  else if V = 'default' then
+    Icon.LoadDefaultIcon
+  else
+    Icon.IsEmpty := True;
+  Proj.Modified := True;
+end;
+
+{ icon_bytes (0 = no icon), icon_file and use_manifest of project_get/set_settings }
+procedure AddResources(AObj: TJSONObject; Proj: TProject);
+var
+  Icon : TProjectIcon;
+begin
+  Icon := TProjectIcon(Proj.ProjResources[TProjectIcon]);
+  AObj.Add('icon_bytes',   Length(Icon.IconData));
+  AObj.Add('icon_file',    Icon.IcoFileName);
+  AObj.Add('use_manifest', Proj.UseManifest);
 end;
 
 { debug_info of project_get/set_settings: none, or the -g format }
@@ -887,6 +1007,8 @@ var
   SaveRes    : TModalResult;
   Existing   : TStringList;
   MacroIdx   : Integer;
+  Mode       : TProjectBuildMode;
+  ModeList   : string;
   LprPath    : string;
   CreatedLpi : Boolean;
   MacroText  : string;
@@ -1151,6 +1273,8 @@ begin
           Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
           AddSwitches(Obj, Proj.LazCompilerOptions);
         end;
+        AddBuildModes(Obj, TProject(Proj));
+        AddResources(Obj, TProject(Proj));
       end
       else
         Obj.Add('error', 'No active project');
@@ -1187,6 +1311,37 @@ begin
     begin
       Ctx.Error := True; Exit;
     end;
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('use_manifest') <> nil) and
+       (Ctx.Params.Find('use_manifest').JSONType <> jtBoolean) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'use_manifest must be true or false'; Exit;
+    end;
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('icon') <> nil) then
+    begin
+      Ctx.Result := CheckIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
+      if Ctx.Result <> '' then
+      begin
+        Ctx.Error := True; Exit;
+      end;
+    end;
+    { the build mode first: every other setting here applies to the active mode }
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('build_mode') <> nil) then
+    begin
+      Mode := FindBuildMode(TProject(Proj), Ctx.Params.Get('build_mode', ''), ModeList);
+      if Mode = nil then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Unknown build mode "' + Ctx.Params.Get('build_mode', '') +
+                      '"; one of: ' + ModeList;
+        Exit;
+      end;
+      if Mode <> TProject(Proj).ActiveBuildMode then
+      begin
+        TProject(Proj).ActiveBuildMode := Mode;
+        Proj.Modified := True;
+        LazarusIDE.PrepareBuildTarget(True);
+      end;
+    end;
     { first, so that an unknown widgetset changes nothing }
     if Assigned(Ctx.Params) and (Ctx.Params.Find('widgetset') <> nil) then
     begin
@@ -1212,6 +1367,10 @@ begin
         if DbgGen then Proj.LazCompilerOptions.DebugInfoType := DbgType;
       end;
       ApplySwitches(Ctx.Params, Proj.LazCompilerOptions);
+      if Ctx.Params.Find('use_manifest') <> nil then
+        TProject(Proj).UseManifest := Ctx.Params.Get('use_manifest', False);
+      if Ctx.Params.Find('icon') <> nil then
+        ApplyIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
     end;
     LazarusIDE.DoSaveProject([]);
     Obj := TJSONObject.Create;
@@ -1225,6 +1384,8 @@ begin
       Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
       Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
       AddSwitches(Obj, Proj.LazCompilerOptions);
+      AddBuildModes(Obj, TProject(Proj));
+      AddResources(Obj, TProject(Proj));
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;

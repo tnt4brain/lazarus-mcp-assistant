@@ -582,6 +582,10 @@ begin
   CheckTrue(Pos('"heaptrc":', T) > 0, 'heaptrc is reported: ' + T);
   CheckTrue(Pos('"range_checks":', T) > 0, 'range_checks is reported: ' + T);
   CheckTrue(Pos('"optimization":', T) > 0, 'optimization is reported: ' + T);
+  CheckTrue(Pos('"build_mode":', T) > 0, 'the active build mode is reported: ' + T);
+  CheckTrue(Pos('"build_modes":[', T) > 0, 'the build modes are listed: ' + T);
+  CheckTrue(Pos('"icon_bytes":', T) > 0, 'the icon is reported: ' + T);
+  CheckTrue(Pos('"use_manifest":', T) > 0, 'use_manifest is reported: ' + T);
 end;
 
 procedure TTestToolSmoke.TestProjectSwitchesRefused;
@@ -600,6 +604,19 @@ begin
   CheckTrue(Pos('optimization', T) > 0, 'the message names the parameter: ' + T);
   T := Call('project_set_settings', '{"optimization":1.5}');
   CheckTrue(Pos('TOOL ERROR', T) = 1, 'a fraction is refused: ' + T);
+  T := Call('project_set_settings', '{"build_mode":"NoSuchMode","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'an unknown build mode is refused: ' + T);
+  CheckTrue(Pos('one of:', T) > 0, 'the refusal lists the known modes: ' + T);
+  T := Call('project_set_settings', '{"icon":"no/such/icon.ico","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a missing icon file is refused: ' + T);
+  CheckTrue(Pos('not found', T) > 0, T);
+  { a file that exists but is not an .ico (the options file of the plugin) }
+  T := Call('project_set_settings', '{"icon":"' + StringReplace(GOptionsFile, '\', '/', [rfReplaceAll]) +
+    '","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a file that is no icon is refused: ' + T);
+  CheckTrue(Pos('not a Windows .ico', T) > 0, T);
+  T := Call('project_set_settings', '{"use_manifest":"yes"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'use_manifest must be a boolean: ' + T);
   CheckEquals(Before, Call('project_get_settings', '{}'), 'nothing changed');
 end;
 
