@@ -65,7 +65,9 @@ const
 
   SCHEMA_GIT_CHECKOUT =
     '{"type":"object","properties":{' +
-    '"target":{"type":"string","description":"Branch name, tag, commit hash, or file path to restore"},' +
+    '"target":{"type":"string","description":"Branch name, tag, commit hash, or file path to restore; with create=true, the name of the new branch"},' +
+    '"create":{"type":"boolean","description":"Create the branch named by target and switch to it (git checkout -b); it fails if the name exists (default false)"},' +
+    '"start_point":{"type":"string","description":"With create: the commit, branch or tag the new branch starts at (default HEAD)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["target"]}';
 
@@ -901,7 +903,24 @@ begin
       Ctx.Result := 'target required';
       Exit;
     end;
-    Ok := RunGit(['checkout', Target], WorkDir, Output);
+    if Assigned(Ctx.Params) and Ctx.Params.Get('create', False) then
+    begin
+      { a new branch: target is its name, start_point where it begins (default HEAD) }
+      Branch := Trim(Ctx.Params.Get('start_point', ''));
+      if (Target[1] = '-') or (Pos(' ', Target) > 0) or
+         ((Branch <> '') and (Branch[1] = '-')) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Invalid branch name or start_point';
+        Exit;
+      end;
+      if Branch <> '' then
+        Ok := RunGit(['checkout', '-b', Target, Branch], WorkDir, Output)
+      else
+        Ok := RunGit(['checkout', '-b', Target], WorkDir, Output);
+    end
+    else
+      Ok := RunGit(['checkout', Target], WorkDir, Output);
     Obj := TJSONObject.Create;
     try
       Obj.Add('output',   Output);
@@ -1101,7 +1120,8 @@ begin
     SCHEMA_GIT_COMMIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_checkout',
     'Switch to a branch, restore a file, or detach HEAD at a commit. ' +
-    'Pass a branch name, tag, commit hash, or file path as target.',
+    'Pass a branch name, tag, commit hash, or file path as target; create=true makes ' +
+    'a new branch of that name (from start_point, default HEAD) and switches to it.',
     SCHEMA_GIT_CHECKOUT, MCP_ANN_DEST));
   Tools.Add(MakeTool('git_branches',
     'List all local and remote branches. The current branch is prefixed with *.',

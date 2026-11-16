@@ -28,6 +28,7 @@ type
   published
     procedure TestCheckoutFileRestores;
     procedure TestCheckoutBranchAndBranches;
+    procedure TestCheckoutCreatesBranch;
     procedure TestResetMixedUnstages;
     procedure TestResetSoftKeepsStaged;
     procedure TestStashAndPop;
@@ -144,6 +145,28 @@ begin
   T := Tool('git_checkout', '"target":"no-such-branch"');
   CheckTrue(IsError(T) or (Pos('error', LowerCase(T)) > 0) or (Pos('did not match', T) > 0),
     'an unknown target is reported: ' + T);
+end;
+
+procedure TTestGitWrite.TestCheckoutCreatesBranch;
+var
+  T : string;
+begin
+  T := Tool('git_checkout', '"target":"topic","create":true');
+  CheckFalse(IsError(T), T);
+  CheckEquals('topic', Trim(Git(['rev-parse', '--abbrev-ref', 'HEAD'])), 'on the new branch');
+  { from a start point: HEAD~1 holds the first version of the file }
+  T := Tool('git_checkout', '"target":"old","create":true,"start_point":"HEAD~1"');
+  CheckFalse(IsError(T), T);
+  CheckEquals('one', ReadA, 'the branch starts at the start point');
+  { an existing name is refused, the branch stays }
+  T := Tool('git_checkout', '"target":"topic","create":true');
+  CheckTrue(IsError(T) or (Pos('already exists', T) > 0), 'existing name refused: ' + T);
+  CheckEquals('old', Trim(Git(['rev-parse', '--abbrev-ref', 'HEAD'])), 'still on old');
+  { names that would be read as options or hold spaces never reach git }
+  T := Tool('git_checkout', '"target":"-f","create":true');
+  CheckTrue(Pos('Invalid', T) > 0, T);
+  T := Tool('git_checkout', '"target":"a b","create":true');
+  CheckTrue(Pos('Invalid', T) > 0, T);
 end;
 
 procedure TTestGitWrite.TestResetMixedUnstages;
