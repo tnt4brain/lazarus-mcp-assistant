@@ -223,6 +223,14 @@ begin
         Result := GMcpPackageCheck(AParams.Get('package_name', ''), '', AWhy);
       Exit;
     end;
+  if AName = 'git_archive' then
+  begin
+    { an absolute output path; '' is left to the tool, which refuses it }
+    F := AParams.Get('output', '');
+    if (F <> '') and Assigned(GMcpWriteCheck) then
+      Result := GMcpWriteCheck(F, AWhy);
+    Exit;
+  end;
   Arg := '';
   for I := Low(FILE_WRITERS) to High(FILE_WRITERS) do
     if AName = FILE_WRITERS[I] then Arg := 'file';
@@ -313,8 +321,8 @@ end;
 
 function McpClosestName(const AWanted: string; ANames: TStrings): string;
 var
-  I, D, Best, Limit : Integer;
-  W, N : string;
+  D, Best, Limit : Integer;
+  W, N, Cand : string;
 begin
   Result := '';
   W := LowerCase(AWanted);
@@ -322,9 +330,9 @@ begin
   if Limit > 3 then Limit := 3;
   if Limit < 1 then Limit := 1;
   Best := MaxInt;
-  for I := 0 to ANames.Count - 1 do
+  for Cand in ANames do
   begin
-    N := LowerCase(ANames[I]);
+    N := LowerCase(Cand);
     D := EditDistance(W, N);
     { "file" for "form_file", "max_results" for "results": one name inside the other }
     if (D > Limit) and (Length(W) >= 4) and (Length(N) >= 4) and
@@ -333,7 +341,7 @@ begin
     if (D <= Limit) and (D < Best) then
     begin
       Best := D;
-      Result := ANames[I];
+      Result := Cand;
     end;
   end;
 end;
@@ -342,6 +350,7 @@ function McpValidateArgs(const ToolName: string; Args: TJSONObject;
   out Msg: string): Boolean;
 var
   I, J     : Integer;
+  En       : TJSONEnum;
   Names    : TStringList;
   Hint     : string;
   Schema   : TJSONObject;
@@ -383,15 +392,15 @@ begin
     Names := TStringList.Create;
     try
       if Assigned(Props) then
-        for J := 0 to Props.Count - 1 do
-          Names.Add(Props.Names[J]);
+        for En in Props do
+          Names.Add(En.Key);
       if Assigned(Args) then
-        for J := 0 to Args.Count - 1 do
-          if (Props = nil) or (Props.IndexOfName(Args.Names[J]) < 0) then
+        for En in Args do
+          if (Props = nil) or (Props.IndexOfName(En.Key) < 0) then
           begin
             if Unknown <> '' then Unknown := Unknown + ', ';
-            Unknown := Unknown + Args.Names[J];
-            Hint := McpClosestName(Args.Names[J], Names);
+            Unknown := Unknown + En.Key;
+            Hint := McpClosestName(En.Key, Names);
             if Hint <> '' then
               Unknown := Unknown + ' (did you mean ' + Hint + '?)';
           end;

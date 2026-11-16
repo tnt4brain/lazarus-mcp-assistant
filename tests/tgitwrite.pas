@@ -35,6 +35,8 @@ type
     procedure TestStashPaths;
     procedure TestCommitAmend;
     procedure TestBranchDelete;
+    procedure TestCherryPick;
+    procedure TestArchive;
     procedure TestLog;
     procedure TestInitCreatesRepository;
     procedure TestInitKeepsExistingGitignore;
@@ -298,6 +300,73 @@ begin
   T := Tool('git_branch_delete', '"branch":"-D"');
   CheckTrue(IsError(T), 'option refused: ' + T);
   CheckTrue(Trim(Git(['branch', '--list', 'work'])) <> '', 'still there');
+end;
+
+procedure TTestGitWrite.TestCherryPick;
+var
+  T, Main, Hash : string;
+  SL : TStringList;
+begin
+  Main := Trim(Git(['rev-parse', '--abbrev-ref', 'HEAD']));
+  { a commit on another branch that touches a new file: applied here }
+  Git(['checkout', '-q', '-b', 'side', 'HEAD~1']);
+  SL := TStringList.Create;
+  try
+    SL.Text := 'extra';
+    SL.SaveToFile(FDir + 'b.txt');
+  finally
+    SL.Free;
+  end;
+  Git(['add', 'b.txt']);
+  Git(['commit', '-q', '-m', 'add b']);
+  Hash := Trim(Git(['rev-parse', 'HEAD']));
+  Git(['checkout', '-q', Main]);
+  T := Tool('git_cherry_pick', '"commit":' + JsonStr(Hash));
+  CheckFalse(IsError(T), T);
+  CheckTrue(FileExists(FDir + 'b.txt'), 'the file arrived');
+  CheckEquals('add b', Trim(Git(['log', '-1', '--format=%s'])), 'one new commit on top');
+  { a conflict stops; abort puts everything back }
+  Git(['checkout', '-q', '-b', 'clash', 'HEAD~2']);
+  WriteA('clash');
+  Git(['commit', '-q', '-am', 'clash on a']);
+  Hash := Trim(Git(['rev-parse', 'HEAD']));
+  Git(['checkout', '-q', Main]);
+  T := Tool('git_cherry_pick', '"commit":' + JsonStr(Hash));
+  CheckTrue(IsError(T) and (Pos('abort=true', T) > 0), 'stopped on the conflict: ' + T);
+  T := Tool('git_cherry_pick', '"abort":true');
+  CheckFalse(IsError(T), T);
+  CheckEquals('two', ReadA, 'the file is back');
+  CheckEquals('', Trim(Git(['status', '--porcelain', '--untracked-files=no'])), 'clean again');
+  { an option is no commit }
+  T := Tool('git_cherry_pick', '"commit":"--abort"');
+  CheckTrue(IsError(T), 'option refused: ' + T);
+  T := Tool('git_cherry_pick', '');
+  CheckTrue(IsError(T), 'nothing to pick: ' + T);
+end;
+
+procedure TTestGitWrite.TestArchive;
+var
+  T, Out_, Listing : string;
+begin
+  Out_ := FDir + 'out.tar';
+  T := Tool('git_archive', '"output":' + JsonStr(Out_) + ',"prefix":"pkg"');
+  CheckFalse(IsError(T), T);
+  CheckTrue(FileExists(Out_), 'archive written');
+  if RunCommandInDir(FDir, 'tar', ['-tf', Out_], Listing) then
+    CheckTrue(Pos('pkg/a.txt', StringReplace(Listing, '\', '/', [rfReplaceAll])) > 0,
+      'prefix and file in the archive: ' + Listing);
+  { never overwritten }
+  T := Tool('git_archive', '"output":' + JsonStr(Out_));
+  CheckTrue(IsError(T) and (Pos('exists', T) > 0), 'refused: ' + T);
+  { a relative path is no output; neither is a ref that is an option }
+  T := Tool('git_archive', '"output":"rel.tar"');
+  CheckTrue(IsError(T), 'relative refused: ' + T);
+  T := Tool('git_archive', '"output":' + JsonStr(FDir + 'x.tar') + ',"ref":"--help"');
+  CheckTrue(IsError(T), 'option as ref refused: ' + T);
+  CheckFalse(FileExists(FDir + 'x.tar'), 'nothing written');
+  { an unknown ref fails and leaves no file }
+  T := Tool('git_archive', '"output":' + JsonStr(FDir + 'y.tar') + ',"ref":"nosuchref"');
+  CheckTrue(IsError(T), 'unknown ref: ' + T);
 end;
 
 procedure TTestGitWrite.TestLog;

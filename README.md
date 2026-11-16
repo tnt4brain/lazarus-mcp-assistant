@@ -275,7 +275,9 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 `git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`
 (`amend=true` folds the staged changes into the last commit; refused once a remote
 branch holds it), `git_checkout` (`create=true` makes a new branch), `git_branch_delete` (a merged local
-branch only, `git branch -d`; no force), `git_stash` (all changes, or
+branch only, `git branch -d`; no force), `git_cherry_pick` (a commit or a range `a..b`;
+`abort=true` undoes one that stopped on a conflict), `git_archive` (committed files of a ref
+into a new .tar, .tar.gz, .tgz or .zip; never overwrites; the output path is write-checked), `git_stash` (all changes, or
 only `paths`), `git_stash_pop`, `git_reset` (soft/mixed only — no hard reset).
 `work_dir` defaults to the project directory.
 

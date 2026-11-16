@@ -83,6 +83,22 @@ const
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["branch"]}';
 
+  SCHEMA_GIT_CHERRY_PICK =
+    '{"type":"object","properties":{' +
+    '"commit":{"type":"string","description":"The commit to apply on the current branch: a hash, branch or tag, or a range a..b (oldest first, a itself excluded)"},' +
+    '"abort":{"type":"boolean","description":"Instead of picking: undo a cherry-pick that stopped on a conflict (git cherry-pick --abort). Default false"},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
+    '"required":[]}';
+
+  SCHEMA_GIT_ARCHIVE =
+    '{"type":"object","properties":{' +
+    '"output":{"type":"string","description":"Absolute path of the archive to write; the extension picks the format (.tar, .tar.gz, .tgz, .zip). Must not exist yet and must be in a folder files may be changed in"},' +
+    '"ref":{"type":"string","description":"Commit, branch or tag to archive (default HEAD). Only committed files are included"},' +
+    '"prefix":{"type":"string","description":"A folder name put in front of every path in the archive"},' +
+    '"paths":{"type":"array","items":{"type":"string"},"description":"Archive only these files or directories (relative to the repository root). Default: everything"},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
+    '"required":["output"]}';
+
   SCHEMA_GIT_STASH =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Optional stash description"},' +
@@ -715,6 +731,7 @@ var
   PathsArr  : TJSONArray;
   Obj       : TJSONObject;
   GitArgs   : TStringList;
+  En        : TJSONEnum;
   ActiveEd  : TSourceEditorInterface;
   I         : Integer;
 begin
@@ -1011,6 +1028,106 @@ begin
     end;
   end
 
+  else if Name = 'git_cherry_pick' then
+  begin
+    Result  := True;
+    WorkDir := GetGitWorkDir(Ctx);
+    if Assigned(Ctx.Params) and Ctx.Params.Get('abort', False) then
+      Ok := RunGit(['cherry-pick', '--abort'], WorkDir, Output)
+    else
+    begin
+      Target := '';
+      if Assigned(Ctx.Params) then Target := Trim(Ctx.Params.Get('commit', ''));
+      if (Target = '') or (Target[1] = '-') or (Pos(' ', Target) > 0) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'commit required: a commit, or a range such as a..b (no spaces, not starting with -); ' +
+          'or abort=true to leave a cherry-pick that stopped on a conflict';
+        Exit;
+      end;
+      Ok := RunGit(['cherry-pick', '--no-edit', Target], WorkDir, Output);
+      if not Ok then
+        Output := Trim(Output) + LineEnding + 'Stopped. Resolve the conflict and commit by hand, ' +
+          'or call again with abort=true to undo it.';
+    end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('output',   Output);
+      Obj.Add('work_dir', WorkDir);
+      if not Ok then Ctx.Error := True;
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
+  else if Name = 'git_archive' then
+  begin
+    Result  := True;
+    WorkDir := GetGitWorkDir(Ctx);
+    Target  := '';   { the output file }
+    Branch  := 'HEAD';
+    Message := '';   { prefix }
+    if Assigned(Ctx.Params) then
+    begin
+      Target  := Trim(Ctx.Params.Get('output', ''));
+      Branch  := Trim(Ctx.Params.Get('ref', 'HEAD'));
+      Message := Trim(Ctx.Params.Get('prefix', ''));
+    end;
+    if Branch = '' then Branch := 'HEAD';
+    if not FilenameIsAbsolute(Target) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'output required: the absolute path of the archive to write (.tar, .tar.gz, .tgz or .zip)';
+      Exit;
+    end;
+    if FileExists(Target) or DirectoryExists(Target) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'Refused: ' + Target + ' exists already; an archive is never overwritten';
+      Exit;
+    end;
+    if (Branch[1] = '-') or (Pos(' ', Branch) > 0) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'Invalid ref (no spaces, not starting with -)';
+      Exit;
+    end;
+    if (Message <> '') and (Message[Length(Message)] <> '/') then Message := Message + '/';
+    GitArgs := TStringList.Create;
+    try
+      GitArgs.Add('archive');
+      GitArgs.Add('--output=' + Target);
+      if Message <> '' then GitArgs.Add('--prefix=' + Message);
+      GitArgs.Add(Branch);
+      { only these paths: everything after -- is a path, never an option }
+      if Assigned(Ctx.Params) then
+      begin
+        PathsJSON := Ctx.Params.Find('paths');
+        if (PathsJSON is TJSONArray) and (TJSONArray(PathsJSON).Count > 0) then
+        begin
+          GitArgs.Add('--');
+          for En in TJSONArray(PathsJSON) do
+            GitArgs.Add(En.Value.AsString);
+        end;
+      end;
+      Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
+    finally
+      GitArgs.Free;
+    end;
+    Obj := TJSONObject.Create;
+    try
+      if Ok then
+        Output := 'Wrote ' + Target + ' (' + IntToStr(FileSize(Target)) + ' bytes)';
+      Obj.Add('output',   Output);
+      Obj.Add('work_dir', WorkDir);
+      if not Ok then Ctx.Error := True;
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
   else if Name = 'git_stash' then
   begin
     Result  := True;
@@ -1033,8 +1150,8 @@ begin
         if (PathsJSON is TJSONArray) and (TJSONArray(PathsJSON).Count > 0) then
         begin
           GitArgs.Add('--');
-          for I := 0 to TJSONArray(PathsJSON).Count - 1 do
-            GitArgs.Add(TJSONArray(PathsJSON).Strings[I]);
+          for En in TJSONArray(PathsJSON) do
+            GitArgs.Add(En.Value.AsString);
         end;
       end;
       Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
@@ -1204,6 +1321,16 @@ begin
     'branch and one whose commits no other branch has; there is no force option. Remote ' +
     'branches are not touched.',
     SCHEMA_GIT_BRANCH_DELETE, MCP_ANN_DEST));
+  Tools.Add(MakeTool('git_cherry_pick',
+    'Apply the changes of a commit (or a range a..b) as new commits on the current branch ' +
+    '(git cherry-pick). Git refuses on a dirty working tree. On a conflict it stops: ' +
+    'resolve and commit by hand, or call again with abort=true. Merge commits are not supported.',
+    SCHEMA_GIT_CHERRY_PICK, MCP_ANN_DEST));
+  Tools.Add(MakeTool('git_archive',
+    'Pack the committed files of a ref into a .tar, .tar.gz, .tgz or .zip (git archive); ' +
+    'the working tree is not read. The output path is checked like any file write and an ' +
+    'existing file is never overwritten.',
+    SCHEMA_GIT_ARCHIVE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_stash',
     'Stash uncommitted changes (staged and unstaged) with an optional message, all of ' +
     'them or only those of the given paths. ' +
