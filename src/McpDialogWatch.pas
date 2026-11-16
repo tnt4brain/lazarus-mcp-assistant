@@ -276,6 +276,7 @@ type
   TNativeCollect = record
     Dialogs : TJSONArray;
     Texts   : string;
+    Buttons : string;
   end;
   PNativeCollect = ^TNativeCollect;
 
@@ -307,10 +308,17 @@ begin
   C := PNativeCollect(ALParam);
   T := WindowText(AWnd);
   if T <> '' then
-  begin
-    if C^.Texts <> '' then C^.Texts := C^.Texts + ' | ';
-    C^.Texts := C^.Texts + T;
-  end;
+    if WindowClass(AWnd) = 'Button' then
+    begin
+      { a push button of the dialog: what the user will be asked to press }
+      if C^.Buttons <> '' then C^.Buttons := C^.Buttons + ', ';
+      C^.Buttons := C^.Buttons + T;
+    end
+    else
+    begin
+      if C^.Texts <> '' then C^.Texts := C^.Texts + ' | ';
+      C^.Texts := C^.Texts + T;
+    end;
   Result := True;
 end;
 
@@ -328,11 +336,12 @@ begin
   if Cls <> '#32770' then Exit;   { the dialog box window class }
   Col.Dialogs := nil;
   Col.Texts   := '';
+  Col.Buttons := '';
   EnumChildWindows(AWnd, @EnumChildProc, LPARAM(@Col));
   O := TJSONObject.Create;
   O.Add('caption', WindowText(AWnd));
   O.Add('text',    Col.Texts);
-  O.Add('buttons', '');
+  O.Add('buttons', Col.Buttons);
   O.Add('source',  'native window (' + Cls + ')');
   C^.Dialogs.Add(O);
 end;
