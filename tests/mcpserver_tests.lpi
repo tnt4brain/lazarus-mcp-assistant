@@ -19,7 +19,7 @@
         <PackageName Value="LazUtils"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="32">
+    <Units Count="33">
       <Unit0>
         <Filename Value="mcpserver_tests.lpr"/>
         <IsPartOfProject Value="True"/>

@@ -13,7 +13,7 @@ unit McpToolsCodeTools;
 interface
 
 uses
-  CodeCache;
+  Classes, fpjson, CodeCache;
 
 { CodeToolBoss.LoadFile that also finds a file created since the IDE last
   looked at its directory: the IDE's file caches still say it does not exist,
@@ -21,15 +21,23 @@ uses
   Main thread. }
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
 
+{ The files a search over Code's project (or package, by package_name or lpk_path in
+  Params) covers, plus the scopes "also", search_dir and max_files ask for, as
+  code_find_references takes them.  X/Y is the identifier searched for (the extra files
+  are those that mention it).  Main thread. }
+function McpScopeFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
+  Files: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
+  out Err: string): Boolean;
+
 implementation
 
 uses
-  Classes, SysUtils, StrUtils, LCLVersion,
+  SysUtils, StrUtils, LCLVersion,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf, MacroIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   BasicCodeTools,
   Controls,
-  fpjson, jsonparser,
+  jsonparser,
   McpToolContext, McpToolHelpers, McpLineDiff;
 
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
@@ -1008,6 +1016,35 @@ begin
     Seen.Free;
     Roots.Free;
   end;
+end;
+
+function McpScopeFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
+  Files: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
+  out Err: string): Boolean;
+var
+  Ctx2    : TMcpToolCall;
+  Handled : Boolean;
+  List    : TJSONArray;
+  J       : Integer;
+  HasSelf : Boolean;
+begin
+  Result := False;
+  Used := False; Truncated := False; Searched := 0; Err := '';
+  Ctx2.Params := Params; Ctx2.Result := ''; Ctx2.Error := False; Ctx2.StopServer := nil;
+  McpDispatch('project_list_files', Ctx2, Handled);
+  if Ctx2.Error then begin Err := Ctx2.Result; Exit; end;
+  List := TJSONArray(GetJSON(Ctx2.Result));
+  try
+    for J := 0 to List.Count - 1 do
+      Files.Add(List.Strings[J]);
+  finally
+    List.Free;
+  end;
+  HasSelf := False;
+  for J := 0 to Files.Count - 1 do
+    if SameFileName(Files[J], Code.Filename) then HasSelf := True;
+  if not HasSelf then Files.Add(Code.Filename);
+  Result := AddExtraFiles(Params, Code, X, Y, Files, Used, Truncated, Searched, Err);
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }

@@ -15,6 +15,7 @@
   '- **Understand before changing:** `code_get_outline`, `code_get_unit_interface` (public API only — cheaper than reading the file), `code_find_references` on anything you rename or remove.' + LineEnding +
   '- **Renames:** `code_rename_identifier` with `dry_run` to see the references, then without it; not search-and-replace. Changed files open in editors, unsaved (Ctrl+Z works per file); confirm the new name with the user first.' + LineEnding +
   '- **Uses clauses:** `code_add_uses`, not manual edits (it handles duplicates and interface/implementation placement).' + LineEnding +
+  '- **Before changing a class or virtual method:** `code_find_descendants` and `code_find_overrides` (everything below it), `code_unit_dependencies` (who uses a unit, cycles), `code_find_unused` before deleting. They search the project or package files; pass `also`/`search_dir` for more. `code_extract_method` (`dry_run` first) extracts statements into a routine; `package_move_unit` moves a unit between packages.' + LineEnding +
   '- **Forms:** `form_get_lfm` → `form_search_palette` → `form_add_component` → `form_set_properties` → `form_arrange` → `form_get_lfm` → `editor_save` on the unit (writes `.pas` and `.lfm`).' + LineEnding +
   '  - Never edit `.lfm` text: the Form Designer owns it. Designer changes live in memory until saved.' + LineEnding +
   '  - Prefer LCL layout over pixel positions: `Align`, `Anchors` + `AnchorSide*`, `BorderSpacing.*`, a container''s `ChildSizing.*`.' + LineEnding +

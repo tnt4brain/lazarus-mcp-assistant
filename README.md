@@ -72,6 +72,12 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
 | `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
 | `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
+| `code_find_descendants` | The classes (and interface implementers) below a class or interface, the whole tree unless `direct_only`; scope as `code_find_references` ([ADR-027](docs/adr/0027-navigation-and-refactoring-tools.md)) |
+| `code_find_overrides` | The methods of the same name in the classes below the one that declares a method: override, reintroduce or plain |
+| `code_unit_dependencies` | Uses graph: of one unit (uses, used by, unneeded units) or of the whole project with its cycles |
+| `code_find_unused` | Symbols of a unit nothing refers to (a hint: widen the search before deleting public API) |
+| `code_extract_method` | Extract statements into a procedure or method, as the IDE's Extract Procedure; `dry_run` reports what is possible |
+| `package_move_unit` | Move a unit between two packages and add the requirement that makes necessary; refuses a cycle; `dry_run` shows the plan |
 | `code_add_uses` | Add a unit to the interface or implementation uses clause |
 | `code_insert_in_procedure` | Insert text right after a routine's `begin`; an overloaded name is refused with the candidates, `line` picks one |
 | `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end`; an overloaded name is refused with the candidates, `line` picks one |
@@ -414,6 +420,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
 | `TTestCodeFormat` | 7 | MCP server reachable: `code_format` on temp files (whole file, line range, parse errors, include files, trailing lines) |
 | `TTestCodeRename` | 5 | MCP server reachable: `code_rename_identifier` on two temp units (dry run, rename into unsaved editors, unsaved edits, `auto_save`, refusals) |
+| `TTestCodeNav` | 11 | MCP server reachable: descendants, overrides, unit uses, unused symbols, extract method (dry run, real, bad name), move unit (plan, cycle refusal) on small temp units |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` of a new package is refused; `ide_rebuild` refuses `lpk_path` |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
