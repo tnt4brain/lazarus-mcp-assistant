@@ -848,6 +848,7 @@ end;
   (2026-10-24). dry_run (default true) only lists them. }
 procedure DoProjectClean(var Ctx: TMcpToolCall);
 var
+  Item : string;
   Pkg        : TLazPackage;
   Err        : string;
   SrcDir     : string;
@@ -858,7 +859,6 @@ var
   Deleted    : TJSONArray;
   Failed     : TJSONArray;
   Obj        : TJSONObject;
-  I          : Integer;
   F          : string;
 begin
   DryRun := True;
@@ -897,9 +897,9 @@ begin
     Deleted    := TJSONArray.Create;
     Failed     := TJSONArray.Create;
     try
-      for I := 0 to Found.Count - 1 do
+      for Item in Found do
       begin
-        F := Found[I];
+        F := Item;
         { Inside the real output directory: that is where these belong. }
         if (OutDir <> '') and (CompareFilenames(ExtractFilePath(ExcludeTrailingPathDelimiter(F)),
              ExcludeTrailingPathDelimiter(OutDir)) = 0) then Continue;
@@ -1061,12 +1061,12 @@ end;
 
 procedure DoAnswerDialog(var Ctx: TMcpToolCall);
 var
+  Item : string;
   Wanted, ExpectCaption, DialogCaption, AvailStr, NativeErr : string;
   Modal  : TCustomForm;
   Found  : TCustomButton;
   Avail  : TStringList;
   Obj    : TJSONObject;
-  I      : Integer;
 begin
   Wanted := '';
   ExpectCaption := '';
@@ -1136,10 +1136,10 @@ begin
     if not Assigned(Found) then
     begin
       AvailStr := '';
-      for I := 0 to Avail.Count - 1 do
+      for Item in Avail do
       begin
         if AvailStr <> '' then AvailStr := AvailStr + ', ';
-        AvailStr := AvailStr + Avail[I];
+        AvailStr := AvailStr + Item;
       end;
       Ctx.Error := True;
       Ctx.Result := Format('No button "%s" on "%s". Available: %s',

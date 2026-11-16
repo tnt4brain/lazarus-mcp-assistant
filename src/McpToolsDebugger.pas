@@ -1268,9 +1268,9 @@ end;
 
 function FilterRegisters(Regs: TJSONArray; Params: TJSONObject): TJSONArray;
 var
+  En, NameEn : TJSONEnum;
   Names   : TJSONArray;
   General : Boolean;
-  I, J    : Integer;
   RName   : string;
   Keep    : Boolean;
 begin
@@ -1284,15 +1284,15 @@ begin
   if ((Names = nil) or (Names.Count = 0)) and not General then
     Exit(Regs.Clone as TJSONArray);
   Result := TJSONArray.Create;
-  for I := 0 to Regs.Count - 1 do
+  for En in Regs do
   begin
-    RName := TJSONObject(Regs[I]).Get('name', '');
+    RName := TJSONObject(En.Value).Get('name', '');
     Keep := General and IsGeneralRegister(RName);
     if Assigned(Names) then
-      for J := 0 to Names.Count - 1 do
-        if SameText(Names.Strings[J], RName) then Keep := True;
+      for NameEn in Names do
+        if SameText(NameEn.Value.AsString, RName) then Keep := True;
     if Keep then
-      Result.Add(Regs[I].Clone);
+      Result.Add(En.Value.Clone);
   end;
 end;
 

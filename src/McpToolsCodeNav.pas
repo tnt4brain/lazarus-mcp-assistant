@@ -576,13 +576,13 @@ end;
 
 procedure AddNames(Src: TStrings; Dst: TStringList);
 var
-  I : Integer;
+  Item : string;
   N : string;
 begin
   if Src = nil then Exit;
-  for I := 0 to Src.Count - 1 do
+  for Item in Src do
   begin
-    N := Src[I];
+    N := Item;
     if Pos(' ', N) > 0 then N := Copy(N, 1, Pos(' ', N) - 1);
     Dst.Add(N);
   end;
@@ -590,6 +590,8 @@ end;
 
 function DoDependencies(var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   Handled : Boolean;
   Tmp     : TMcpToolCall;
   List    : TJSONArray;
@@ -612,12 +614,12 @@ begin
   Units := TFPList.Create;
   List := TJSONArray(GetJSON(Tmp.Result));
   try
-    for I := 0 to List.Count - 1 do
+    for En in List do
     begin
-      Ext := LowerCase(ExtractFileExt(List.Strings[I]));
+      Ext := LowerCase(ExtractFileExt(En.Value.AsString));
       if (Ext <> '.pas') and (Ext <> '.pp') and (Ext <> '.lpr') then Continue;
       U := TUnitRec.Create;
-      U.FileName := List.Strings[I];
+      U.FileName := En.Value.AsString;
       U.Name := LowerCase(ExtractFileNameOnly(U.FileName));
       Units.Add(U);
     end;
@@ -690,7 +692,7 @@ begin
           if Assigned(Code) and CodeToolBoss.FindUnusedUnits(Code, Unused) then
           begin
             Arr := TJSONArray.Create;
-            for J := 0 to Unused.Count - 1 do Arr.Add(Unused[J]);
+            for Item in Unused do Arr.Add(Item);
             Obj.Add('unused_units', Arr);
           end else
             Obj.Add('unused_units_error', CodeToolBoss.ErrorMessage);
@@ -1047,6 +1049,7 @@ end;
 
 function DoExtract(var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
   Code, NewCode : TCodeBuffer;
   P1, P2 : TPoint;
   Kind   : TExtractProcType;
@@ -1148,8 +1151,8 @@ begin
       if (NewCode <> nil) and (NewCode <> Code) then Changed.Add(NewCode.Filename);
       Obj.Add('files_changed', Changed);
       if AutoSave then
-        for I := 0 to Changed.Count - 1 do
-          LazarusIDE.DoSaveEditorFile(Changed.Strings[I], []);
+        for En in Changed do
+          LazarusIDE.DoSaveEditorFile(En.Value.AsString, []);
       Obj.Add('saved', AutoSave);
       Ctx.Result := Obj.AsJSON;
     finally
@@ -1220,23 +1223,25 @@ end;
 
 function RequiresPackage(Info: TJSONData; const AName: string): Boolean;
 var
+  En : TJSONEnum;
   Reqs : TJSONArray;
-  I    : Integer;
 begin
   Result := False;
   Reqs := TJSONArray(TJSONObject(Info).Find('requires'));
   if Reqs <> nil then
-    for I := 0 to Reqs.Count - 1 do
-      if SameText(TJSONObject(Reqs[I]).Get('name', ''), AName) then Exit(True);
+    for En in Reqs do
+      if SameText(TJSONObject(En.Value).Get('name', ''), AName) then Exit(True);
 end;
 
 function DoMoveUnit(var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   FileArg, FromArg, ToArg, Res, FromName, ToName, MovedUnit, FromDir, Abs : string;
   P       : TJSONObject;
   FromInfo, ToInfo : TJSONData;
   Files   : TJSONArray;
-  I, J    : Integer;
+  I       : Integer;
   Used    : TStringList;
   FromUnits : TStringList;   { lower-case unit name = file, of the source package }
   NeedsFrom, NeedsTo : Boolean;
@@ -1268,31 +1273,31 @@ begin
       Obj := nil;
       try
         if Files <> nil then
-          for I := 0 to Files.Count - 1 do
+          for En in Files do
           begin
-            Abs := ExpandFileName(FromDir + TJSONObject(Files[I]).Get('file', ''));
-            if TJSONObject(Files[I]).Get('unit', '') <> '' then
-              FromUnits.Values[LowerCase(TJSONObject(Files[I]).Get('unit', ''))] := Abs;
+            Abs := ExpandFileName(FromDir + TJSONObject(En.Value).Get('file', ''));
+            if TJSONObject(En.Value).Get('unit', '') <> '' then
+              FromUnits.Values[LowerCase(TJSONObject(En.Value).Get('unit', ''))] := Abs;
             if SameFileName(Abs, FileArg) then
-              MovedUnit := TJSONObject(Files[I]).Get('unit', '');
+              MovedUnit := TJSONObject(En.Value).Get('unit', '');
           end;
         if MovedUnit = '' then
           Exit(Fail(Ctx, FileArg + ' is not a unit of ' + FromName));
         Files := TJSONArray(TJSONObject(ToInfo).Find('files'));
         if Files <> nil then
-          for I := 0 to Files.Count - 1 do
-            if SameText(TJSONObject(Files[I]).Get('unit', ''), MovedUnit) then
+          for En in Files do
+            if SameText(TJSONObject(En.Value).Get('unit', ''), MovedUnit) then
               Exit(Fail(Ctx, ToName + ' has a unit called ' + MovedUnit + ' already'));
 
         { what the unit needs from the units it leaves behind }
         NeedsFrom := False; NeedsTo := False;
         UsedNamesOf(FileArg, Used);
-        for I := 0 to Used.Count - 1 do
-          if (LowerCase(Used[I]) <> LowerCase(MovedUnit)) and
-             (FromUnits.Values[LowerCase(Used[I])] <> '') then
+        for Item in Used do
+          if (LowerCase(Item) <> LowerCase(MovedUnit)) and
+             (FromUnits.Values[LowerCase(Item)] <> '') then
           begin
             NeedsFrom := True;
-            Why.Add(MovedUnit + ' uses ' + Used[I] + ', which stays in ' + FromName);
+            Why.Add(MovedUnit + ' uses ' + Item + ', which stays in ' + FromName);
           end;
         { and what the units left behind need from it }
         for I := 0 to FromUnits.Count - 1 do
@@ -1300,8 +1305,8 @@ begin
           Abs := FromUnits.ValueFromIndex[I];
           if SameFileName(Abs, FileArg) then Continue;
           UsedNamesOf(Abs, Used);
-          for J := 0 to Used.Count - 1 do
-            if SameText(Used[J], MovedUnit) then
+          for Item in Used do
+            if SameText(Item, MovedUnit) then
             begin
               NeedsTo := True;
               Why.Add(ExtractFileNameOnly(Abs) + ' (stays in ' + FromName + ') uses ' + MovedUnit);

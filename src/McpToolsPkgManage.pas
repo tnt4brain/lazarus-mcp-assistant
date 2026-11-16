@@ -261,6 +261,8 @@ end;
 
 function PackageCreate(AParams: TJSONObject; out AErr: string): string;
 var
+  En : TJSONEnum;
+  Item : string;
   Name, Dir, Lpk, UnitName, Ver, Text, TypeIdent : string;
   PkgType : TLazPackageType;
   Req     : TJSONArray;
@@ -305,12 +307,12 @@ begin
     if Req = nil then
       Reqs.Add('FCL')
     else
-      for I := 0 to Req.Count - 1 do
-        Reqs.Add(Trim(Req.Strings[I]));
-    for I := 0 to Reqs.Count - 1 do
-      if not KnownToIDE(Reqs[I]) then
+      for En in Req do
+        Reqs.Add(Trim(En.Value.AsString));
+    for Item in Reqs do
+      if not KnownToIDE(Item) then
       begin
-        AErr := 'Package not found: ' + Reqs[I] + ' (neither loaded nor known to the ' +
+        AErr := 'Package not found: ' + Item + ' (neither loaded nor known to the ' +
                 'IDE''s package links)';
         Exit;
       end;

@@ -371,10 +371,10 @@ begin
         GSchemaGroups[I](GSchemaCache);
     end;
     Schema := nil;
-    for I := 0 to GSchemaCache.Count - 1 do
-      if TJSONObject(GSchemaCache[I]).Get('name', '') = ToolName then
+    for En in GSchemaCache do
+      if TJSONObject(En.Value).Get('name', '') = ToolName then
       begin
-        Schema := TJSONObject(GSchemaCache[I]).Find('inputSchema') as TJSONObject;
+        Schema := TJSONObject(En.Value).Find('inputSchema') as TJSONObject;
         Break;
       end;
     if Schema = nil then Exit;
@@ -382,11 +382,11 @@ begin
     Req   := Schema.Find('required') as TJSONArray;
     Missing := '';
     if Assigned(Req) then
-      for J := 0 to Req.Count - 1 do
-        if (Args = nil) or (Args.IndexOfName(Req.Strings[J]) < 0) then
+      for En in Req do
+        if (Args = nil) or (Args.IndexOfName(En.Value.AsString) < 0) then
         begin
           if Missing <> '' then Missing := Missing + ', ';
-          Missing := Missing + Req.Strings[J];
+          Missing := Missing + En.Value.AsString;
         end;
     Unknown := '';
     Names := TStringList.Create;
@@ -415,8 +415,8 @@ begin
         if Accepted <> '' then Accepted := Accepted + ', ';
         Accepted := Accepted + Props.Names[J];
         if Assigned(Req) then
-          for I := 0 to Req.Count - 1 do
-            if Req.Strings[I] = Props.Names[J] then
+          for En in Req do
+            if En.Value.AsString = Props.Names[J] then
               Accepted := Accepted + ' (required)';
       end;
     if Accepted = '' then Accepted := 'none';

@@ -107,13 +107,13 @@ end;
 
 function ButtonsFromArgs(AList: TJSONArray): TMsgDlgButtons;
 var
-  I   : Integer;
+  En : TJSONEnum;
   Btn : TMsgDlgBtn;
 begin
   Result := [];
   if not Assigned(AList) then Exit([mbOK]);
-  for I := 0 to AList.Count - 1 do
-    if StrToMsgDlgBtn(AList.Strings[I], Btn) then
+  for En in AList do
+    if StrToMsgDlgBtn(En.Value.AsString, Btn) then
       Include(Result, Btn);
   if Result = [] then Result := [mbOK];
 end;

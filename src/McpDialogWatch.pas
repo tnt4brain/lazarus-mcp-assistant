@@ -482,14 +482,14 @@ end;
 
 function McpDescribeDialogs(ADialogs: TJSONArray): string;
 var
-  I : Integer;
+  En : TJSONEnum;
   O : TJSONObject;
   S : string;
 begin
   Result := '';
-  for I := 0 to ADialogs.Count - 1 do
+  for En in ADialogs do
   begin
-    O := TJSONObject(ADialogs[I]);
+    O := TJSONObject(En.Value);
     S := '"' + O.Get('caption', '') + '"';
     if O.Get('text', '') <> '' then S := S + ': ' + O.Get('text', '');
     if O.Get('buttons', '') <> '' then S := S + ' [' + O.Get('buttons', '') + ']';

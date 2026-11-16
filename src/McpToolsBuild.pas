@@ -494,10 +494,10 @@ end;
 
 procedure TBuildSyncHelper.ReopenClosed;
 var
-  I : Integer;
+  Item : string;
 begin
-  for I := 0 to Closed.Count - 1 do
-    LazarusIDE.DoOpenEditorFile(Closed[I], -1, -1, [ofOnlyIfExists, ofQuiet]);
+  for Item in Closed do
+    LazarusIDE.DoOpenEditorFile(Item, -1, -1, [ofOnlyIfExists, ofQuiet]);
   Closed.Clear;
 end;
 

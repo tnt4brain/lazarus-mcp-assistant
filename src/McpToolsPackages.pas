@@ -212,6 +212,7 @@ end;
 { Search the cached catalog; main thread (install state comes from the IDE). }
 function SearchOnlineCatalog(AParams: TJSONObject; out AErr: string): string;
 var
+  En : TJSONEnum;
   FileName, Text, Hay, Category : string;
   Words     : TStringArray;
   Root      : TJSONData;
@@ -221,7 +222,7 @@ var
   F         : TJSONObject;
   Res, FArr : TJSONArray;
   Obj, FObj, PObj : TJSONObject;
-  I, J, W, Matches, MaxRes : Integer;
+  I, W, Matches, MaxRes    : Integer;
   Ok        : Boolean;
   BaseDir, Lpk, Desc : string;
   SL        : TStringList;
@@ -279,10 +280,10 @@ begin
       Hay := Data.Get('Name', '') + ' ' + Data.Get('DisplayName', '') + ' ' +
              Data.Get('Category', '') + ' ' + Data.Get('CommunityDescription', '');
       if Assigned(Files) then
-        for J := 0 to Files.Count - 1 do
-          if Files[J] is TJSONObject then
-            Hay := Hay + ' ' + TJSONObject(Files[J]).Get('Name', '') + ' ' +
-                   TJSONObject(Files[J]).Get('Description', '');
+        for En in Files do
+          if En.Value is TJSONObject then
+            Hay := Hay + ' ' + TJSONObject(En.Value).Get('Name', '') + ' ' +
+                   TJSONObject(En.Value).Get('Description', '');
       Hay := LowerCase(Hay);
       Ok := True;
       for W := 0 to High(Words) do
@@ -304,10 +305,10 @@ begin
       FObj.Add('category',  Data.Get('Category', ''));
       FArr := TJSONArray.Create;
       if Assigned(Files) then
-        for J := 0 to Files.Count - 1 do
+        for En in Files do
         begin
-          if not (Files[J] is TJSONObject) then Continue;
-          F := TJSONObject(Files[J]);
+          if not (En.Value is TJSONObject) then Continue;
+          F := TJSONObject(En.Value);
           if Desc = '' then Desc := F.Get('Description', '');
           Lpk  := F.Get('Name', '');
           PObj := TJSONObject.Create;
@@ -428,12 +429,14 @@ end;
 
 procedure TOpmDownload.Prepare;
 var
+  En : TJSONEnum;
+  Item : string;
   FileName, Text, Rel, Lpk : string;
   SL     : TStringList;
   Root   : TJSONData;
   Cat, Data, F : TJSONObject;
   Files  : TJSONArray;
-  I, J   : Integer;
+  I      : Integer;
   Pkg    : TIDEPackage;
 begin
   Err := '';
@@ -499,10 +502,10 @@ begin
     if Cat.Find('PackageFiles' + IntToStr(I)) is TJSONArray then
     begin
       Files := TJSONArray(Cat.Find('PackageFiles' + IntToStr(I)));
-      for J := 0 to Files.Count - 1 do
-        if Files[J] is TJSONObject then
+      for En in Files do
+        if En.Value is TJSONObject then
         begin
-          F := TJSONObject(Files[J]);
+          F := TJSONObject(En.Value);
           Rel := OpmPath(F.Get('RelativeFilePath', ''));
           Lpk := F.Get('Name', '');
           if ((Rel = '') or SafeRelPath(Rel)) and SafeRelPath(Lpk) then
@@ -520,9 +523,9 @@ begin
       end;
       { new sources under an installed or loaded package would reach the IDE
         at the next rebuild without consent (ADR-013) }
-      for J := 0 to Lpks.Count - 1 do
+      for Item in Lpks do
       begin
-        Pkg := PackageEditingInterface.FindPackageWithName(ExtractFileNameOnly(Lpks[J]));
+        Pkg := PackageEditingInterface.FindPackageWithName(ExtractFileNameOnly(Item));
         if Assigned(Pkg) and (Pos(LowerCase(Target), LowerCase(Pkg.Filename)) = 1) then
         begin
           Err := Pkg.Name + ' is installed or loaded from ' + Target + '; its sources ' +

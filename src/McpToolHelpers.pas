@@ -128,8 +128,8 @@ end;
 
 function McpCheckWritable(const AFileName: string; out AErr: string): Boolean;
 var
+  Item : string;
   Roots : TStringList;
-  I     : Integer;
 begin
   AErr := '';
   if not FilenameIsAbsolute(AFileName) then
@@ -145,12 +145,12 @@ begin
   Roots := TStringList.Create;
   try
     McpWritableRoots(Roots);
-    for I := 0 to Roots.Count - 1 do
-      if McpPathIsUnder(AFileName, Roots[I]) then Exit(True);
+    for Item in Roots do
+      if McpPathIsUnder(AFileName, Item) then Exit(True);
     AErr := 'Refused: ' + AFileName + ' is outside the folders files may be changed in (the project ' +
       'directory, the folder of a loaded package that is not part of Lazarus, the git working tree holding either, the temp folder):';
-    for I := 0 to Roots.Count - 1 do
-      AErr := AErr + ' ' + Roots[I];
+    for Item in Roots do
+      AErr := AErr + ' ' + Item;
   finally
     Roots.Free;
   end;
@@ -241,8 +241,8 @@ end;
   On failure: return everything so the full error context is visible. }
 function FilterLazbuildOutput(const Raw: string; IsError: Boolean): string;
 var
+  Item : string;
   Lines : TStringList;
-  I     : Integer;
   Line  : string;
 begin
   if Raw = '' then begin Result := '(no output)'; Exit; end;
@@ -251,9 +251,9 @@ begin
   try
     Lines.Text := Raw;
     Result := '';
-    for I := 0 to Lines.Count - 1 do
+    for Item in Lines do
     begin
-      Line := Lines[I];
+      Line := Item;
       if (Pos(') Error:',   Line) > 0) or
          (Pos(') Warning:', Line) > 0) or
          (Pos(') Hint:',    Line) > 0) or
@@ -281,11 +281,12 @@ end;
 function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean;
   AClean: Boolean = False): string;
 var
+  Item : string;
   Text, S : string;
   Lines   : TStringList;
   Obj, E  : TJSONObject;
   Errors  : TJSONArray;
-  I, P, Q : Integer;
+  P, Q    : Integer;
   Pos1    : string;
   Parts   : TStringList;
 begin
@@ -295,9 +296,9 @@ begin
   Lines := TStringList.Create;
   try
     Lines.Text := Text;
-    for I := 0 to Lines.Count - 1 do
+    for Item in Lines do
     begin
-      S := Lines[I];
+      S := Item;
       P := Pos(') Error: ', S);
       if P = 0 then P := Pos(') Fatal: ', S);
       if P = 0 then Continue;
@@ -604,13 +605,14 @@ end;
 function McpDoSearchInProject(const FileListJSON, Query: string;
   AReadLines: TMcpReadLines): string;
 var
+  En : TJSONEnum;
   FileList : TJSONArray;
   Results  : TJSONArray;
   Match    : TJSONObject;
   Lines    : TStringList;
   FilePath : string;
   Q        : string;
-  I, J     : Integer;
+  J        : Integer;
 begin
   if Query = '' then
     Exit('{"error":"query argument required"}');
@@ -621,9 +623,9 @@ begin
   try
     FileList := TJSONArray(GetJSON(FileListJSON));
     try
-      for I := 0 to FileList.Count - 1 do
+      for En in FileList do
       begin
-        FilePath := FileList.Strings[I];
+        FilePath := En.Value.AsString;
         try
           { an open editor's text, unsaved changes included }
           if not (Assigned(AReadLines) and AReadLines(FilePath, Lines)) then
@@ -673,6 +675,7 @@ const
     '{ todo', '{todo', '{#todo', '{ #todo', '// todo', '//todo', '(* todo',
     'fixme', '{ done', '{#done');
 var
+  En : TJSONEnum;
   FileList : TJSONArray;
   Results  : TJSONArray;
   Item     : TJSONObject;
@@ -680,16 +683,16 @@ var
   FilePath : string;
   L        : string;
   Kind     : string;
-  I, J, M  : Integer;
+  J, M     : Integer;
 begin
   Results := TJSONArray.Create;
   Lines   := TStringList.Create;
   try
     FileList := TJSONArray(GetJSON(FileListJSON));
     try
-      for I := 0 to FileList.Count - 1 do
+      for En in FileList do
       begin
-        FilePath := FileList.Strings[I];
+        FilePath := En.Value.AsString;
         if not FileExists(FilePath) then Continue;
         try
           Lines.LoadFromFile(FilePath);

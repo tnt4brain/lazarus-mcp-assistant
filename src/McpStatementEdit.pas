@@ -110,6 +110,7 @@ end;
   indentation they share removed. }
 function Prepare(const S: string): string;
 var
+  Item : string;
   SL  : TStringList;
   I, K, Common : Integer;
 begin
@@ -122,10 +123,10 @@ begin
     SL.LineBreak := #10;
     SL.Text := Result;
     Common := MaxInt;
-    for I := 0 to SL.Count - 1 do
-      if not IsBlank(SL[I]) then
+    for Item in SL do
+      if not IsBlank(Item) then
       begin
-        K := Length(IndentOf(SL[I]));
+        K := Length(IndentOf(Item));
         if K < Common then Common := K;
       end;
     if Common = MaxInt then Common := 0;

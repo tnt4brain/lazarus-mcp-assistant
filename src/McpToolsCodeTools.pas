@@ -63,15 +63,15 @@ end;
   the JSON array McpDoSearchInProject takes. }
 function DirectoryFilesJSON(const ADir, AMask: string): string;
 var
+  Item : string;
   Found : TStringList;
   Arr   : TJSONArray;
-  I     : Integer;
 begin
   Found := FindAllFiles(ADir, AMask, True);
   Arr   := TJSONArray.Create;
   try
-    for I := 0 to Found.Count - 1 do
-      Arr.Add(Found[I]);
+    for Item in Found do
+      Arr.Add(Item);
     Result := Arr.AsJSON;
   finally
     Arr.Free;
@@ -423,6 +423,7 @@ end;
   Main thread. }
 procedure DoCompleteCode(var Ctx: TMcpToolCall);
 var
+  Item : string;
   FilePath, OldSrc         : string;
   ErrText                  : string;
   Line, Col                : Integer;
@@ -515,8 +516,8 @@ begin
     if AutoSave then
     begin
       LazarusIDE.DoSaveEditorFile(FilePath, []);
-      for I := 0 to OtherFiles.Count - 1 do
-        LazarusIDE.DoSaveEditorFile(OtherFiles[I], []);
+      for Item in OtherFiles do
+        LazarusIDE.DoSaveEditorFile(Item, []);
     end;
     Obj := TJSONObject.Create;
     try
@@ -526,7 +527,7 @@ begin
       if OtherFiles.Count > 0 then
       begin
         Others := TJSONArray.Create;
-        for I := 0 to OtherFiles.Count - 1 do Others.Add(OtherFiles[I]);
+        for Item in OtherFiles do Others.Add(Item);
         Obj.Add('other_files_changed', Others);
       end;
       if Assigned(NewCode) and (NewY > 0) then
@@ -557,6 +558,7 @@ end;
   Main thread. }
 procedure DoRenameIdentifier(var Ctx: TMcpToolCall);
 var
+  En : TJSONEnum;
   FilePath, NewName, Ident : string;
   Refused                  : string;
   Line, Col, I             : Integer;
@@ -651,8 +653,8 @@ begin
   RefTree    := nil;
   Obj        := TJSONObject.Create;
   try
-    for I := 0 to FileListJ.Count - 1 do
-      FileNames.Add(FileListJ.Strings[I]);
+    for En in FileListJ do
+      FileNames.Add(En.Value.AsString);
     { as the IDE does: the declaring file and the one asked about, either
       of them may be outside the project }
     if FileNames.IndexOf(DeclCode.Filename) < 0 then
@@ -787,6 +789,7 @@ end;
 { Text indented as the members it joins, unless the caller indented it already. }
 function IndentMembers(const AText, AIndent: string): string;
 var
+  Item : string;
   Lines : TStringList;
   I     : Integer;
   Done  : Boolean;
@@ -795,10 +798,10 @@ begin
   try
     Lines.Text := AText;
     Done := False;
-    for I := 0 to Lines.Count - 1 do
-      if Trim(Lines[I]) <> '' then
+    for Item in Lines do
+      if Trim(Item) <> '' then
       begin
-        Done := (Lines[I][1] in [' ', #9]);   { already indented: leave it }
+        Done := (Item[1] in [' ', #9]);   { already indented: leave it }
         Break;
       end;
     if not Done then
@@ -971,6 +974,8 @@ function AddExtraFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
   FileNames: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
   out Err: string): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   Also      : TJSONArray;
   Roots     : TStringList;   { folder, '1' = recursive in Objects }
   Found     : TStringList;
@@ -991,20 +996,20 @@ begin
   Seen := TStringList.Create;
   try
     if Assigned(Also) then
-      for I := 0 to Also.Count - 1 do
+      for En in Also do
       begin
         Used := True;
-        if Also.Strings[I] = 'packages' then
+        if En.Value.AsString = 'packages' then
         begin
           for J := 0 to PackageEditingInterface.GetPackageCount - 1 do
             if PackageEditingInterface.GetPackages(J).DirectoryExpanded <> '' then
               Roots.AddObject(PackageEditingInterface.GetPackages(J).DirectoryExpanded, TObject(PtrUInt(1)));
           Continue;
         end;
-        Root := ExtraSourceRoot(Also.Strings[I], Code, Recursive);
+        Root := ExtraSourceRoot(En.Value.AsString, Code, Recursive);
         if Root = '' then
         begin
-          Err := 'Unknown "also" scope ' + Also.Strings[I] +
+          Err := 'Unknown "also" scope ' + En.Value.AsString +
                  ' (same_folder, lcl, components, rtl, fcl, packages)';
           Exit(False);
         end;
@@ -1030,24 +1035,24 @@ begin
     MaxFiles := Params.Get('max_files', DefaultMaxFiles);
     Seen.Sorted := True;
     Seen.CaseSensitive := False;
-    for I := 0 to FileNames.Count - 1 do
-      Seen.Add(FileNames[I]);
+    for Item in FileNames do
+      Seen.Add(Item);
     for I := 0 to Roots.Count - 1 do
     begin
       if not DirectoryExists(Roots[I]) then Continue;
       Found := FindAllFiles(Roots[I], '*.pas;*.pp;*.lpr', PtrUInt(Roots.Objects[I]) <> 0);
       try
-        for J := 0 to Found.Count - 1 do
+        for Item in Found do
         begin
-          if Seen.IndexOf(Found[J]) >= 0 then Continue;
-          if not FileHasWord(Found[J], Ident) then Continue;
+          if Seen.IndexOf(Item) >= 0 then Continue;
+          if not FileHasWord(Item, Ident) then Continue;
           if Searched >= MaxFiles then
           begin
             Truncated := True;
             Break;
           end;
-          Seen.Add(Found[J]);
-          FileNames.Add(Found[J]);
+          Seen.Add(Item);
+          FileNames.Add(Item);
           Inc(Searched);
         end;
       finally
@@ -1065,10 +1070,11 @@ function McpScopeFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
   Files: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
   out Err: string): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   Ctx2    : TMcpToolCall;
   Handled : Boolean;
   List    : TJSONArray;
-  J       : Integer;
   HasSelf : Boolean;
 begin
   Result := False;
@@ -1078,14 +1084,14 @@ begin
   if Ctx2.Error then begin Err := Ctx2.Result; Exit; end;
   List := TJSONArray(GetJSON(Ctx2.Result));
   try
-    for J := 0 to List.Count - 1 do
-      Files.Add(List.Strings[J]);
+    for En in List do
+      Files.Add(En.Value.AsString);
   finally
     List.Free;
   end;
   HasSelf := False;
-  for J := 0 to Files.Count - 1 do
-    if SameFileName(Files[J], Code.Filename) then HasSelf := True;
+  for Item in Files do
+    if SameFileName(Item, Code.Filename) then HasSelf := True;
   if not HasSelf then Files.Add(Code.Filename);
   Result := AddExtraFiles(Params, Code, X, Y, Files, Used, Truncated, Searched, Err);
 end;
@@ -1318,6 +1324,8 @@ end;
 
 function DoDispatchCodeTools(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   Root       : TStmtNode;
   MaxDepth   : Integer;
   FilePath   : string;
@@ -1576,12 +1584,12 @@ begin
       FileNames := TStringList.Create;
       RefTree   := nil;
       try
-        for J := 0 to FileListJ.Count - 1 do
-          FileNames.Add(FileListJ.Strings[J]);
+        for En in FileListJ do
+          FileNames.Add(En.Value.AsString);
         { a file outside the project (or package) is still searched: its own references }
         FoundSelf := False;
-        for J := 0 to FileNames.Count - 1 do
-          if SameFileName(FileNames[J], CodeBuf.Filename) then FoundSelf := True;
+        for Item in FileNames do
+          if SameFileName(Item, CodeBuf.Filename) then FoundSelf := True;
         if not FoundSelf then FileNames.Add(CodeBuf.Filename);
         if not AddExtraFiles(Ctx.Params, CodeBuf, NewX, NewY, FileNames, ExtraUsed,
              ExtraTrunc, ExtraCount, ExtraErr) then

@@ -336,8 +336,9 @@ end;
 
 function IsSeparatorRow(const ALine: string): Boolean;
 var
+  Item : string;
   Cells : TStringList;
-  I, J : Integer;
+  J    : Integer;
   C : string;
 begin
   Result := False;
@@ -345,9 +346,9 @@ begin
   Cells := TStringList.Create;
   try
     SplitRow(ALine, Cells);
-    for I := 0 to Cells.Count - 1 do
+    for Item in Cells do
     begin
-      C := Cells[I];
+      C := Item;
       if C = '' then Exit;
       if C[1] = ':' then Delete(C, 1, 1);
       if (C <> '') and (C[Length(C)] = ':') then Delete(C, Length(C), 1);
@@ -1011,28 +1012,29 @@ end;
   of more than one level counts as one, so every list sits inside an item. }
 function TMarkdownHtml.TocHtml: string;
 var
+  Head : string;
   B : TStringBuilder;
-  I, Lv, Base, D, T, P, Q : Integer;
+  Lv, Base, D, T, P, Q    : Integer;
   Item, Id : string;
 begin
   Result := '';
   if FHeads.Count = 0 then Exit;
   Base := 6;
-  for I := 0 to FHeads.Count - 1 do
+  for Head in FHeads do
   begin
-    Lv := StrToIntDef(Copy(FHeads[I], 1, Pos(#2, FHeads[I]) - 1), 1);
+    Lv := StrToIntDef(Copy(Head, 1, Pos(#2, Head) - 1), 1);
     if Lv < Base then Base := Lv;
   end;
   B := TStringBuilder.Create;
   try
     D := 0;
-    for I := 0 to FHeads.Count - 1 do
+    for Head in FHeads do
     begin
-      P := Pos(#2, FHeads[I]);
-      Lv := StrToIntDef(Copy(FHeads[I], 1, P - 1), 1);
-      Q := PosEx(#2, FHeads[I], P + 1);
-      Id := Copy(FHeads[I], P + 1, Q - P - 1);
-      Item := '<a href="#' + MdEscape(Id) + '">' + StripLinks(Copy(FHeads[I], Q + 1, MaxInt)) + '</a>';
+      P := Pos(#2, Head);
+      Lv := StrToIntDef(Copy(Head, 1, P - 1), 1);
+      Q := PosEx(#2, Head, P + 1);
+      Id := Copy(Head, P + 1, Q - P - 1);
+      Item := '<a href="#' + MdEscape(Id) + '">' + StripLinks(Copy(Head, Q + 1, MaxInt)) + '</a>';
       T := Lv - Base + 1;
       if T > D + 1 then T := D + 1;
       if D = T then
@@ -1604,8 +1606,8 @@ end;
 
 function TMarkdownHtml.CodeBlockHtml(ALines: TStrings): string;
 var
+  Item : string;
   B : TStringBuilder;
-  I : Integer;
   L : string;
 begin
   B := TStringBuilder.Create;
@@ -1613,9 +1615,9 @@ begin
     { the frame's colour comes from the table.md rule of the style block }
     B.Append('<table class="md" width="100%" border="1" cellpadding="12" cellspacing="0">' +
              '<tr><td bgcolor="' + MD_SHADE + '">');
-    for I := 0 to ALines.Count - 1 do
+    for Item in ALines do
     begin
-      L := StringReplace(MdEscape(ALines[I]), ' ', '&nbsp;', [rfReplaceAll]);
+      L := StringReplace(MdEscape(Item), ' ', '&nbsp;', [rfReplaceAll]);
       if L = '' then L := '&nbsp;';
       B.Append('<tt>').Append(L).Append('</tt><br>');
     end;
@@ -1868,6 +1870,7 @@ end;
 
 function TMarkdownHtml.Blocks(ALines: TStrings; ATight: Boolean): string;
 var
+  Item : string;
   B : TStringBuilder;
   I, J, Lv, Len, SetextLv : Integer;
   L, T, Para, HText, HId : string;
@@ -1879,8 +1882,8 @@ begin
   try
     if FDepth >= MD_MAX_DEPTH then
     begin
-      for I := 0 to ALines.Count - 1 do
-        if not IsBlank(ALines[I]) then B.Append(MdEscape(Trim(ALines[I]))).Append('<br>');
+      for Item in ALines do
+        if not IsBlank(Item) then B.Append(MdEscape(Trim(Item))).Append('<br>');
       Exit(B.ToString);
     end;
     PrevPara := False;

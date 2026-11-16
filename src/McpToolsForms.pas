@@ -623,16 +623,16 @@ end;
 function FilterMatch(AFilter: TStringList; const AName: string;
   out AReport: Boolean): Boolean;
 var
-  I : Integer;
+  Item : string;
   F : string;
 begin
   AReport := True;
   if (AFilter = nil) or (AFilter.Count = 0) then Exit(True);
   AReport := False;
   Result  := False;
-  for I := 0 to AFilter.Count - 1 do
+  for Item in AFilter do
   begin
-    F := AFilter[I];
+    F := Item;
     if SameText(AName, F) or SameText(Copy(AName, 1, Length(F) + 1), F + '.') then
     begin
       AReport := True;
@@ -1890,6 +1890,7 @@ end;
 
 function DispatchFormsToolInner(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
   Designer     : TIDesigner;
   Root, Comp   : TComponent;
   Err          : string;
@@ -2029,8 +2030,8 @@ begin
         try
           NamesArr := Ctx.Params.Get('names', TJSONArray(nil));
           if Assigned(NamesArr) then
-            for I := 0 to NamesArr.Count - 1 do
-              Filter.Add(NamesArr.Strings[I]);
+            for En in NamesArr do
+              Filter.Add(En.Value.AsString);
           if Ctx.Params.Get('include_events', False) or (Filter.Count > 0) then
             Kinds := tkAny
           else
@@ -2094,8 +2095,8 @@ begin
             Group := NewUndoGroup(Designer);
             Failed := ApplyProperties(Designer, Comp, Props, Arr, @Group);
             Ok := True;
-            for I := 0 to Arr.Count - 1 do
-              Ok := Ok and TJSONObject(Arr[I]).Get('undoable', True);
+            for En in Arr do
+              Ok := Ok and TJSONObject(En.Value).Get('undoable', True);
             Obj.Add('undoable', Ok);
           end;
           Obj.Add('results', Arr);
