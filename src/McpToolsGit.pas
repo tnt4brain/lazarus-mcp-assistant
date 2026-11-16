@@ -77,6 +77,12 @@ const
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
+  SCHEMA_GIT_BRANCH_DELETE =
+    '{"type":"object","properties":{' +
+    '"branch":{"type":"string","description":"Name of the local branch to delete"},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
+    '"required":["branch"]}';
+
   SCHEMA_GIT_STASH =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Optional stash description"},' +
@@ -979,6 +985,32 @@ begin
     end;
   end
 
+  else if Name = 'git_branch_delete' then
+  begin
+    Result  := True;
+    WorkDir := GetGitWorkDir(Ctx);
+    Target  := '';
+    if Assigned(Ctx.Params) then Target := Trim(Ctx.Params.Get('branch', ''));
+    if (Target = '') or (Target[1] = '-') or (Pos(' ', Target) > 0) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := 'branch required: the name of a local branch (no spaces, not starting with -)';
+      Exit;
+    end;
+    { -d, never -D: git itself refuses a branch with commits no other branch has,
+      and the branch that is checked out }
+    Ok := RunGit(['branch', '-d', Target], WorkDir, Output);
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('output',   Output);
+      Obj.Add('work_dir', WorkDir);
+      if not Ok then Ctx.Error := True;
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  end
+
   else if Name = 'git_stash' then
   begin
     Result  := True;
@@ -1167,6 +1199,11 @@ begin
   Tools.Add(MakeTool('git_branches',
     'List all local and remote branches. The current branch is prefixed with *.',
     SCHEMA_GIT_BRANCHES, MCP_ANN_RO));
+  Tools.Add(MakeTool('git_branch_delete',
+    'Delete a local branch that is fully merged (git branch -d). Git refuses the checked-out ' +
+    'branch and one whose commits no other branch has; there is no force option. Remote ' +
+    'branches are not touched.',
+    SCHEMA_GIT_BRANCH_DELETE, MCP_ANN_DEST));
   Tools.Add(MakeTool('git_stash',
     'Stash uncommitted changes (staged and unstaged) with an optional message, all of ' +
     'them or only those of the given paths. ' +

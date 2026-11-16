@@ -34,6 +34,7 @@ type
     procedure TestStashAndPop;
     procedure TestStashPaths;
     procedure TestCommitAmend;
+    procedure TestBranchDelete;
     procedure TestLog;
     procedure TestInitCreatesRepository;
     procedure TestInitKeepsExistingGitignore;
@@ -270,6 +271,33 @@ begin
   T := Tool('git_commit', '"amend":true,"message":"nope"');
   CheckTrue(IsError(T) and (Pos('remote branch', T) > 0), 'refused: ' + T);
   CheckEquals('two, reworded', Trim(Git(['log', '-1', '--format=%s'])), 'history untouched');
+end;
+
+procedure TTestGitWrite.TestBranchDelete;
+var
+  T, Main : string;
+begin
+  Main := Trim(Git(['rev-parse', '--abbrev-ref', 'HEAD']));
+  { merged: gone }
+  Git(['branch', 'done']);
+  T := Tool('git_branch_delete', '"branch":"done"');
+  CheckFalse(IsError(T), T);
+  CheckEquals('', Trim(Git(['branch', '--list', 'done'])), 'the merged branch is deleted');
+  { not merged: kept, and no force option }
+  Git(['checkout', '-q', '-b', 'work']);
+  WriteA('work');
+  Git(['commit', '-q', '-am', 'only on work']);
+  Git(['checkout', '-q', Main]);
+  T := Tool('git_branch_delete', '"branch":"work"');
+  CheckTrue(IsError(T), 'refused: ' + T);
+  CheckTrue(Trim(Git(['branch', '--list', 'work'])) <> '', 'the unmerged branch stays');
+  { the checked-out branch stays too }
+  T := Tool('git_branch_delete', '"branch":' + JsonStr(Main));
+  CheckTrue(IsError(T), 'current branch refused: ' + T);
+  { a name that is an option is no name }
+  T := Tool('git_branch_delete', '"branch":"-D"');
+  CheckTrue(IsError(T), 'option refused: ' + T);
+  CheckTrue(Trim(Git(['branch', '--list', 'work'])) <> '', 'still there');
 end;
 
 procedure TTestGitWrite.TestLog;
