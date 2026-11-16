@@ -15,8 +15,8 @@ interface
 uses
   fpjson;
 
-{ The Messages window's last compile as {errors, warnings} arrays of
-  {file, line, column, message}; warnings are capped. }
+{ The Messages window's last compile as an errors and a warnings array of
+  objects (file, line, column, message); warnings are capped. }
 procedure McpCompilerMessages(AErrors, AWarnings: TJSONArray);
 
 { The IDE-side compile of package_compile as its JSON answer (success, errors and so on; or use_lazbuild when the package is not loaded); AErr is set when it cannot be
@@ -27,7 +27,7 @@ implementation
 
 uses
   Classes, SysUtils,
-  LazIDEIntf, PackageIntf, MacroIntf, IDEMsgIntf, IDEExternToolIntf, SrcEditorIntf,
+  LazIDEIntf, PackageIntf, MacroIntf, IDEExternToolIntf, SrcEditorIntf,
   LazFileUtils, FileUtil, Controls, Forms,
   PackageDependencyIntf, PackageDefs, PackageSystem, PackageLinks,
   McpToolContext, McpToolsPackages, McpMessages;
@@ -36,6 +36,7 @@ const
   MAX_WARNINGS = 50;
   MAX_LIST     = 200;
 
+  { no oneOf in the schema, see PKG_TARGET_PROPS in McpToolsPackages }
   PKG_TARGET =
     '"package_name":{"type":"string","description":"A package loaded in the IDE"},' +
     '"lpk_path":{"type":"string","description":"Or the .lpk file, loaded for this call ' +
@@ -54,10 +55,9 @@ const
       'Lazarus (default false: only others, e.g. yours and downloaded ones)"}}}';
 
   SCHEMA_OPEN =
-    '{"type":"object","properties":{' +
-    '"lpk_path":{"type":"string","description":"Absolute path of the .lpk"},' +
+    '{"type":"object","properties":{' + PKG_TARGET + ',' +
     '"editor":{"type":"boolean","description":"Also open its package editor window ' +
-      '(default false)"}},"required":["lpk_path"]}';
+      '(default false)"}}}';
 
   SCHEMA_CREATE =
     '{"type":"object","properties":{' +
@@ -503,7 +503,7 @@ end;
 { ── package_compile, IDE side ────────────────────────────────────────────── }
 
 { The IDE's own compile of a loaded package.  A package that is not loaded
-  gives {"use_lazbuild":true}: the caller then compiles the .lpk with
+  gives use_lazbuild=true: the caller then compiles the .lpk with
   lazbuild, which loads nothing into the IDE.  Editor files with unsaved
   changes are not saved (the IDE would write the user's buffers), so they are
   compiled as on disk and listed. }
@@ -624,7 +624,10 @@ begin
   else if Name = 'package_list' then
     Ctx.Result := PackageList(Ctx.Params)
   else if Name = 'package_open' then
-    Ctx.Result := PackageOpen(Ctx.Params, Err)
+  begin
+    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+    else Ctx.Result := PackageOpen(Ctx.Params, Err);
+  end
   else if Name = 'package_create' then
     Ctx.Result := PackageCreate(Ctx.Params, Err)
   else if Name = 'package_get_settings' then

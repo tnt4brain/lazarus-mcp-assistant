@@ -27,7 +27,6 @@ uses
   Classes, SysUtils, Math, Forms, Controls, LazLogger,
   LazIDEIntf, LazFileUtils, SrcEditorIntf, ProjectIntf, CompOptsIntf,
   BaseDebugManager,
-  LazDebuggerIntfBaseTypes,  { TDBGState }
   LazDebuggerIntf,           { TDebuggerDataState (ddsValid, ddsRequested, …) }
   DbgIntfDebuggerBase,       { TDBGType, TDBGEvaluateResultCallback }
   Debugger,                  { TIDEBreakPoint, TIDEBreakPoints }
@@ -35,6 +34,7 @@ uses
   IdeDebuggerWatchResult,    { TWatchResultData }
   IdeDebuggerWatchValueIntf, { DefaultWatchDisplayFormat }
   IdeDebuggerWatchResPrinter,{ TWatchResultPrinter }
+  LazDebuggerIntfBaseTypes,  { TDBGState; last, so that it wins over the deprecated copies above }
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
   TypInfo,
   fpjson,
@@ -2501,7 +2501,7 @@ const
 
   SCHEMA_TIMEOUT_ONLY =
     '{"type":"object","properties":{' +
-    '"timeout_s":{"type":"integer","description":"Default 10 (step out: 30)"}}}';
+    '"timeout_s":{"type":"integer","description":"Seconds to wait for the program to pause; default 10 (step out: 30)"}}}';
 
   SCHEMA_ATTACH =
     '{"type":"object","properties":{' +
@@ -2523,7 +2523,7 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path"},' +
     '"line":{"type":"integer","description":"1-based line number to run to"},' +
-    '"timeout_s":{"type":"integer","description":"Default 30"}},' +
+    '"timeout_s":{"type":"integer","description":"Seconds to wait for the program to reach the line; default 30"}},' +
     '"required":["file","line"]}';
 
   THREAD_FRAME_PROPS =
@@ -2546,7 +2546,7 @@ const
 
   SCHEMA_GET_CALL_STACK =
     '{"type":"object","properties":{' +
-    '"max_frames":{"type":"integer","description":"Maximum frames to return; default 20"}}}';
+    '"max_frames":{"type":"integer","description":"Most frames to return, 1 or more (default 20)"}}}';
 
   SCHEMA_GET_LOCAL_VARIABLES =
     '{"type":"object","properties":{' +
@@ -2711,7 +2711,8 @@ begin
     'debugger''s own output/messages in the current or last debug session.',
     SCHEMA_GET_OUTPUT, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_get_exception',
-    'Return information about the current exception when the debugger is paused ' +
+    'Return information about the current exception of the program being debugged when ' +
+    'the debugger is paused ' +
     'at an exception. Returns has_exception=false if not paused at an exception. ' +
     'Uses FPC RTL ExceptObject to read class name and message.',
     SCHEMA_EXCEPTION_INFO, MCP_ANN_RO));

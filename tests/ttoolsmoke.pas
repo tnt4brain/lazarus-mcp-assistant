@@ -34,10 +34,12 @@ type
     procedure TestEditorReplaceRange;
     procedure TestEditorFileDeletedAndCreatedAgain;
     procedure TestProjectGetSettings;
+    procedure TestProjectSwitchesRefused;
     procedure TestProjectOpenAlreadyOpen;
     procedure TestPackageGetInfo;
     procedure TestPackageFindUnit;
     procedure TestPackageUninstallUnknown;
+    procedure TestShowMarkdownFile;
     procedure TestArgsValidated;
     procedure TestCodeToolsKeepDiskUntouched;
     procedure TestAddUnknownPackageRefused;
@@ -576,6 +578,48 @@ begin
     Ignore('no project open: ' + T);
   CheckNoError(Self, 'project_get_settings', T);
   CheckTrue(Pos('"project_file"', T) > 0, 'settings name the project: ' + T);
+  { the debug-run switches are reported, as booleans and a level }
+  CheckTrue(Pos('"heaptrc":', T) > 0, 'heaptrc is reported: ' + T);
+  CheckTrue(Pos('"range_checks":', T) > 0, 'range_checks is reported: ' + T);
+  CheckTrue(Pos('"optimization":', T) > 0, 'optimization is reported: ' + T);
+  CheckTrue(Pos('"build_mode":', T) > 0, 'the active build mode is reported: ' + T);
+  CheckTrue(Pos('"build_modes":[', T) > 0, 'the build modes are listed: ' + T);
+  CheckTrue(Pos('"mode_options":[{"name":', T) > 0, 'each mode with its options: ' + T);
+  CheckTrue(Pos('"active":true', T) > 0, 'the active mode is marked: ' + T);
+  CheckTrue(Pos('"icon_bytes":', T) > 0, 'the icon is reported: ' + T);
+  CheckTrue(Pos('"use_manifest":', T) > 0, 'use_manifest is reported: ' + T);
+end;
+
+procedure TTestToolSmoke.TestProjectSwitchesRefused;
+{ A wrong switch value is refused before anything changes (the project is not touched). }
+var
+  Before, T : string;
+begin
+  Before := Call('project_get_settings', '{}');
+  if Pos('TOOL ERROR', Before) = 1 then
+    Ignore('no project open: ' + Before);
+  T := Call('project_set_settings', '{"heaptrc":"yes","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a string is not a boolean: ' + T);
+  CheckTrue(Pos('heaptrc', T) > 0, 'the message names the parameter: ' + T);
+  T := Call('project_set_settings', '{"optimization":7,"output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'optimization 7 is refused: ' + T);
+  CheckTrue(Pos('optimization', T) > 0, 'the message names the parameter: ' + T);
+  T := Call('project_set_settings', '{"optimization":1.5}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a fraction is refused: ' + T);
+  T := Call('project_set_settings', '{"build_mode":"NoSuchMode","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'an unknown build mode is refused: ' + T);
+  CheckTrue(Pos('one of:', T) > 0, 'the refusal lists the known modes: ' + T);
+  T := Call('project_set_settings', '{"icon":"no/such/icon.ico","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a missing icon file is refused: ' + T);
+  CheckTrue(Pos('not found', T) > 0, T);
+  { a file that exists but is not an .ico (the options file of the plugin) }
+  T := Call('project_set_settings', '{"icon":"' + StringReplace(GOptionsFile, '\', '/', [rfReplaceAll]) +
+    '","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a file that is no icon is refused: ' + T);
+  CheckTrue(Pos('not a Windows .ico', T) > 0, T);
+  T := Call('project_set_settings', '{"use_manifest":"yes"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'use_manifest must be a boolean: ' + T);
+  CheckEquals(Before, Call('project_get_settings', '{}'), 'nothing changed');
 end;
 
 procedure TTestToolSmoke.TestProjectOpenAlreadyOpen;
@@ -629,6 +673,40 @@ begin
   CheckTrue(Pos('"packages":[]', T) > 0, 'unknown unit: no packages: ' + T);
 end;
 
+{ ide_show_markdown with file: either-or with markdown, a tab per file that follows it.
+  The argument rules need no window; showing a tab does, so it only runs with
+  MCP_DEBUG_TESTS like the other window tests. }
+procedure TTestToolSmoke.TestShowMarkdownFile;
+var
+  T, T2, F : string;
+  SL : TStringList;
+begin
+  T := Call('ide_show_markdown', '{}');
+  CheckTrue(Pos('is required', T) > 0, 'neither: ' + T);
+  F := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpshowmd.md';
+  T := Call('ide_show_markdown', '{"markdown":"# x","file":' + JsonStr(F) + '}');
+  CheckTrue(Pos('not both', T) > 0, 'both: ' + T);
+  T := Call('ide_show_markdown', '{"file":' + JsonStr(F + '.nothere') + '}');
+  CheckTrue(Pos('no such file', T) > 0, 'missing file: ' + T);
+  if GetEnvironmentVariable('MCP_DEBUG_TESTS') = '' then Exit;
+  SL := TStringList.Create;
+  try
+    SL.Text := '# Shown from a file' + LineEnding;
+    SL.SaveToFile(F);
+  finally
+    SL.Free;
+  end;
+  try
+    T := Call('ide_show_markdown', '{"file":' + JsonStr(F) + '}');
+    CheckTrue(Pos('"follows_file":true', T) > 0, 'shown: ' + T);
+    T2 := Call('ide_show_markdown', '{"file":' + JsonStr(F) + '}');
+    CheckEquals(Copy(T, Pos('"tab":', T), 12), Copy(T2, Pos('"tab":', T2), 12),
+      'the same file reuses its tab');
+  finally
+    DeleteFile(F);
+  end;
+end;
+
 { package_uninstall runs on ide_rebuild's path now: an unknown package is
   refused there, before anything is stopped or rebuilt }
 procedure TTestToolSmoke.TestPackageUninstallUnknown;
@@ -638,7 +716,7 @@ begin
   T := Call('package_uninstall', '{"package_name":"NoSuchPackageXyz"}');
   CheckTrue(Pos('Package not found: NoSuchPackageXyz', T) > 0, 'refused: ' + T);
   T := Call('package_uninstall', '{}');
-  CheckTrue(Pos('Missing required parameter(s): package_name', T) > 0, 'no name: ' + T);
+  CheckTrue(Pos('package_name or lpk_path required', T) > 0, 'no name: ' + T);
   CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
     'the IDE is still up');
 end;
@@ -713,6 +791,14 @@ begin
   T := Call('editor_replace_range', '{"file":"x.pas","text":"y"}');
   CheckTrue(Pos('Unknown parameter(s): text', T) > 0, 'unknown: ' + T);
   CheckTrue(Pos('Accepted by editor_replace_range', T) > 0, 'accepted listed: ' + T);
+  CheckTrue(Pos('did you mean new_text', T) > 0, 'a near name is suggested: ' + T);
+  T := Call('editor_open', '{"form_file":"x.pas"}');
+  CheckTrue(Pos('did you mean file', T) > 0, 'one name inside the other: ' + T);
+  T := Call('git_log', '{"max_cnt":3}');
+  CheckTrue(Pos('did you mean max_count', T) > 0, 'a typo is suggested: ' + T);
+  T := Call('git_log', '{"zzzzzz":3}');
+  CheckTrue((Pos('Unknown parameter(s): zzzzzz.', T) > 0) and (Pos('did you mean', T) = 0),
+    'nothing near, no guess: ' + T);
 end;
 
 procedure TTestToolSmoke.TestProjectListPackages;

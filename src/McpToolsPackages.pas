@@ -25,6 +25,9 @@ function TargetPackage(AParams: TJSONObject; out APkg: TLazPackage;
   tells which. }
 function EditResult(APkg: TLazPackage; AWasModified: Boolean; AObj: TJSONObject): string;
 
+{ package_save: the named package or every modified one; AErr = '' on success. }
+function PackageSave(AParams: TJSONObject; out AErr: string): string;
+
 { package_add_file: AParams carries file plus package_name or lpk_path.  AErr =
   '' on success; the result is the JSON. }
 function PackageAddFile(AParams: TJSONObject; out AErr: string): string;
@@ -37,7 +40,7 @@ function PackageInfoJSON(const PkgName: string; WithFiles: Boolean;
 implementation
 
 uses
-  Classes, Contnrs,
+  Classes,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf,
   LazFileUtils, FileUtil,
   PackageDependencyIntf,
@@ -64,6 +67,11 @@ const
     '"description":"Unit name, e.g. SynEdit or fpjson"}},"required":["unit_name"]}';
 
   { package_add_file etc.: the package, by name or by .lpk file }
+  { "one of package_name / lpk_path" is NOT written as oneOf/anyOf in the schema: the
+    Anthropic API rejects those at the top level of a tool's input_schema (HTTP 400, and
+    Claude Code passes MCP schemas on unchanged, so one such tool breaks the session).
+    The rule is in the descriptions ("Or ...") and enforced per call: neither given =
+    "package_name or lpk_path required", two that name different packages = refused. }
   PKG_TARGET_PROPS =
     '"package_name":{"type":"string","description":"A package loaded in the IDE"},' +
     '"lpk_path":{"type":"string","description":"Or the .lpk file, loaded for this call ' +
@@ -81,6 +89,12 @@ const
     '"max_version":{"type":"string","description":"Highest accepted version, same format as min_version"}},' +
     '"required":["required_package"]}';
 
+  SCHEMA_PKG_SAVE =
+    '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
+    '"save_all":{"type":"boolean","description":"Save every modified package, not only the ' +
+    'named one (the IDE writes them all at once); without a package_name or lpk_path this ' +
+    'is always so (default false)"}}}';
+
   SCHEMA_PKG_SET_INFO =
     '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
     '"version":{"type":"string","description":"major.minor[.release[.build]], e.g. 1.0"},' +
@@ -93,25 +107,30 @@ const
     '"required_package":{"type":"string","description":"Name of the required package to remove"}},' +
     '"required":["required_package"]}';
 
+  { one of package_name / lpk_path, as in every tool that addresses a package }
   SCHEMA_ADD_PACKAGE_TO_PROJECT =
-    '{"type":"object","properties":{"package_name":{"type":"string",' +
-    '"description":"Package name to add as a dependency (e.g. LazUtils)"}},' +
-    '"required":["package_name"]}';
+    '{"type":"object","properties":{' +
+    '"package_name":{"type":"string","description":"The package to add as a dependency ' +
+      '(e.g. LazUtils): loaded in the IDE or known to its package links"},' +
+    '"lpk_path":{"type":"string","description":"Or the .lpk file, loaded for this call ' +
+      'without a package editor"}}}';
 
   SCHEMA_REMOVE_PACKAGE_FROM_PROJECT =
-    '{"type":"object","properties":{"package_name":{"type":"string",' +
-    '"description":"Package name to remove from project dependencies"}},' +
-    '"required":["package_name"]}';
+    '{"type":"object","properties":{' +
+    '"package_name":{"type":"string","description":"The dependency to remove"},' +
+    '"lpk_path":{"type":"string","description":"Or the .lpk file of that package"}}}';
 
   SCHEMA_INSTALL_PACKAGE =
-    '{"type":"object","properties":{"lpk_path":{"type":"string",' +
-    '"description":"Absolute path to the .lpk package file to install into the IDE"},' + MCP_REBUILD_FLAGS + '},' +
-    '"required":["lpk_path"]}';
+    '{"type":"object","properties":{' +
+    '"lpk_path":{"type":"string","description":"The .lpk file to install into the IDE"},' +
+    '"package_name":{"type":"string","description":"Or a package the IDE knows (loaded, ' +
+      'or in its package links), installed from its .lpk"},' + MCP_REBUILD_FLAGS + '}}';
 
   SCHEMA_UNINSTALL_PACKAGE =
-    '{"type":"object","properties":{"package_name":{"type":"string",' +
-    '"description":"Package name to uninstall from the IDE"},' + MCP_REBUILD_FLAGS + '},' +
-    '"required":["package_name"]}';
+    '{"type":"object","properties":{' +
+    '"package_name":{"type":"string","description":"The installed package to remove"},' +
+    '"lpk_path":{"type":"string","description":"Or its .lpk file"},' +
+    MCP_REBUILD_FLAGS + '}}';
 
   SCHEMA_SEARCH_ONLINE =
     '{"type":"object","properties":{' +
@@ -119,7 +138,7 @@ const
       'description, category or .lpk names/descriptions, e.g. \"chart\", \"rich memo\", \"zip\". Empty lists everything."},' +
     '"category":{"type":"string","description":"Only packages whose category contains this text, e.g. Graphics, ' +
       'Networking, DataControls, LazIDEPlugins"},' +
-    '"max_results":{"type":"integer","description":"Default 20"}}}';
+    '"max_results":{"type":"integer","description":"Most packages to return (default 20; less than 1 also means 20)"}}}';
 
   OPM_REPOSITORY_URL = 'https://packages.lazarus-ide.org/';
 
@@ -1057,6 +1076,12 @@ begin
   AErr   := '';
   Name := Trim(AParams.Get('package_name', ''));
   Lpk  := Trim(AParams.Get('lpk_path', ''));
+  if (Lpk <> '') and (Name <> '') and not SameText(ExtractFileNameOnly(Lpk), Name) then
+  begin
+    AErr := 'package_name ' + Name + ' and lpk_path ' + Lpk + ' name different packages; ' +
+            'give one of them';
+    Exit;
+  end;
   if Lpk <> '' then
   begin
     if not FilenameIsAbsolute(Lpk) or not FileExists(Lpk) then
@@ -1111,6 +1136,45 @@ begin
   Result := True;
 end;
 
+{ The package name a project_add_package / project_remove_package call means:
+  package_name, or the package of lpk_path (loaded for the call when ALoad, as
+  adding needs the IDE to know it).  AErr = '' on success. }
+function SelectedPackageName(AParams: TJSONObject; ALoad: Boolean;
+  out AName, AErr: string): Boolean;
+var
+  Pkg : TLazPackage;
+  Lpk : string;
+begin
+  Result := False;
+  AErr := '';
+  AName := '';
+  if not Assigned(AParams) then begin AErr := 'package_name or lpk_path required'; Exit; end;
+  Lpk := Trim(AParams.Get('lpk_path', ''));
+  if Lpk = '' then
+  begin
+    AName := Trim(AParams.Get('package_name', ''));
+    if AName = '' then begin AErr := 'package_name or lpk_path required'; Exit; end;
+    Exit(True);
+  end;
+  if ALoad then
+  begin
+    if not TargetPackage(AParams, Pkg, AErr, False) then Exit;
+    AName := Pkg.Name;
+    Exit(True);
+  end;
+  { removing: the file names the package; mismatch with package_name is refused as above }
+  if (Trim(AParams.Get('package_name', '')) <> '') and
+     not SameText(ExtractFileNameOnly(Lpk), Trim(AParams.Get('package_name', ''))) then
+  begin
+    AErr := 'package_name ' + AParams.Get('package_name', '') + ' and lpk_path ' + Lpk +
+            ' name different packages; give one of them';
+    Exit;
+  end;
+  Pkg := PackageGraph.FindPackageWithFilename(Lpk);
+  if Assigned(Pkg) then AName := Pkg.Name else AName := ExtractFileNameOnly(Lpk);
+  Result := True;
+end;
+
 { Save APkg the way the package editor's Save button does, unless that would
   write more than this change or ask the user something: DoSaveAllPackages
   saves every modified package and the package's modified editor files, and
@@ -1148,6 +1212,119 @@ begin
   Result := '';
 end;
 
+{ package_save: write the .lpk of the named package (or, without a name, of every
+  modified package) to disk.  The IDE writes every modified package at once, so a
+  named package is refused while another one is modified, unless save_all is true.
+  Anything that would make the IDE ask a question (a package never saved, read-only,
+  a file missing on disk, an editor of its files with unsaved text) is refused and
+  named.  AErr = '' on success; the result is the JSON. }
+function PackageSave(AParams: TJSONObject; out AErr: string): string;
+var
+  Target, Pkg : TLazPackage;
+  Mods        : TStringList;
+  I, J        : Integer;
+  Other       : TIDEPackage;
+  F           : TLazPackageFile;
+  FN, Why     : string;
+  Ed          : TSourceEditorInterface;
+  SaveAll     : Boolean;
+  Obj         : TJSONObject;
+  Arr         : TJSONArray;
+begin
+  AErr := '';
+  Result := '';
+  Target := nil;
+  SaveAll := Assigned(AParams) and AParams.Get('save_all', False);
+  if Assigned(AParams) and (AParams.Get('package_name', '') + AParams.Get('lpk_path', '') <> '') then
+  begin
+    if not TargetPackage(AParams, Target, AErr, False) then Exit;
+  end
+  else
+    SaveAll := True;
+  Obj := TJSONObject.Create;
+  Mods := TStringList.Create;
+  try
+    for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+    begin
+      Other := PackageEditingInterface.GetPackages(I);
+      if Other.Modified then Mods.AddObject(Other.Name, Other);
+    end;
+    if (Target <> nil) and (Mods.IndexOfObject(Target) < 0) then
+    begin
+      Obj.Add('package', Target.Name);
+      Obj.Add('saved', True);
+      Obj.Add('nothing_to_save', True);
+      Result := Obj.AsJSON;
+      Exit;
+    end;
+    if Mods.Count = 0 then
+    begin
+      Obj.Add('saved', True);
+      Obj.Add('nothing_to_save', True);
+      Result := Obj.AsJSON;
+      Exit;
+    end;
+    if not SaveAll then
+      for I := 0 to Mods.Count - 1 do
+        if Mods.Objects[I] <> Target then
+        begin
+          AErr := 'Saving ' + Target.Name + ' would save ' + Mods[I] + ' too (the IDE writes ' +
+            'every modified package at once). Pass save_all=true to save them all, or save ' +
+            'that one first.';
+          Exit;
+        end;
+    for I := 0 to Mods.Count - 1 do
+    begin
+      Pkg := TLazPackage(Mods.Objects[I]);
+      Why := '';
+      if Pkg.IsVirtual then Why := 'has never been saved: use the package editor''s Save as'
+      else if Pkg.ReadOnly then Why := 'is read-only (' + Pkg.Filename + ')'
+      else if Assigned(GMcpPackageCheck) and not GMcpPackageCheck(Pkg.Name, '', Why) then
+        Why := 'is outside the folders the write tools may change: ' + Why
+      else
+        for J := 0 to Pkg.FileCount - 1 do
+        begin
+          F  := Pkg.Files[J];
+          FN := F.GetFullFilename;
+          if (F.FileType = pftVirtualUnit) or (Pos('$(', FN) > 0) then Continue;
+          if not FileExists(FN) then begin Why := 'file ' + FN + ' is missing on disk'; Break; end;
+          Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FN);
+          if Assigned(Ed) and Ed.Modified then
+          begin
+            Why := 'file ' + FN + ' has unsaved editor changes (editor_save it first; saving the ' +
+              'package would write them too)';
+            Break;
+          end;
+        end;
+      if Why <> '' then
+      begin
+        AErr := 'Not saved: package ' + Pkg.Name + ' ' + Why + '. Nothing was written.';
+        Exit;
+      end;
+    end;
+    PackageEditingInterface.DoSaveAllPackages([]);
+    Arr := TJSONArray.Create;
+    Obj.Add('saved', True);
+    for I := 0 to Mods.Count - 1 do
+    begin
+      Pkg := TLazPackage(Mods.Objects[I]);
+      if Pkg.Modified then
+      begin
+        Obj.Delete('saved');
+        Obj.Add('saved', False);
+        Obj.Add('still_unsaved', Pkg.Name);
+        Break;
+      end;
+      Arr.Add(Pkg.Name);
+    end;
+    Obj.Add('packages', Arr);
+    Result := Obj.AsJSON;
+  finally
+    Mods.Free;
+    Obj.Free;
+  end;
+end;
+
 { Result of a package edit: saved, or why not and what that means. }
 function EditResult(APkg: TLazPackage; AWasModified: Boolean; AObj: TJSONObject): string;
 var
@@ -1161,7 +1338,7 @@ begin
   begin
     AObj.Add('not_saved_because', Why);
     AObj.Add('note', 'The change is in the IDE only: the .lpk on disk is unchanged, so ' +
-      'package_compile does not see it until the package is saved in the package editor.');
+      'package_compile does not see it until the package is saved (package_save).');
   end;
   Result := AObj.AsJSON;
 end;
@@ -1471,10 +1648,8 @@ end;
 function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   PkgName  : string;
-  IDEPkg   : TIDEPackage;
+  PkgErr   : string;
   FPList   : TFPList;
-  PkgList  : TObjectList;
-  PollCmd  : string;
   RefArr   : TJSONArray;
   Obj      : TJSONObject;
   Proj     : TLazProject;
@@ -1484,14 +1659,16 @@ begin
 
   if (Name = 'package_add_file') or (Name = 'package_remove_file') or
      (Name = 'package_add_dependency') or (Name = 'package_remove_dependency') or
-     (Name = 'package_set_info') then
+     (Name = 'package_set_info') or (Name = 'package_save') then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) then
+    if not Assigned(Ctx.Params) and (Name <> 'package_save') then
     begin
       Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
     end;
-    if Name = 'package_add_file' then
+    if Name = 'package_save' then
+      Ctx.Result := PackageSave(Ctx.Params, PkgName)
+    else if Name = 'package_add_file' then
       Ctx.Result := PackageAddFile(Ctx.Params, PkgName)
     else if Name = 'package_remove_file' then
       Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
@@ -1543,11 +1720,10 @@ begin
   else if Name = 'project_add_package' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
+    if not SelectedPackageName(Ctx.Params, True, PkgName, PkgErr) then
     begin
-      Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
+      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
     end;
-    PkgName := Ctx.Params.Get('package_name', '');
     Proj := LazarusIDE.ActiveProject;
     if not Assigned(Proj) then
     begin
@@ -1586,11 +1762,11 @@ begin
   else if Name = 'project_remove_package' then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('package_name', '') = '') then
+    if not SelectedPackageName(Ctx.Params, False, PkgName, PkgErr) then
     begin
-      Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
+      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
     end;
-    PkgName := Ctx.Params.Get('package_name', '');
+    Proj := LazarusIDE.ActiveProject;
     Proj := LazarusIDE.ActiveProject;
     if not Assigned(Proj) then
     begin
@@ -1656,19 +1832,28 @@ begin
     'Remove a file from a package (.lpk); the file stays on disk.',
     SCHEMA_PKG_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_add_dependency',
-    'Make a package require another one, optionally with version limits. Refused for ' +
+    'Make a PACKAGE (.lpk) require another one, optionally with version limits; for the ' +
+    'open project use project_add_package. Refused for ' +
     'cycles, unknown packages, and when it would bring a new package into the IDE.',
     SCHEMA_PKG_ADD_DEP, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_remove_dependency',
     'Remove a requirement from a package (.lpk).',
     SCHEMA_PKG_REMOVE_DEP, MCP_ANN_WRITE_IDEM));
+  Tools.Add(MakeTool('package_save',
+    'Write unsaved packages (.lpk) to disk: the named one, or every modified one. The ' +
+    'package tools save their own change when nothing else is unsaved; use this when they ' +
+    'answered saved:false, or before ide_rebuild. Refused, naming the cause and writing ' +
+    'nothing, when the IDE would have to ask: a package never saved, read-only, a file ' +
+    'missing on disk, an editor of its files with unsaved text.',
+    SCHEMA_PKG_SAVE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_set_info',
     'Set a package''s version, description, author and/or license, as on the ' +
     'package options'' Package page; only the given fields change. Returns old and ' +
     'new values. Saves the .lpk when nothing else is unsaved.',
     SCHEMA_PKG_SET_INFO, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_add_package',
-    'Add a package as a dependency to the active project (.lpi). ' +
+    'Add a package as a dependency to the active PROJECT (.lpi); to make a package ' +
+    'require another one use package_add_dependency. ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +
     'Returns the updated list of project package dependencies.',
     SCHEMA_ADD_PACKAGE_TO_PROJECT, MCP_ANN_WRITE_IDEM));

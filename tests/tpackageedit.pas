@@ -23,6 +23,8 @@ type
     procedure TestAddAndRemoveFile;
     procedure TestAddAndRemoveDependency;
     procedure TestSetInfo;
+    procedure TestSave;
+    procedure TestSelectors;
     procedure TestRefusals;
     procedure TestNameOfAnUnloadedPackage;
     procedure TestConsentGuard;
@@ -147,6 +149,61 @@ begin
   end;
   CheckSaved(Self, T);
   CheckEquals(Before, LpkText, 'the .lpk is as before');
+end;
+
+procedure TTestPackageEdit.TestSave;
+var
+  T, Before : string;
+begin
+  { nothing unsaved in the fixture: answered as saved, nothing written }
+  Before := LpkText;
+  T := Call('package_save', '{' + Lpk + '}');
+  if Pos('would save', T) > 0 then
+    Ignore('the IDE has other unsaved packages: ' + T);
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"saved":true', T) > 0, 'saved: ' + T);
+  CheckEquals(Before, LpkText, 'the .lpk is untouched');
+
+  T := Call('package_save', '{"package_name":"NoSuchPackageXyz"}');
+  CheckTrue(IsError(T), 'unknown package is an error: ' + T);
+  CheckTrue(Pos('NoSuchPackageXyz', T) > 0, 'names it: ' + T);
+
+  T := Call('package_save', '{"lpk_path":' + JsonStr(FixtureLpk) + ',"bogus":1}');
+  CheckTrue(IsError(T), 'unknown parameter refused: ' + T);
+end;
+
+procedure TTestPackageEdit.TestSelectors;
+var
+  T, Tool : string;
+  Tools   : array[0..4] of string;
+begin
+  Tools[0] := 'package_open';          Tools[1] := 'package_install';
+  Tools[2] := 'package_uninstall';     Tools[3] := 'project_add_package';
+  Tools[4] := 'project_remove_package';
+  { every tool that takes one package wants package_name or lpk_path, with one wording }
+  for Tool in Tools do
+  begin
+    T := Call(Tool, '{}');
+    CheckTrue(IsError(T), Tool + ' with no selector: ' + T);
+    CheckTrue(Pos('package_name or lpk_path required', T) > 0, Tool + ': ' + T);
+  end;
+  { both given and naming different packages: refused, nothing loaded or changed }
+  for Tool in Tools do
+  begin
+    T := Call(Tool, '{"package_name":"NoSuchPackageXyz",' + Lpk + '}');
+    CheckTrue(IsError(T), Tool + ' with a clashing pair: ' + T);
+    CheckTrue(Pos('name different packages', T) > 0, Tool + ': ' + T);
+  end;
+  { install by the name of a package nobody knows } 
+  T := Call('package_install', '{"package_name":"NoSuchPackageXyz"}');
+  CheckTrue(IsError(T), T);
+  CheckTrue(Pos('not known to the IDE', T) > 0, T);
+  { open by lpk_path, then by the name of the loaded package }
+  T := Call('package_open', '{' + Lpk + '}');
+  CheckFalse(IsError(T), T);
+  T := Call('package_open', '{"package_name":"McpFixturePkg"}');
+  CheckFalse(IsError(T), 'open by name: ' + T);
+  CheckTrue(Pos('McpFixturePkg', T) > 0, T);
 end;
 
 procedure TTestPackageEdit.TestRefusals;

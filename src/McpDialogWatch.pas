@@ -29,9 +29,19 @@ uses
 procedure McpEnsureDialogWatch;
 procedure McpRemoveDialogWatch;
 
-{ The open dialogs as [{caption, text, buttons, source}]; any thread.  The
-  caller frees the array. }
-function McpOpenDialogs: TJSONArray;
+{ The open dialogs as an array of objects (caption, text, buttons, source); any thread.  The
+  caller frees the array.
+
+  AWithForms adds the ordinary LCL forms that are modal right now ("Some files have
+  changed on disk", the plugin's consent dialogs ...), which McpIdeListeners reports
+  with McpTrackModalForm.  Only ide_get_open_dialogs asks for them: the gate that
+  refuses a build behind a dialog does not, because the IDE's Project Wizard is such a
+  form too and project_open must still work from it. }
+function McpOpenDialogs(AWithForms: Boolean = False): TJSONArray;
+
+{ Main thread: AForm is modal and visible now / is not any more or is gone. }
+procedure McpTrackModalForm(AForm: TObject; const ACaption, AText, AButtons: string);
+procedure McpUntrackModalForm(AForm: TObject);
 
 { One line for a tool result: '"Broken dependency": The project requires ...'. }
 function McpDescribeDialogs(ADialogs: TJSONArray): string;
@@ -39,13 +49,21 @@ function McpDescribeDialogs(ADialogs: TJSONArray): string;
 implementation
 
 uses
-  Classes, SysUtils, SyncObjs, TypInfo, System.UITypes
+  Classes, SysUtils, SyncObjs, TypInfo, System.UITypes, Forms
   {$IFDEF WINDOWS}, Windows{$ENDIF},
   LCLStrConsts, LazMsgWorker;
 
 type
   TOpenDialog_ = record
     Id      : Integer;
+    Caption : string;
+    Text    : string;
+    Buttons : string;
+  end;
+
+  { a modal LCL form: Form is only compared, never dereferenced off the main thread }
+  TModalForm_ = record
+    Form    : Pointer;
     Caption : string;
     Text    : string;
     Buttons : string;
@@ -64,6 +82,7 @@ type
 var
   GLock    : SyncObjs.TCriticalSection;
   GOpen    : array of TOpenDialog_;
+  GModal   : array of TModalForm_;
   GNextId  : Integer = 0;
   GWatch   : TDialogWatch = nil;
 
@@ -177,9 +196,9 @@ begin
       S := '';
       case AButtons[I].VType of
         vtAnsiString    : S := string(AButtons[I].VAnsiString);
-        vtUnicodeString : S := UnicodeString(AButtons[I].VUnicodeString);
+        vtUnicodeString : S := UTF8Encode(UnicodeString(AButtons[I].VUnicodeString));
         vtString        : S := string(AButtons[I].VString^);
-        vtWideString    : S := WideString(AButtons[I].VWideString);
+        vtWideString    : S := UTF8Encode(WideString(AButtons[I].VWideString));
         vtPChar         : S := string(AButtons[I].VPChar);
         vtChar          : S := AButtons[I].VChar;
       end;
@@ -257,6 +276,7 @@ type
   TNativeCollect = record
     Dialogs : TJSONArray;
     Texts   : string;
+    Buttons : string;
   end;
   PNativeCollect = ^TNativeCollect;
 
@@ -288,10 +308,17 @@ begin
   C := PNativeCollect(ALParam);
   T := WindowText(AWnd);
   if T <> '' then
-  begin
-    if C^.Texts <> '' then C^.Texts := C^.Texts + ' | ';
-    C^.Texts := C^.Texts + T;
-  end;
+    if WindowClass(AWnd) = 'Button' then
+    begin
+      { a push button of the dialog: what the user will be asked to press }
+      if C^.Buttons <> '' then C^.Buttons := C^.Buttons + ', ';
+      C^.Buttons := C^.Buttons + T;
+    end
+    else
+    begin
+      if C^.Texts <> '' then C^.Texts := C^.Texts + ' | ';
+      C^.Texts := C^.Texts + T;
+    end;
   Result := True;
 end;
 
@@ -309,19 +336,89 @@ begin
   if Cls <> '#32770' then Exit;   { the dialog box window class }
   Col.Dialogs := nil;
   Col.Texts   := '';
+  Col.Buttons := '';
   EnumChildWindows(AWnd, @EnumChildProc, LPARAM(@Col));
   O := TJSONObject.Create;
   O.Add('caption', WindowText(AWnd));
   O.Add('text',    Col.Texts);
-  O.Add('buttons', '');
+  O.Add('buttons', Col.Buttons);
   O.Add('source',  'native window (' + Cls + ')');
   C^.Dialogs.Add(O);
 end;
 {$ENDIF}
 
-function McpOpenDialogs: TJSONArray;
+procedure McpTrackModalForm(AForm: TObject; const ACaption, AText, AButtons: string);
 var
-  I   : Integer;
+  I : Integer;
+begin
+  GLock.Enter;
+  try
+    for I := 0 to High(GModal) do
+      if GModal[I].Form = Pointer(AForm) then
+      begin
+        GModal[I].Caption := ACaption;     { shown again: the texts may have changed }
+        GModal[I].Text    := AText;
+        GModal[I].Buttons := AButtons;
+        Exit;
+      end;
+    SetLength(GModal, Length(GModal) + 1);
+    with GModal[High(GModal)] do
+    begin
+      Form := Pointer(AForm); Caption := ACaption; Text := AText; Buttons := AButtons;
+    end;
+  finally
+    GLock.Leave;
+  end;
+end;
+
+procedure McpUntrackModalForm(AForm: TObject);
+var
+  I, J : Integer;
+begin
+  GLock.Enter;
+  try
+    for I := 0 to High(GModal) do
+      if GModal[I].Form = Pointer(AForm) then
+      begin
+        for J := I to High(GModal) - 1 do
+          GModal[J] := GModal[J + 1];
+        SetLength(GModal, Length(GModal) - 1);
+        Break;
+      end;
+  finally
+    GLock.Leave;
+  end;
+end;
+
+{ Main thread, GLock held: forget a form that is gone or no longer modal, in case a
+  hide or removal was missed.  The pointer is only looked up in Screen's list. }
+procedure PruneModalForms;
+var
+  I, J : Integer;
+  F    : TCustomForm;
+begin
+  I := 0;
+  while I <= High(GModal) do
+  begin
+    J := Screen.CustomFormIndex(TCustomForm(GModal[I].Form));
+    if J >= 0 then
+    begin
+      F := Screen.CustomForms[J];
+      if F.Visible and (fsModal in F.FormState) then
+      begin
+        Inc(I);
+        Continue;
+      end;
+    end;
+    for J := I to High(GModal) - 1 do
+      GModal[J] := GModal[J + 1];
+    SetLength(GModal, Length(GModal) - 1);
+  end;
+end;
+
+function McpOpenDialogs(AWithForms: Boolean): TJSONArray;
+var
+  I, K : Integer;
   O   : TJSONObject;
   {$IFDEF WINDOWS}
   Col : TNativeCollect;
@@ -340,6 +437,25 @@ begin
       O.Add('buttons', GOpen[I].Buttons);
       O.Add('source',  'IDE dialog');
       Result.Add(O);
+    end;
+    if AWithForms then
+    begin
+      if GetCurrentThreadId = MainThreadID then PruneModalForms;
+      for I := 0 to High(GModal) do
+      begin
+        { a message or question dialog is both: listed once, with its full text above }
+        K := 0;
+        while (K < Result.Count) and
+              (TJSONObject(Result[K]).Get('caption', '') <> GModal[I].Caption) do
+          Inc(K);
+        if K < Result.Count then Continue;
+        O := TJSONObject.Create;
+        O.Add('caption', GModal[I].Caption);
+        O.Add('text',    GModal[I].Text);
+        O.Add('buttons', GModal[I].Buttons);
+        O.Add('source',  'modal form');
+        Result.Add(O);
+      end;
     end;
   finally
     GLock.Leave;

@@ -22,6 +22,7 @@ uses
   fpjson, jsonparser,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
+  PackageLinks, PackageLinkIntf,
   McpToolsPkgManage, McpRunProgram, McpMessages;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
@@ -38,8 +39,8 @@ const
     'start. Without keep_stdin_open, stdin is closed after it"},' +
     '"keep_stdin_open":{"type":"boolean","description":"Leave stdin open, to be fed with ' +
     'project_run_input"},' +
-    '"wait_seconds":{"type":"integer","description":"Wait up to this long (0..300, default 10) ' +
-    'for the program to end before answering"}}}';
+    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 10; 0 = answer at once, ' +
+    'the program keeps running) for the program to end before answering"}}}';
 
   SCHEMA_COMPILE_PLUGIN =
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +
@@ -190,6 +191,10 @@ type
   public
     LpkPath    : string;
     UninstallName : string;  { package_uninstall: the package to remove }
+    SelName    : string;     { package_name / lpk_path as given, for ResolveSelector }
+    SelLpk     : string;
+    SelError   : string;
+    SelInstall : Boolean;    { True: an install wants the .lpk; False: an uninstall wants the name }
     ToolName   : string;
     PollCmd    : string;
     StopServer : TMcpStopServerProc;
@@ -204,7 +209,10 @@ type
     Closed     : TStringList;     { editors DoRebuild closed, to open again if the build fails }
     RebuildOk  : Boolean;
     RebuildFailure : string;
+    RaisedText : string;      { class and message of an exception DoRebuild caught }
+    HasProject : Boolean;
     constructor Create;
+    procedure ReadHasProject;
     destructor Destroy; override;
     procedure CheckUnsaved;
     procedure PreCompile;
@@ -212,6 +220,7 @@ type
     procedure CollectFailure;
     procedure CheckConsent;
     procedure FindUninstallPackage;
+    procedure ResolveSelector;
     procedure DismissExceptionDialog;
     procedure ReadPollPaths;
     procedure DoStopDebugger;
@@ -221,6 +230,11 @@ type
 var
   GBuildHelper   : TBuildSyncHelper = nil;
   GRebuildActive : LongInt = 0;   { InterlockedCompareExchange guard }
+
+procedure TBuildSyncHelper.ReadHasProject;
+begin
+  HasProject := Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject);
+end;
 
 procedure TBuildSyncHelper.DismissExceptionDialog;
 var
@@ -248,6 +262,50 @@ begin
 end;
 
 { Main thread: does the package to uninstall exist? }
+{ Main thread: the other half of package_name / lpk_path.  For an install SelLpk is
+  filled from SelName (a loaded package, else the IDE's package links); for an
+  uninstall SelName from SelLpk (the loaded package of that file, else the file name).
+  SelError is set when the two given disagree or nothing is known. }
+procedure TBuildSyncHelper.ResolveSelector;
+var
+  Pkg  : TIDEPackage;
+  Link : TPackageLink;
+  I    : Integer;
+begin
+  SelError := '';
+  if (SelLpk <> '') and (SelName <> '') and
+     not SameText(ExtractFileNameOnly(SelLpk), SelName) then
+  begin
+    SelError := 'package_name ' + SelName + ' and lpk_path ' + SelLpk +
+                ' name different packages; give one of them';
+    Exit;
+  end;
+  if SelInstall and (SelLpk = '') and (SelName <> '') then
+  begin
+    Pkg := PackageEditingInterface.FindPackageWithName(SelName);
+    if Assigned(Pkg) and (Pkg.Filename <> '') then
+      SelLpk := Pkg.Filename
+    else
+    begin
+      Link := LazPackageLinks.FindLinkWithPkgName(SelName);
+      if Assigned(Link) then SelLpk := Link.LPKFilename;
+    end;
+    if (SelLpk = '') or not FileExists(SelLpk) then
+    begin
+      SelLpk := '';
+      SelError := 'Package ' + SelName + ' is not loaded and not known to the IDE: give ' +
+                  'its lpk_path';
+    end;
+  end
+  else if (not SelInstall) and (SelName = '') and (SelLpk <> '') then
+  begin
+    SelName := ExtractFileNameOnly(SelLpk);
+    for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+      if CompareFilenames(PackageEditingInterface.GetPackages(I).Filename, SelLpk) = 0 then
+        SelName := PackageEditingInterface.GetPackages(I).Name;
+  end;
+end;
+
 procedure TBuildSyncHelper.FindUninstallPackage;
 begin
   PkgFound := PackageEditingInterface.FindPackageWithName(UninstallName) <> nil;
@@ -278,15 +336,23 @@ type
 var
   GServerRestarter : TServerRestarter = nil;
 
+var
+  GRestartNotice : string = '';
+
 procedure TServerRestarter.Tick(Sender: TObject);
 begin
   GRestartTimer.Enabled := False;
+  { the IDE is on its way out (a restart that is under way): nothing to bring back }
+  if Application.Terminated then Exit;
+  if GRestartNotice <> '' then McpAddMessage(mluImportant, GRestartNotice);
   if Assigned(GMcpRestartServer) then GMcpRestartServer();
 end;
 
-{ Main thread: bring the server back a moment from now (the answer of the call that
-  failed is still being sent on the old one). }
-procedure ScheduleServerRestart;
+{ Main thread: bring the server back AMs from now, with ANotice in the Messages window
+  when it is not empty.  A failed build: a moment from now (the answer of the call that
+  failed is still being sent on the old server).  A build that went through: later, as a
+  watchdog (see DoRebuild). }
+procedure ScheduleServerRestart(AMs: Integer; const ANotice: string);
 begin
   if GRestartTimer = nil then
   begin
@@ -295,7 +361,9 @@ begin
     GRestartTimer.Enabled := False;
     GRestartTimer.OnTimer := @GServerRestarter.Tick;
   end;
-  GRestartTimer.Interval := 2500;
+  GRestartNotice := ANotice;
+  GRestartTimer.Enabled := False;
+  GRestartTimer.Interval := AMs;
   GRestartTimer.Enabled := True;
 end;
 
@@ -444,9 +512,19 @@ begin
   try
     McpCompilerMessages(Errors, Warnings);
     Obj.Add('status', 'rebuild_failed');
-    Obj.Add('message', 'The IDE build failed, so the IDE was NOT restarted. The MCP server ' +
-      'is back in a few seconds on the same port and token; the editors that were open are ' +
-      'open again. Fix the errors, then run ' + ToolName + ' again.');
+    if RaisedText <> '' then
+    begin
+      Obj.Add('message', 'The IDE raised an exception while starting the build, so the IDE ' +
+        'was NOT restarted (' + RaisedText + '). The MCP server is back in a few seconds on ' +
+        'the same port and token; the editors that were open are open again. If no project ' +
+        'is open (the IDE shows its Project Wizard), open one with project_open and run ' +
+        ToolName + ' again.');
+      Obj.Add('exception', RaisedText);
+    end
+    else
+      Obj.Add('message', 'The IDE build failed, so the IDE was NOT restarted. The MCP server ' +
+        'is back in a few seconds on the same port and token; the editors that were open are ' +
+        'open again. Fix the errors, then run ' + ToolName + ' again.');
     Obj.Add('errors', Errors); Errors := nil;
     Obj.Add('warning_count', Warnings.Count);
     RebuildFailure := Obj.AsJSON;
@@ -486,8 +564,17 @@ begin
   end;
   RebuildOk := True;
   if Assigned(StopServer) then StopServer();
+  { The server is down from here.  If the build or the restart then waits for an answer in
+    a dialog nobody gives, the call below never returns: this brings the server back after
+    10 minutes (a build here takes about one) and says why.  The call returning replaces it
+    with a shorter watchdog, see below. }
+  ScheduleServerRestart(600000,
+    'MCP Assistant: ' + ToolName + ' did not finish within 10 minutes (a dialog waiting ' +
+    'for an answer?). The server is back in this IDE; the rebuild is not done.');
+  RaisedText := '';
   PkgList := TObjectList.Create(True);
   try
+   try
     if UninstallName <> '' then
     begin
       IDEPkg := PackageEditingInterface.FindPackageWithName(UninstallName);
@@ -512,6 +599,17 @@ begin
       with anything but ok, the build failed and this IDE is still the one running. }
     RebuildOk := PackageEditingInterface.InstallPackages(
       PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]) = mrOk;
+   except
+    { the server is already stopped: an exception that left here would leave the IDE
+      without one and the caller with a reply nobody can read (2026-11-16, asked from the
+      Project Wizard) }
+    on E: Exception do
+    begin
+      RebuildOk  := False;
+      RaisedText := E.ClassName + ': ' + E.Message;
+      McpAddMessage(mluImportant, 'MCP Assistant: ' + ToolName + ' raised ' + RaisedText);
+    end;
+   end;
   finally
     PkgList.Free;
   end;
@@ -520,8 +618,17 @@ begin
     { no restart is coming: this IDE stays, so put it back as it was }
     ReopenClosed;
     CollectFailure;
-    ScheduleServerRestart;
-  end;
+    ScheduleServerRestart(2500, '');
+  end
+  else
+    { The IDE restarts itself on success, but only when it is set to restart after a build
+      and the restart is not cancelled (a dialog, a project it wants to save): else the
+      build is done, this IDE stays and the server is already stopped, for good.  If this
+      process is still here 30 s after the call returned, no restart is coming. }
+    ScheduleServerRestart(30000,
+      'MCP Assistant: ' + ToolName + ' built the IDE but it did not restart (Tools > ' +
+      'Configure "Build Lazarus" > "Restart after build" off, or the restart was cancelled). ' +
+      'The server is back in this IDE; the rebuilt code is not running yet.');
 end;
 
 function DispatchBuildBlockingTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -539,16 +646,24 @@ begin
   LpkPath := '';
   if Assigned(Ctx.Params) then
     LpkPath := Ctx.Params.Get('lpk_path', '');
-  if (Name = 'package_install') and (LpkPath = '') then
-  begin
-    Ctx.Error := True; Ctx.Result := 'lpk_path required'; Exit;
-  end;
   UninstallName := '';
-  if (Name = 'package_uninstall') and Assigned(Ctx.Params) then
-    UninstallName := Ctx.Params.Get('package_name', '');
-  if (Name = 'package_uninstall') and (UninstallName = '') then
+  if (Name = 'package_install') or (Name = 'package_uninstall') then
   begin
-    Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
+    GBuildHelper.SelLpk  := Trim(LpkPath);
+    GBuildHelper.SelName := '';
+    GBuildHelper.SelInstall := Name = 'package_install';
+    if Assigned(Ctx.Params) then GBuildHelper.SelName := Trim(Ctx.Params.Get('package_name', ''));
+    if (GBuildHelper.SelLpk = '') and (GBuildHelper.SelName = '') then
+    begin
+      Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
+    end;
+    TThread.Synchronize(nil, @GBuildHelper.ResolveSelector);
+    if GBuildHelper.SelError <> '' then
+    begin
+      Ctx.Error := True; Ctx.Result := GBuildHelper.SelError; Exit;
+    end;
+    if Name = 'package_install' then LpkPath := GBuildHelper.SelLpk
+    else begin LpkPath := ''; UninstallName := GBuildHelper.SelName; end;
   end;
   if (Name = 'ide_rebuild') and (LpkPath <> '') then
   begin
@@ -572,6 +687,18 @@ begin
   GBuildHelper.StopServer := Ctx.StopServer;
   GBuildHelper.SaveUnsaved := Assigned(Ctx.Params) and Ctx.Params.Get('save_unsaved', False);
   GBuildHelper.SkipCompile := Assigned(Ctx.Params) and Ctx.Params.Get('skip_compile', False);
+
+  { With no project open (the IDE shows its Project Wizard) the IDE's own build raises an
+    access violation, after this server has been stopped. }
+  TThread.Synchronize(nil, @GBuildHelper.ReadHasProject);
+  if not GBuildHelper.HasProject then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := Name + ' needs an open project: the IDE shows its Project Wizard, and its ' +
+                  'build fails without a project. Open one with project_open, then call ' +
+                  Name + ' again. Nothing was changed.';
+    Exit;
+  end;
 
   if UninstallName <> '' then
   begin
@@ -628,7 +755,7 @@ begin
       'packages have unsaved changes; the rebuild closes every editor without asking, and an ' +
       'unsaved package stops it on a question: ' +
       StringReplace(Trim(GBuildHelper.Unsaved.Text), LineEnding, '; ', [rfReplaceAll]) +
-      '. Save them (editor_save, or the package editor), or pass save_unsaved=true to have ' +
+      '. Save them (editor_save, package_save), or pass save_unsaved=true to have ' +
       'them saved first."}';
     Exit;
   end;
@@ -694,7 +821,10 @@ begin
   Tools.Add(MakeTool('project_run',
     'Build (if needed) and run the active project without the debugger, ' +
     'optionally with new command-line arguments. Waits up to wait_seconds (default 10) and ' +
-    'answers {success, running, pid, exit_code, stdout, stderr}; a program still running ' +
+    'answers {success, running, pid, exit_code, stdout, stderr}; when the program printed ' +
+    'a heaptrc report (project_set_settings heaptrc=true, then rebuild) the answer also ' +
+    'has heap_report {unfreed_blocks, unfreed_bytes, leaked, leaks[] with address, size ' +
+    'and stack}; a program still running ' +
     '(a GUI program, a server) comes back with running=true: read it later with ' +
     'project_run_output, which can also stop it. The program has no console window. Its ' +
     'stdin is closed (it reads end of file) unless you pass stdin text or ' +

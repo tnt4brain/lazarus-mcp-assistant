@@ -10,7 +10,7 @@ unit McpToolContext;
 interface
 
 uses
-  SysUtils, SyncObjs, fpjson, jsonparser;
+  Classes, SysUtils, SyncObjs, fpjson, jsonparser;
 
 type
   { Context record passed into every tool dispatch function.
@@ -100,6 +100,11 @@ procedure McpRegisterSchemas(Tools: TJSONArray);
 function McpValidateArgs(const ToolName: string; Args: TJSONObject;
   out Msg: string): Boolean;
 
+{ The accepted name closest to AWanted (case-insensitive edit distance, at most a
+  third of its length and never more than 3), '' if none is near.  For the
+  "did you mean" of the unknown-parameter error. }
+function McpClosestName(const AWanted: string; ANames: TStrings): string;
+
 { Blocking group registry — dispatchers run on the MCP worker thread. }
 procedure RegisterMcpBlockingGroup(Fn: TMcpGroupDispatch);
 procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
@@ -166,10 +171,10 @@ end;
 const
   { Tools that change the file their `file` argument names (a dry run only reads) }
   { these change an existing package's .lpk (package_move_unit two of them) }
-  PACKAGE_WRITERS : array[0..6] of string = (
+  PACKAGE_WRITERS : array[0..7] of string = (
     'package_add_file', 'package_remove_file', 'package_add_dependency',
     'package_remove_dependency', 'package_set_info', 'package_set_settings',
-    'package_move_unit');
+    'package_move_unit', 'package_save');
 
   FILE_WRITERS : array[0..8] of string = (
     'code_add_uses', 'code_add_to_class', 'code_insert_in_procedure',
@@ -218,6 +223,14 @@ begin
         Result := GMcpPackageCheck(AParams.Get('package_name', ''), '', AWhy);
       Exit;
     end;
+  if AName = 'git_archive' then
+  begin
+    { an absolute output path; '' is left to the tool, which refuses it }
+    F := AParams.Get('output', '');
+    if (F <> '') and Assigned(GMcpWriteCheck) then
+      Result := GMcpWriteCheck(F, AWhy);
+    Exit;
+  end;
   Arg := '';
   for I := Low(FILE_WRITERS) to High(FILE_WRITERS) do
     if AName = FILE_WRITERS[I] then Arg := 'file';
@@ -283,10 +296,63 @@ var
   GSchemaLock  : TCriticalSection;
   GSchemaCache : TJSONArray;
 
+function EditDistance(const A, B: string): Integer;
+var
+  Prev, Cur : array of Integer;
+  I, J, Cost : Integer;
+begin
+  SetLength(Prev, Length(B) + 1);
+  SetLength(Cur, Length(B) + 1);
+  for J := 0 to Length(B) do Prev[J] := J;
+  for I := 1 to Length(A) do
+  begin
+    Cur[0] := I;
+    for J := 1 to Length(B) do
+    begin
+      if A[I] = B[J] then Cost := 0 else Cost := 1;
+      Cur[J] := Prev[J] + 1;
+      if Cur[J - 1] + 1 < Cur[J] then Cur[J] := Cur[J - 1] + 1;
+      if Prev[J - 1] + Cost < Cur[J] then Cur[J] := Prev[J - 1] + Cost;
+    end;
+    Prev := Copy(Cur);
+  end;
+  Result := Prev[Length(B)];
+end;
+
+function McpClosestName(const AWanted: string; ANames: TStrings): string;
+var
+  D, Best, Limit : Integer;
+  W, N, Cand : string;
+begin
+  Result := '';
+  W := LowerCase(AWanted);
+  Limit := Length(W) div 3;
+  if Limit > 3 then Limit := 3;
+  if Limit < 1 then Limit := 1;
+  Best := MaxInt;
+  for Cand in ANames do
+  begin
+    N := LowerCase(Cand);
+    D := EditDistance(W, N);
+    { "file" for "form_file", "max_results" for "results": one name inside the other }
+    if (D > Limit) and (Length(W) >= 4) and (Length(N) >= 4) and
+       ((Pos(W, N) > 0) or (Pos(N, W) > 0)) then
+      D := Limit;
+    if (D <= Limit) and (D < Best) then
+    begin
+      Best := D;
+      Result := Cand;
+    end;
+  end;
+end;
+
 function McpValidateArgs(const ToolName: string; Args: TJSONObject;
   out Msg: string): Boolean;
 var
   I, J     : Integer;
+  En       : TJSONEnum;
+  Names    : TStringList;
+  Hint     : string;
   Schema   : TJSONObject;
   Props    : TJSONObject;
   Req      : TJSONArray;
@@ -323,13 +389,24 @@ begin
           Missing := Missing + Req.Strings[J];
         end;
     Unknown := '';
-    if Assigned(Args) then
-      for J := 0 to Args.Count - 1 do
-        if (Props = nil) or (Props.IndexOfName(Args.Names[J]) < 0) then
-        begin
-          if Unknown <> '' then Unknown := Unknown + ', ';
-          Unknown := Unknown + Args.Names[J];
-        end;
+    Names := TStringList.Create;
+    try
+      if Assigned(Props) then
+        for En in Props do
+          Names.Add(En.Key);
+      if Assigned(Args) then
+        for En in Args do
+          if (Props = nil) or (Props.IndexOfName(En.Key) < 0) then
+          begin
+            if Unknown <> '' then Unknown := Unknown + ', ';
+            Unknown := Unknown + En.Key;
+            Hint := McpClosestName(En.Key, Names);
+            if Hint <> '' then
+              Unknown := Unknown + ' (did you mean ' + Hint + '?)';
+          end;
+    finally
+      Names.Free;
+    end;
     if (Missing = '') and (Unknown = '') then Exit;
     Accepted := '';
     if Assigned(Props) then

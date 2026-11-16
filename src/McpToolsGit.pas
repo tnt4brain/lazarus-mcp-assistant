@@ -46,7 +46,7 @@ const
 
   SCHEMA_GIT_LOG =
     '{"type":"object","properties":{' +
-    '"max_count":{"type":"integer","description":"Maximum number of commits to show (default 20)"},' +
+    '"max_count":{"type":"integer","description":"Maximum number of commits to show (default 20; 0 shows none)"},' +
     '"branch":{"type":"string","description":"Branch or ref to log; defaults to HEAD"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
@@ -59,13 +59,16 @@ const
 
   SCHEMA_GIT_COMMIT =
     '{"type":"object","properties":{' +
-    '"message":{"type":"string","description":"Commit message"},' +
+    '"message":{"type":"string","description":"Commit message (required unless amend=true, where it replaces the old message; omitted, the old one is kept)"},' +
+    '"amend":{"type":"boolean","description":"Replace the last commit with one that also holds the staged changes (git commit --amend). Refused when that commit is already on a remote branch. Default false"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
-    '"required":["message"]}';
+    '"required":[]}';
 
   SCHEMA_GIT_CHECKOUT =
     '{"type":"object","properties":{' +
-    '"target":{"type":"string","description":"Branch name, tag, commit hash, or file path to restore"},' +
+    '"target":{"type":"string","description":"Branch name, tag, commit hash, or file path to restore; with create=true, the name of the new branch"},' +
+    '"create":{"type":"boolean","description":"Create the branch named by target and switch to it (git checkout -b); it fails if the name exists (default false)"},' +
+    '"start_point":{"type":"string","description":"With create: the commit, branch or tag the new branch starts at (default HEAD)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":["target"]}';
 
@@ -74,9 +77,32 @@ const
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
+  SCHEMA_GIT_BRANCH_DELETE =
+    '{"type":"object","properties":{' +
+    '"branch":{"type":"string","description":"Name of the local branch to delete"},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
+    '"required":["branch"]}';
+
+  SCHEMA_GIT_CHERRY_PICK =
+    '{"type":"object","properties":{' +
+    '"commit":{"type":"string","description":"The commit to apply on the current branch: a hash, branch or tag, or a range a..b (oldest first, a itself excluded)"},' +
+    '"abort":{"type":"boolean","description":"Instead of picking: undo a cherry-pick that stopped on a conflict (git cherry-pick --abort). Default false"},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
+    '"required":[]}';
+
+  SCHEMA_GIT_ARCHIVE =
+    '{"type":"object","properties":{' +
+    '"output":{"type":"string","description":"Absolute path of the archive to write; the extension picks the format (.tar, .tar.gz, .tgz, .zip). Must not exist yet and must be in a folder files may be changed in"},' +
+    '"ref":{"type":"string","description":"Commit, branch or tag to archive (default HEAD). Only committed files are included"},' +
+    '"prefix":{"type":"string","description":"A folder name put in front of every path in the archive"},' +
+    '"paths":{"type":"array","items":{"type":"string"},"description":"Archive only these files or directories (relative to the repository root). Default: everything"},' +
+    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
+    '"required":["output"]}';
+
   SCHEMA_GIT_STASH =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Optional stash description"},' +
+    '"paths":{"type":"array","items":{"type":"string"},"description":"Stash only the changes in these files or directories (relative to the repository root or absolute); the rest stays in the working tree. Default: everything tracked"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
@@ -132,7 +158,7 @@ var
   Proc      : TProcess;
   Chunk     : string;
   BytesRead : LongInt;
-  I         : Integer;
+  Arg       : string;
 const
   BufSize = 4096;
 begin
@@ -148,8 +174,8 @@ begin
   Proc   := TProcess.Create(nil);
   try
     Proc.Executable := GitExe;
-    for I := 0 to High(Args) do
-      Proc.Parameters.Add(Args[I]);
+    for Arg in Args do
+      Proc.Parameters.Add(Arg);
     Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
     Proc.ShowWindow := swoHide;
     if WorkDir <> '' then
@@ -176,6 +202,15 @@ begin
   finally
     Proc.Free;
   end;
+end;
+
+{ True when a remote-tracking branch holds HEAD: a commit someone may have fetched. }
+function HeadIsOnRemote(const WorkDir: string): Boolean;
+var
+  Out_ : string;
+begin
+  Result := RunGit(['branch', '-r', '--contains', 'HEAD'], WorkDir, Out_) and
+            (Trim(Out_) <> '');
 end;
 
 function GetGitWorkDir(const Ctx: TMcpToolCall): string;
@@ -222,7 +257,7 @@ var
   Infos   : array of record Author, Date, Summary: string; end;
   Parts   : TStringArray;
   S, Sha  : string;
-  I, Idx, FinalLine : Integer;
+  Idx, FinalLine : Integer;
   LObj    : TJSONObject;
 begin
   Result  := TJSONArray.Create;
@@ -233,9 +268,8 @@ begin
     Infos := nil;
     Idx := -1;
     FinalLine := 0;
-    for I := 0 to SL.Count - 1 do
+    for S in SL do
     begin
-      S := SL[I];
       if S = '' then Continue;
       if S[1] = #9 then
       begin
@@ -443,6 +477,7 @@ var
   Proc     : TProcess;
   Buf      : string;
   N, I     : LongInt;
+  Arg      : string;
   Started  : QWord;
   TimedOut : Boolean;
 
@@ -464,8 +499,8 @@ begin
   Proc     := TProcess.Create(nil);
   try
     Proc.Executable := AExe;
-    for I := 0 to High(Args) do
-      Proc.Parameters.Add(Args[I]);
+    for Arg in Args do
+      Proc.Parameters.Add(Arg);
     Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
     if WorkDir <> '' then
       Proc.CurrentDirectory := WorkDir;
@@ -696,378 +731,553 @@ var
   PathsArr  : TJSONArray;
   Obj       : TJSONObject;
   GitArgs   : TStringList;
+  En        : TJSONEnum;
   ActiveEd  : TSourceEditorInterface;
   I         : Integer;
 begin
   Result := False;
 
-  if Name = 'git_blame' then
-  begin
-    Result := True;
-    GitBlame(Ctx);
-    Exit;
-  end;
-
-  if Name = 'git_status' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    Ok      := RunGit(['status', '--porcelain=v1'], WorkDir, Output);
-    Obj     := TJSONObject.Create;
-    try
-      if Trim(Output) = '' then Output := '(working tree clean)';
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_diff' then
-  begin
-    Result   := True;
-    WorkDir  := GetGitWorkDir(Ctx);
-    Staged   := Assigned(Ctx.Params) and Ctx.Params.Get('staged', False);
-    DiffPath := '';
-    if Assigned(Ctx.Params) then DiffPath := Ctx.Params.Get('path', '');
-    ActiveEd := nil;
-    if Assigned(Ctx.Params) and Ctx.Params.Get('active_file', False) then
+  case Name of
+    'git_blame':
     begin
-      ActiveEd := SourceEditorManagerIntf.ActiveEditor;
-      if not Assigned(ActiveEd) or not FilenameIsAbsolute(ActiveEd.FileName) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'No active editor with a file on disk'; Exit;
-      end;
-      DiffPath := ActiveEd.FileName;
-      WorkDir  := ExtractFilePath(DiffPath);   { the file's own repository }
-    end;
-    GitArgs  := TStringList.Create;
-    try
-      GitArgs.Add('diff');
-      if Staged   then GitArgs.Add('--staged');
-      if Assigned(Ctx.Params) then
-      begin
-        if Ctx.Params.Get('stat', False) then GitArgs.Add('--stat');
-        if Ctx.Params.Get('name_only', False) then GitArgs.Add('--name-only');
-        if Ctx.Params.Get('context', -1) >= 0 then
-          GitArgs.Add('-U' + IntToStr(Ctx.Params.Get('context', 3)));
-      end;
-      if DiffPath <> '' then
-      begin
-        GitArgs.Add('--');
-        GitArgs.Add(DiffPath);
-      end;
-      Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
-    finally
-      GitArgs.Free;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      if Trim(Output) = '' then Output := '(no diff)';
-      MaxBytes := 60000;
-      if Assigned(Ctx.Params) then MaxBytes := Ctx.Params.Get('max_bytes', 60000);
-      if (MaxBytes > 0) and (Length(Output) > MaxBytes) then
-      begin
-        Obj.Add('truncated_bytes', Length(Output) - MaxBytes);
-        Output := Copy(Output, 1, MaxBytes) + LineEnding + '... (cut; use path, stat, name_only or a larger max_bytes)';
-      end;
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if Assigned(ActiveEd) then
-      begin
-        Obj.Add('file', DiffPath);
-        if ActiveEd.Modified then
-          Obj.Add('editor_modified', True);   { unsaved edits are not in the diff }
-      end;
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_log' then
-  begin
-    Result   := True;
-    WorkDir  := GetGitWorkDir(Ctx);
-    MaxCount := 20;
-    Branch   := '';
-    if Assigned(Ctx.Params) then
-    begin
-      MaxCount := Ctx.Params.Get('max_count', 20);
-      Branch   := Ctx.Params.Get('branch', '');
-    end;
-    GitArgs := TStringList.Create;
-    try
-      GitArgs.Add('log');
-      GitArgs.Add('--oneline');
-      GitArgs.Add('--max-count=' + IntToStr(MaxCount));
-      if Branch <> '' then GitArgs.Add(Branch);
-      Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
-    finally
-      GitArgs.Free;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      if Trim(Output) = '' then Output := '(no commits)';
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_add' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'paths required';
+      Result := True;
+      GitBlame(Ctx);
       Exit;
     end;
-    PathsJSON := Ctx.Params.Find('paths');
-    if not (PathsJSON is TJSONArray) then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'paths must be a JSON array of strings';
-      Exit;
-    end;
-    PathsArr := TJSONArray(PathsJSON);
-    if PathsArr.Count = 0 then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'paths array is empty';
-      Exit;
-    end;
-    GitArgs := TStringList.Create;
-    try
-      GitArgs.Add('add');
-      for I := 0 to PathsArr.Count - 1 do
-        GitArgs.Add(PathsArr.Strings[I]);
-      Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
-    finally
-      GitArgs.Free;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'git_commit' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    Message := '';
-    if Assigned(Ctx.Params) then Message := Ctx.Params.Get('message', '');
-    if Message = '' then
+    'git_status':
     begin
-      Ctx.Error  := True;
-      Ctx.Result := 'message required';
-      Exit;
-    end;
-    Ok := RunGit(['commit', '-F', '-'], WorkDir, Output, Message);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_checkout' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    Target  := '';
-    if Assigned(Ctx.Params) then Target := Ctx.Params.Get('target', '');
-    if Target = '' then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'target required';
-      Exit;
-    end;
-    Ok := RunGit(['checkout', Target], WorkDir, Output);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_branches' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    Ok := RunGit(['branch', '-a', '--format=%(HEAD) %(refname:short)'],
-                 WorkDir, Output);
-    Obj := TJSONObject.Create;
-    try
-      if Trim(Output) = '' then Output := '(no branches)';
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_stash' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    Message := '';
-    if Assigned(Ctx.Params) then Message := Ctx.Params.Get('message', '');
-    GitArgs := TStringList.Create;
-    try
-      GitArgs.Add('stash');
-      GitArgs.Add('push');
-      if Message <> '' then
-      begin
-        GitArgs.Add('-m');
-        GitArgs.Add(Message);
-      end;
-      Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
-    finally
-      GitArgs.Free;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_stash_pop' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    I := 0;
-    if Assigned(Ctx.Params) then I := Ctx.Params.Get('index', 0);
-    Ok := RunGit(['stash', 'pop', 'stash@{' + IntToStr(I) + '}'],
-                 WorkDir, Output);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'git_init' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    Branch  := 'main';
-    if Assigned(Ctx.Params) then Branch := Ctx.Params.Get('initial_branch', 'main');
-    if WorkDir = '' then
-    begin
-      Ctx.Error := True; Ctx.Result := 'work_dir required: no saved project or file to take it from'; Exit;
-    end;
-    if not DirectoryExists(WorkDir) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Directory does not exist: ' + WorkDir; Exit;
-    end;
-    { Never nest a repository: say where the existing one is }
-    if RunGit(['rev-parse', '--show-toplevel'], WorkDir, Output) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := WorkDir + ' is already inside the repository ' + Trim(Output);
-      Exit;
-    end;
-    if not RunGit(['check-ref-format', '--branch', Branch], WorkDir, Output) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Invalid branch name: ' + Branch; Exit;
-    end;
-    { init, then name the branch: "init -b" needs git 2.28 }
-    Ok := RunGit(['init'], WorkDir, Output);
-    if Ok then
-      Ok := RunGit(['symbolic-ref', 'HEAD', 'refs/heads/' + Branch], WorkDir, Output2);
-    IgnoreWritten := False;
-    if Ok and Assigned(Ctx.Params) and Ctx.Params.Get('gitignore', False) and
-       not FileExists(IncludeTrailingPathDelimiter(WorkDir) + '.gitignore') then
-    begin
-      GitArgs := TStringList.Create;
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Ok      := RunGit(['status', '--porcelain=v1'], WorkDir, Output);
+      Obj     := TJSONObject.Create;
       try
-        GitArgs.Text := GITIGNORE_LAZARUS;
-        GitArgs.SaveToFile(IncludeTrailingPathDelimiter(WorkDir) + '.gitignore');
-        IgnoreWritten := True;
+        if Trim(Output) = '' then Output := '(working tree clean)';
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_diff':
+    begin
+      Result   := True;
+      WorkDir  := GetGitWorkDir(Ctx);
+      Staged   := Assigned(Ctx.Params) and Ctx.Params.Get('staged', False);
+      DiffPath := '';
+      if Assigned(Ctx.Params) then DiffPath := Ctx.Params.Get('path', '');
+      ActiveEd := nil;
+      if Assigned(Ctx.Params) and Ctx.Params.Get('active_file', False) then
+      begin
+        ActiveEd := SourceEditorManagerIntf.ActiveEditor;
+        if not Assigned(ActiveEd) or not FilenameIsAbsolute(ActiveEd.FileName) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'No active editor with a file on disk'; Exit;
+        end;
+        DiffPath := ActiveEd.FileName;
+        WorkDir  := ExtractFilePath(DiffPath);   { the file's own repository }
+      end;
+      GitArgs  := TStringList.Create;
+      try
+        GitArgs.Add('diff');
+        if Staged   then GitArgs.Add('--staged');
+        if Assigned(Ctx.Params) then
+        begin
+          if Ctx.Params.Get('stat', False) then GitArgs.Add('--stat');
+          if Ctx.Params.Get('name_only', False) then GitArgs.Add('--name-only');
+          if Ctx.Params.Get('context', -1) >= 0 then
+            GitArgs.Add('-U' + IntToStr(Ctx.Params.Get('context', 3)));
+        end;
+        if DiffPath <> '' then
+        begin
+          GitArgs.Add('--');
+          GitArgs.Add(DiffPath);
+        end;
+        Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
       finally
         GitArgs.Free;
       end;
+      Obj := TJSONObject.Create;
+      try
+        if Trim(Output) = '' then Output := '(no diff)';
+        MaxBytes := 60000;
+        if Assigned(Ctx.Params) then MaxBytes := Ctx.Params.Get('max_bytes', 60000);
+        if (MaxBytes > 0) and (Length(Output) > MaxBytes) then
+        begin
+          Obj.Add('truncated_bytes', Length(Output) - MaxBytes);
+          Output := Copy(Output, 1, MaxBytes) + LineEnding + '... (cut; use path, stat, name_only or a larger max_bytes)';
+        end;
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if Assigned(ActiveEd) then
+        begin
+          Obj.Add('file', DiffPath);
+          if ActiveEd.Modified then
+            Obj.Add('editor_modified', True);   { unsaved edits are not in the diff }
+        end;
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
-    Obj := TJSONObject.Create;
-    try
-      if not Ok then Output := Output + Output2;
-      Obj.Add('output',   Trim(Output));
-      Obj.Add('work_dir', WorkDir);
-      Obj.Add('branch',   Branch);
-      Obj.Add('gitignore_written', IgnoreWritten);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'git_reset' then
-  begin
-    Result  := True;
-    WorkDir := GetGitWorkDir(Ctx);
-    Target  := '';
-    if Assigned(Ctx.Params) then Target := Ctx.Params.Get('target', '');
-    if Target = '' then
+    'git_log':
     begin
-      Ctx.Error  := True;
-      Ctx.Result := 'target required';
-      Exit;
+      Result   := True;
+      WorkDir  := GetGitWorkDir(Ctx);
+      MaxCount := 20;
+      Branch   := '';
+      if Assigned(Ctx.Params) then
+      begin
+        MaxCount := Ctx.Params.Get('max_count', 20);
+        Branch   := Ctx.Params.Get('branch', '');
+      end;
+      GitArgs := TStringList.Create;
+      try
+        GitArgs.Add('log');
+        GitArgs.Add('--oneline');
+        GitArgs.Add('--max-count=' + IntToStr(MaxCount));
+        if Branch <> '' then GitArgs.Add(Branch);
+        Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
+      finally
+        GitArgs.Free;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        if Trim(Output) = '' then Output := '(no commits)';
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
-    GitArgs := TStringList.Create;
-    try
-      GitArgs.Add('reset');
-      if Assigned(Ctx.Params) and (Ctx.Params.Get('mode', 'mixed') = 'soft') then
-        GitArgs.Add('--soft')
+
+    'git_add':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'paths required';
+        Exit;
+      end;
+      PathsJSON := Ctx.Params.Find('paths');
+      if not (PathsJSON is TJSONArray) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'paths must be a JSON array of strings';
+        Exit;
+      end;
+      PathsArr := TJSONArray(PathsJSON);
+      if PathsArr.Count = 0 then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'paths array is empty';
+        Exit;
+      end;
+      GitArgs := TStringList.Create;
+      try
+        GitArgs.Add('add');
+        for En in PathsArr do
+          GitArgs.Add(En.Value.AsString);
+        Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
+      finally
+        GitArgs.Free;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_commit':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Message := '';
+      if Assigned(Ctx.Params) then Message := Ctx.Params.Get('message', '');
+      if Assigned(Ctx.Params) and Ctx.Params.Get('amend', False) then
+      begin
+        { rewriting a commit others may have fetched forces a push over theirs }
+        if HeadIsOnRemote(WorkDir) then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'Not amended: the last commit is already on a remote branch. ' +
+            'Make a new commit instead';
+          Exit;
+        end;
+        if Message = '' then
+          Ok := RunGit(['commit', '--amend', '--no-edit'], WorkDir, Output)
+        else
+          Ok := RunGit(['commit', '--amend', '-F', '-'], WorkDir, Output, Message);
+      end
       else
-        GitArgs.Add('--mixed');
-      GitArgs.Add(Target);
-      Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
-    finally
-      GitArgs.Free;
+      begin
+        if Message = '' then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'message required (unless amend=true)';
+          Exit;
+        end;
+        Ok := RunGit(['commit', '-F', '-'], WorkDir, Output, Message);
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('output',   Output);
-      Obj.Add('work_dir', WorkDir);
-      if not Ok then Ctx.Error := True;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
+
+    'git_checkout':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Target  := '';
+      if Assigned(Ctx.Params) then Target := Ctx.Params.Get('target', '');
+      if Target = '' then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'target required';
+        Exit;
+      end;
+      if Assigned(Ctx.Params) and Ctx.Params.Get('create', False) then
+      begin
+        { a new branch: target is its name, start_point where it begins (default HEAD) }
+        Branch := Trim(Ctx.Params.Get('start_point', ''));
+        if (Target[1] = '-') or (Pos(' ', Target) > 0) or
+           ((Branch <> '') and (Branch[1] = '-')) then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'Invalid branch name or start_point';
+          Exit;
+        end;
+        if Branch <> '' then
+          Ok := RunGit(['checkout', '-b', Target, Branch], WorkDir, Output)
+        else
+          Ok := RunGit(['checkout', '-b', Target], WorkDir, Output);
+      end
+      else
+        Ok := RunGit(['checkout', Target], WorkDir, Output);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_branches':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Ok := RunGit(['branch', '-a', '--format=%(HEAD) %(refname:short)'],
+                   WorkDir, Output);
+      Obj := TJSONObject.Create;
+      try
+        if Trim(Output) = '' then Output := '(no branches)';
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_branch_delete':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Target  := '';
+      if Assigned(Ctx.Params) then Target := Trim(Ctx.Params.Get('branch', ''));
+      if (Target = '') or (Target[1] = '-') or (Pos(' ', Target) > 0) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'branch required: the name of a local branch (no spaces, not starting with -)';
+        Exit;
+      end;
+      { -d, never -D: git itself refuses a branch with commits no other branch has,
+        and the branch that is checked out }
+      Ok := RunGit(['branch', '-d', Target], WorkDir, Output);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_cherry_pick':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      if Assigned(Ctx.Params) and Ctx.Params.Get('abort', False) then
+        Ok := RunGit(['cherry-pick', '--abort'], WorkDir, Output)
+      else
+      begin
+        Target := '';
+        if Assigned(Ctx.Params) then Target := Trim(Ctx.Params.Get('commit', ''));
+        if (Target = '') or (Target[1] = '-') or (Pos(' ', Target) > 0) then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'commit required: a commit, or a range such as a..b (no spaces, not starting with -); ' +
+            'or abort=true to leave a cherry-pick that stopped on a conflict';
+          Exit;
+        end;
+        Ok := RunGit(['cherry-pick', '--no-edit', Target], WorkDir, Output);
+        if not Ok then
+          Output := Trim(Output) + LineEnding + 'Stopped. Resolve the conflict and commit by hand, ' +
+            'or call again with abort=true to undo it.';
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_archive':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Target  := '';   { the output file }
+      Branch  := 'HEAD';
+      Message := '';   { prefix }
+      if Assigned(Ctx.Params) then
+      begin
+        Target  := Trim(Ctx.Params.Get('output', ''));
+        Branch  := Trim(Ctx.Params.Get('ref', 'HEAD'));
+        Message := Trim(Ctx.Params.Get('prefix', ''));
+      end;
+      if Branch = '' then Branch := 'HEAD';
+      if not FilenameIsAbsolute(Target) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'output required: the absolute path of the archive to write (.tar, .tar.gz, .tgz or .zip)';
+        Exit;
+      end;
+      if FileExists(Target) or DirectoryExists(Target) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Refused: ' + Target + ' exists already; an archive is never overwritten';
+        Exit;
+      end;
+      if (Branch[1] = '-') or (Pos(' ', Branch) > 0) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Invalid ref (no spaces, not starting with -)';
+        Exit;
+      end;
+      if (Message <> '') and (Message[Length(Message)] <> '/') then Message := Message + '/';
+      GitArgs := TStringList.Create;
+      try
+        GitArgs.Add('archive');
+        GitArgs.Add('--output=' + Target);
+        if Message <> '' then GitArgs.Add('--prefix=' + Message);
+        GitArgs.Add(Branch);
+        { only these paths: everything after -- is a path, never an option }
+        if Assigned(Ctx.Params) then
+        begin
+          PathsJSON := Ctx.Params.Find('paths');
+          if (PathsJSON is TJSONArray) and (TJSONArray(PathsJSON).Count > 0) then
+          begin
+            GitArgs.Add('--');
+            for En in TJSONArray(PathsJSON) do
+              GitArgs.Add(En.Value.AsString);
+          end;
+        end;
+        Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
+      finally
+        GitArgs.Free;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        if Ok then
+          Output := 'Wrote ' + Target + ' (' + IntToStr(FileSize(Target)) + ' bytes)';
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_stash':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Message := '';
+      if Assigned(Ctx.Params) then Message := Ctx.Params.Get('message', '');
+      GitArgs := TStringList.Create;
+      try
+        GitArgs.Add('stash');
+        GitArgs.Add('push');
+        if Message <> '' then
+        begin
+          GitArgs.Add('-m');
+          GitArgs.Add(Message);
+        end;
+        { only these paths: everything after -- is a path, never an option }
+        if Assigned(Ctx.Params) then
+        begin
+          PathsJSON := Ctx.Params.Find('paths');
+          if (PathsJSON is TJSONArray) and (TJSONArray(PathsJSON).Count > 0) then
+          begin
+            GitArgs.Add('--');
+            for En in TJSONArray(PathsJSON) do
+              GitArgs.Add(En.Value.AsString);
+          end;
+        end;
+        Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
+      finally
+        GitArgs.Free;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_stash_pop':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      I := 0;
+      if Assigned(Ctx.Params) then I := Ctx.Params.Get('index', 0);
+      Ok := RunGit(['stash', 'pop', 'stash@{' + IntToStr(I) + '}'],
+                   WorkDir, Output);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_init':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Branch  := 'main';
+      if Assigned(Ctx.Params) then Branch := Ctx.Params.Get('initial_branch', 'main');
+      if WorkDir = '' then
+      begin
+        Ctx.Error := True; Ctx.Result := 'work_dir required: no saved project or file to take it from'; Exit;
+      end;
+      if not DirectoryExists(WorkDir) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Directory does not exist: ' + WorkDir; Exit;
+      end;
+      { Never nest a repository: say where the existing one is }
+      if RunGit(['rev-parse', '--show-toplevel'], WorkDir, Output) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := WorkDir + ' is already inside the repository ' + Trim(Output);
+        Exit;
+      end;
+      if not RunGit(['check-ref-format', '--branch', Branch], WorkDir, Output) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Invalid branch name: ' + Branch; Exit;
+      end;
+      { init, then name the branch: "init -b" needs git 2.28 }
+      Ok := RunGit(['init'], WorkDir, Output);
+      if Ok then
+        Ok := RunGit(['symbolic-ref', 'HEAD', 'refs/heads/' + Branch], WorkDir, Output2);
+      IgnoreWritten := False;
+      if Ok and Assigned(Ctx.Params) and Ctx.Params.Get('gitignore', False) and
+         not FileExists(IncludeTrailingPathDelimiter(WorkDir) + '.gitignore') then
+      begin
+        GitArgs := TStringList.Create;
+        try
+          GitArgs.Text := GITIGNORE_LAZARUS;
+          GitArgs.SaveToFile(IncludeTrailingPathDelimiter(WorkDir) + '.gitignore');
+          IgnoreWritten := True;
+        finally
+          GitArgs.Free;
+        end;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        if not Ok then Output := Output + Output2;
+        Obj.Add('output',   Trim(Output));
+        Obj.Add('work_dir', WorkDir);
+        Obj.Add('branch',   Branch);
+        Obj.Add('gitignore_written', IgnoreWritten);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'git_reset':
+    begin
+      Result  := True;
+      WorkDir := GetGitWorkDir(Ctx);
+      Target  := '';
+      if Assigned(Ctx.Params) then Target := Ctx.Params.Get('target', '');
+      if Target = '' then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'target required';
+        Exit;
+      end;
+      GitArgs := TStringList.Create;
+      try
+        GitArgs.Add('reset');
+        if Assigned(Ctx.Params) and (Ctx.Params.Get('mode', 'mixed') = 'soft') then
+          GitArgs.Add('--soft')
+        else
+          GitArgs.Add('--mixed');
+        GitArgs.Add(Target);
+        Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
+      finally
+        GitArgs.Free;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('output',   Output);
+        Obj.Add('work_dir', WorkDir);
+        if not Ok then Ctx.Error := True;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
   end;
 end;
@@ -1097,17 +1307,35 @@ begin
     SCHEMA_GIT_ADD, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('git_commit',
     'Commit currently staged changes with the given message. ' +
-    'Stage files first with git_add.',
+    'Stage files first with git_add. amend=true folds them into the last commit instead ' +
+    '(new message optional); refused if that commit is already on a remote branch.',
     SCHEMA_GIT_COMMIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_checkout',
     'Switch to a branch, restore a file, or detach HEAD at a commit. ' +
-    'Pass a branch name, tag, commit hash, or file path as target.',
+    'Pass a branch name, tag, commit hash, or file path as target; create=true makes ' +
+    'a new branch of that name (from start_point, default HEAD) and switches to it.',
     SCHEMA_GIT_CHECKOUT, MCP_ANN_DEST));
   Tools.Add(MakeTool('git_branches',
     'List all local and remote branches. The current branch is prefixed with *.',
     SCHEMA_GIT_BRANCHES, MCP_ANN_RO));
+  Tools.Add(MakeTool('git_branch_delete',
+    'Delete a local branch that is fully merged (git branch -d). Git refuses the checked-out ' +
+    'branch and one whose commits no other branch has; there is no force option. Remote ' +
+    'branches are not touched.',
+    SCHEMA_GIT_BRANCH_DELETE, MCP_ANN_DEST));
+  Tools.Add(MakeTool('git_cherry_pick',
+    'Apply the changes of a commit (or a range a..b) as new commits on the current branch ' +
+    '(git cherry-pick). Git refuses on a dirty working tree. On a conflict it stops: ' +
+    'resolve and commit by hand, or call again with abort=true. Merge commits are not supported.',
+    SCHEMA_GIT_CHERRY_PICK, MCP_ANN_DEST));
+  Tools.Add(MakeTool('git_archive',
+    'Pack the committed files of a ref into a .tar, .tar.gz, .tgz or .zip (git archive); ' +
+    'the working tree is not read. The output path is checked like any file write and an ' +
+    'existing file is never overwritten.',
+    SCHEMA_GIT_ARCHIVE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_stash',
-    'Stash uncommitted changes (staged and unstaged) with an optional message. ' +
+    'Stash uncommitted changes (staged and unstaged) with an optional message, all of ' +
+    'them or only those of the given paths. ' +
     'Use git_stash_pop to restore them.',
     SCHEMA_GIT_STASH, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_stash_pop',

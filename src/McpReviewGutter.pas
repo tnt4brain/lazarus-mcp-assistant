@@ -29,7 +29,7 @@ procedure McpGutterDetach(AEdit: TSynEdit; const AFile: string);
 implementation
 
 uses
-  SynGutterBase, LazSynEditText, SynEditTypes, SynEditMiscProcs;
+  SynGutterBase, LazSynEditText, SynEditMiscProcs;
 
 const
   KindNone = 0;

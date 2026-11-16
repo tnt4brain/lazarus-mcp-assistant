@@ -30,3 +30,5 @@ ADR-007 was never assigned; no document is missing.
 | [0023](0023-windows-terminal-choice.md) | # ADR-023 — The terminal Claude Code starts in on Windows is a setting |
 | [0024](0024-show-markdown-tool.md) | # ADR-024 — `ide_show_markdown`: show a Markdown document to the user in an IDE window |
 | [0025](0025-disk-conflict-review-window.md) | # ADR-025 — A review window for files changed on disk while the editor has unsaved changes |
+| [0026](0026-rebuild-sequence.md) | # ADR-026 — The IDE rebuild checks first and recovers from a failed build |
+| [0027](0027-navigation-and-refactoring-tools.md) | # ADR-027 — Navigation and refactoring beyond references and rename |

@@ -114,11 +114,11 @@ const
   SCHEMA_FIND_ALL_REFERENCES =
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path to the file containing the declaration"},' +
-    '"line":{"type":"integer","description":"Line of the declaration (1-based)"},' +
+    '"line":{"type":"integer","description":"Line of the declaration (1-based), required here; if you only know a use of the name, get the declaration position from code_find_declaration first"},' +
     '"col":{"type":"integer","description":"Column of the declaration (1-based)"},' +
     '"also":{"type":"array","items":{"type":"string"},"description":"Also search other sources: same_folder (the file''s folder), lcl, components, rtl, fcl (FPC packages), packages (the packages loaded in the IDE). Only files that mention the name are parsed. The answer then is an object with references, extra_files_searched and truncated"},' +
     '"search_dir":{"type":"string","description":"Also search this folder and its subfolders"},' +
-    '"max_files":{"type":"integer","description":"At most this many extra files that mention the name are searched (default 300); the answer says truncated if there were more"},' +
+    '"max_files":{"type":"integer","description":"At most this many extra files that mention the name are searched (default 300; 0 searches none); the answer says truncated if there were more"},' +
     PKG_SCOPE_PROPS + '},' +
     '"required":["file","line","col"]}';
 
@@ -164,7 +164,7 @@ const
   SCHEMA_ADD_UNIT_TO_USES =
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path to the Pascal file to modify"},' +
-    '"unit_name":{"type":"string","description":"Unit name to add to the uses clause"},' +
+    '"unit_name":{"type":"string","description":"Name of an existing unit to add to the uses clause (this tool creates no unit)"},' +
     '"in_interface":{"type":"boolean","description":"Add to interface uses (true, default) or implementation uses (false)"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","unit_name"]}';
@@ -173,7 +173,7 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
-    '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
+    '"class_name":{"type":"string","description":"Pascal class type that owns the method (not a form component class); omit for a standalone procedure"},' +
     '"line":{"type":"integer","description":"A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
     '"text":{"type":"string","description":"Pascal text to insert at the start of the procedure body, immediately after begin"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
@@ -183,7 +183,7 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
-    '"class_name":{"type":"string","description":"Class name for a method; omit for a standalone procedure"},' +
+    '"class_name":{"type":"string","description":"Pascal class type that owns the method (not a form component class); omit for a standalone procedure"},' +
     '"line":{"type":"integer","description":"A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
     '"new_body":{"type":"string","description":"New body content placed between begin and end; replaces everything currently there"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
@@ -192,7 +192,7 @@ const
   SCHEMA_ADD_TO_CLASS_SECTION =
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path"},' +
-    '"class_name":{"type":"string","description":"Class type name (e.g. TMyForm)"},' +
+    '"class_name":{"type":"string","description":"Pascal class type to add the member to (e.g. TMyForm); not a component class"},' +
     '"section":{"type":"string","description":"Class section to append to: public (default), private, protected, or published"},' +
     '"text":{"type":"string","description":"Declaration text to append to the section"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
@@ -202,7 +202,7 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name to inspect (without class prefix)"},' +
-    '"class_name":{"type":"string","description":"Class name for a method; omit for standalone procedures"},' +
+    '"class_name":{"type":"string","description":"Pascal class type that owns the method (not a form component class); omit for standalone procedures"},' +
     '"line":{"type":"integer","description":"1-based line inside the procedure — alternative to proc_name; finds the enclosing scope"},' +
     '"col":{"type":"integer","description":"1-based column used together with line"},' +
     '"depth":{"type":"integer","description":"How many levels of statements to list (default 1: those of the body; deeper ones are counted as nested). Up to 10"}},' +
@@ -1320,7 +1320,6 @@ var
   FilePath   : string;
   Symbol     : string;
   NewName    : string;
-  Col        : Integer;
   Line       : Integer;
   CodeBuf    : TCodeBuffer;
   NewCode    : TCodeBuffer;
@@ -2258,7 +2257,9 @@ begin
     'Find where an identifier is declared using Codetools. ' +
     'Returns declaration file, line, column and a short context snippet. Resolves through ' +
     'the unit''s uses clauses (a type from Classes or a sibling unit) from a use of the ' +
-    'name in file, so it also works in a program (.lpr); line and col pick a particular use.',
+    'name in file, so it also works in a program (.lpr); line and col, both optional, pick a ' +
+    'particular USE of the name. Only reports the place; code_goto_declaration also moves the ' +
+    'editor there.',
     SCHEMA_GET_SYMBOL_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('code_get_unit_interface',
     'Return only the interface section of a Pascal unit ' +
@@ -2291,7 +2292,8 @@ begin
   Tools.Add(MakeTool('code_goto_declaration',
     'Find where an identifier is declared and jump the editor cursor there. ' +
     'Opens the declaration file if needed. Resolves like code_find_declaration, ' +
-    'including names from the uses clauses.',
+    'including names from the uses clauses; use that one when you only need the position ' +
+    'and do not want the user''s editor to move.',
     SCHEMA_GOTO_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('project_search',
     'Search for a text substring (case-insensitive) across the project''s source ' +

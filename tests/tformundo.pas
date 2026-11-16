@@ -38,6 +38,7 @@ type
     procedure TestGetMenuNames;
     procedure TestDeleteUndoKeepsPosition;
     procedure TestFormItselfNotUndoable;
+    procedure TestAutoSave;
   end;
 
 implementation
@@ -85,6 +86,36 @@ begin
   else
     Result := Call('form_get_lfm', ',"component_name":' + JsonStr(AComp));
   CheckFalse(IsError(Result), Result);
+end;
+
+function FileText(const AFile: string): string;
+var
+  SL : TStringList;
+begin
+  SL := TStringList.Create;
+  try
+    SL.LoadFromFile(AFile);
+    Result := SL.Text;
+  finally
+    SL.Free;
+  end;
+end;
+
+procedure TTestFormUndo.TestAutoSave;
+var
+  T : string;
+begin
+  { without auto_save the change stays in the designer }
+  T := Call('form_set_properties', ',"component_name":"btnOK","properties":{"Caption":"Kept"}');
+  CheckFalse(IsError(T), T);
+  CheckEquals(0, Pos('"saved"', T), 'no saved key without auto_save: ' + T);
+  CheckEquals(0, Pos('Kept', FileText(FDir + 'fixtureform.lfm')), 'disk untouched');
+  { with it the unit and the .lfm are written }
+  T := Call('form_set_properties',
+            ',"component_name":"btnOK","properties":{"Caption":"Saved"},"auto_save":true');
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"saved":true', T) > 0, 'saved: ' + T);
+  CheckTrue(Pos('Saved', FileText(FDir + 'fixtureform.lfm')) > 0, 'in the .lfm on disk');
 end;
 
 procedure TTestFormUndo.TestNothingToUndo;

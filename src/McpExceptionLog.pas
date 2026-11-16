@@ -191,7 +191,8 @@ end;
 procedure RegisterExceptionLogSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('ide_get_exceptions',
-    'Unhandled exceptions the IDE showed in its error dialog since it started ' +
+    'Unhandled exceptions of the IDE itself (not of a program being debugged: that is ' +
+    'debug_get_exception) that it showed in its error dialog since it started ' +
     '(access violations and others, outside tool calls), newest last: class, ' +
     'message, stack, and the last MCP tool called before. Also appended to ' +
     'log_file, which survives a restart.',

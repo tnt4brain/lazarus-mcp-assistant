@@ -17,7 +17,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, Types,
+  Classes, SysUtils,
   LazIDEIntf, SrcEditorIntf, PackageIntf, MacroIntf, LazFileUtils, Controls,
   fpjson,
   Converter, ConvertTypes, JcfRegistrySettings, JcfUiTools, ParseTreeNode,

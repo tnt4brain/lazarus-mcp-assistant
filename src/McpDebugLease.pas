@@ -104,7 +104,6 @@ var
   GIdleMs       : QWord = DEFAULT_LEASE_IDLE_S * 1000;
   GLastActivity : QWord = 0;
   GInFlight     : Integer = 0;              { owner calls running }
-  GAcquiredAt   : TDateTime = 0;
   GDebugBusy    : LongInt = 0;              { debugger lock, 0/1 }
   GWatchdog     : TLeaseWatchdog = nil;
 
@@ -374,7 +373,6 @@ begin
     begin
       GOwner      := AClientId;
       GOwnerLabel := LabelLocked(AClientId);
-      GAcquiredAt := Now;
       GIdleMs     := DEFAULT_LEASE_IDLE_S * 1000;
       EnsureWatchdog;
     end;

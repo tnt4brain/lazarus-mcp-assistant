@@ -17,6 +17,7 @@ type
     procedure OnCompilerFinished(Sender: TObject; BuildSuccessful: boolean);
     procedure OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
     procedure OnFormRemoved(Sender: TObject; Form: TCustomForm);
+    procedure OnFormVisibleChanged(Sender: TObject; Form: TCustomForm);
     procedure AutoAnswer(AForm: TCustomForm; AResult: TModalResult);
   public
     constructor Create;
@@ -77,7 +78,7 @@ implementation
 uses
   LazLogger, CheckLst, CodeCache, CodeToolManager,
   McpDebugGuard,  { GMcpDriven }
-  McpReviewFlow, McpReviewPaths;
+  McpReviewFlow, McpReviewPaths, McpDialogWatch;
 
 function NormalizeButtonCaption(const S: string): string;
 var
@@ -149,6 +150,7 @@ begin
     LazarusIDE.AddHandlerOnProjectBuildingFinished(@OnCompilerFinished);
   Screen.AddHandlerActiveFormChanged(@OnActiveFormChanged);
   Screen.AddHandlerRemoveForm(@OnFormRemoved);
+  Screen.AddHandlerFormVisibleChanged(@OnFormVisibleChanged);
 end;
 
 procedure TMcpIdeHookManager.UnhookIdeEvents;
@@ -157,6 +159,7 @@ begin
     LazarusIDE.RemoveHandlerOnProjectBuildingFinished(@OnCompilerFinished);
   Screen.RemoveHandlerActiveFormChanged(@OnActiveFormChanged);
   Screen.RemoveHandlerRemoveForm(@OnFormRemoved);
+  Screen.RemoveHandlerFormVisibleChanged(@OnFormVisibleChanged);
 end;
 
 var
@@ -285,11 +288,86 @@ begin
   end;
 end;
 
+{ The text a dialog shows: its labels, check boxes and the lines of its lists (the files
+  of "Some files have changed on disk"), a few dozen lines at most. }
+procedure CollectFormText(AParent: TWinControl; var AText: string; var ALines: Integer);
+var
+  I    : Integer;
+  C    : TControl;
+  Item : string;
+
+  procedure AddLine(const S: string);
+  begin
+    if (S = '') or (ALines >= 30) then Exit;
+    if AText <> '' then AText := AText + LineEnding;
+    AText := AText + S;
+    Inc(ALines);
+  end;
+
+begin
+  for I := 0 to AParent.ControlCount - 1 do
+  begin
+    C := AParent.Controls[I];
+    if C is TCustomLabel then
+      AddLine(Trim(TCustomLabel(C).Caption))
+    else if C is TCustomCheckBox then
+      AddLine('[option] ' + NormalizeButtonCaption(TCustomCheckBox(C).Caption))
+    else if C is TCustomListBox then
+      for Item in TCustomListBox(C).Items do
+        AddLine(Item)
+    else if C is TCustomMemo then
+      { what a consent dialog asks about is in a read-only memo }
+      for Item in TCustomMemo(C).Lines do
+        AddLine(Trim(Item));
+    if C is TWinControl then
+      CollectFormText(TWinControl(C), AText, ALines);
+  end;
+end;
+
+{ Report a form that is modal and visible to McpDialogWatch (ide_get_open_dialogs). }
+procedure TrackModalForm(AForm: TCustomForm);
+var
+  Txt, Btns : string;
+  Lines     : Integer;
+  Cap       : string;
+  Found     : TCustomButton;
+  Avail     : TStringList;
+begin
+  if not (Assigned(AForm) and AForm.Visible and (fsModal in AForm.FormState)) then Exit;
+  Txt := '';
+  Lines := 0;
+  CollectFormText(AForm, Txt, Lines);
+  Btns := '';
+  Avail := TStringList.Create;
+  try
+    Found := nil;
+    FindButtonByCaption(AForm, '', Found, Avail);
+    for Cap in Avail do
+    begin
+      if Btns <> '' then Btns := Btns + ', ';
+      Btns := Btns + Cap;
+    end;
+  finally
+    Avail.Free;
+  end;
+  McpTrackModalForm(AForm, AForm.Caption, Txt, Btns);
+end;
+
+procedure TMcpIdeHookManager.OnFormVisibleChanged(Sender: TObject; Form: TCustomForm);
+begin
+  if not Assigned(Form) then Exit;
+  if Form.Visible and (fsModal in Form.FormState) then
+    TrackModalForm(Form)
+  else
+    McpUntrackModalForm(Form);
+end;
+
 procedure TMcpIdeHookManager.OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
 var
   C: TComponent;
 begin
   if not Assigned(Form) or not Form.Visible then Exit;
+  TrackModalForm(Form);   { its list is filled by now: the first report may have been empty }
   if Form.ClassNameIs('TIDEExceptionDlg') then
   begin
     C := Form.FindComponent('lblMessage');
@@ -363,6 +441,7 @@ procedure TMcpIdeHookManager.OnFormRemoved(Sender: TObject; Form: TCustomForm);
 var
   Reload: TMcpDeferredReload;
 begin
+  McpUntrackModalForm(Form);
   if Assigned(Form) and Form.ClassNameIs('TDiskDiffsDlg') then
   begin
     { the IDE has done its own reload; now the files it left alone go to the review }

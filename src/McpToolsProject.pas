@@ -21,11 +21,11 @@ uses
   Classes, SysUtils,
   LazIDEIntf, ProjectIntf, PackageIntf, SrcEditorIntf, LazFileUtils, FileUtil, CompOptsIntf,
   MacroIntf, Controls, Forms, StdCtrls, IDEDialogs, LCLPlatformDef, StrUtils, MenuIntf, ExtCtrls,
-  Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
+  Project, ProjectIcon, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpToolsPackages, McpDialogWatch, McpIdeListeners,
-  McpSessionLog, McpToolLog, McpReport;
+  McpSessionLog, McpToolLog, McpReport, McpConsent, McpNativeDialog;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -67,6 +67,20 @@ const
     '"output_dir":{"type":"string","description":"Unit output directory; macros like $(TargetOS) are expanded at build time"},' +
     '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read project_get_settings first to preserve existing flags)"},' +
     '"debug_info":{"type":"string","description":"Debug information (-g): none, dwarf3, dwarf2, dwarf2set, stabs or auto. The FpDebug debugger (debug_run) needs a dwarf format; rebuild afterwards"},' +
+    '"build_mode":{"type":"string","description":"Make this build mode the active one (name as listed in build_modes of project_get_settings). Applied first: target_os, widgetset, the switches and the other settings in the same call change this mode. The other modes keep theirs"},' +
+    '"icon":{"type":"string","description":"Application icon: the path of a Windows .ico file (relative to the project folder), \"default\" for the IDE''s icon, or \"none\" to remove it. Stored in the project and written next to it as <project>.ico at the next build"},' +
+    '"use_manifest":{"type":"boolean","description":"Embed the Windows application manifest (visual styles, DPI awareness; Windows targets)"},' +
+    '"heaptrc":{"type":"boolean","description":"Heap-leak report at exit (-gh, unit heaptrc). The report goes to stderr; project_run returns it as heap_report. Rebuild afterwards"},' +
+    '"trash_variables":{"type":"boolean","description":"Fill new variables and heap blocks with junk to expose use of uninitialised data (-gt)"},' +
+    '"line_info":{"type":"boolean","description":"Source lines in run-time error and heaptrc call stacks (-gl, unit lineinfo)"},' +
+    '"io_checks":{"type":"boolean","description":"I/O checking (-Ci)"},' +
+    '"range_checks":{"type":"boolean","description":"Range checking (-Cr)"},' +
+    '"overflow_checks":{"type":"boolean","description":"Integer overflow checking (-Co)"},' +
+    '"stack_checks":{"type":"boolean","description":"Stack checking (-Ct)"},' +
+    '"assertions":{"type":"boolean","description":"Generate code for assert() (-Sa)"},' +
+    '"smart_link":{"type":"boolean","description":"Smart-link units, a smaller executable (-CX -XX)"},' +
+    '"verify_method_calls":{"type":"boolean","description":"Verify that a method is called on a valid object (-CR)"},' +
+    '"optimization":{"type":"integer","description":"Optimization level 0 (none) to 3 (-O1..-O3)"},' +
     '"widgetset":{"type":"string","description":"LCL widgetset of the active build mode (win32, qt5, qt6, gtk2, gtk3, cocoa, ...); \"default\" or empty string = the platform''s default. Packages using the LCL are rebuilt for it at the next build"}}}';
 
   SCHEMA_ADD_FILE_TO_PROJECT =
@@ -81,7 +95,7 @@ const
 
   SCHEMA_CREATE_FORM =
     '{"type":"object","properties":{' +
-    '"unit_name":{"type":"string","description":"Pascal unit name for the new form (e.g. UnitSettings)"},' +
+    '"unit_name":{"type":"string","description":"Name of the NEW unit to create for the form (e.g. UnitSettings)"},' +
     '"kind":{"type":"string","enum":["form","datamodule","frame"],"description":"What to create (default form)"},' +
     '"directory":{"type":"string","description":"Directory for the new files; defaults to the active project directory, or the package directory with package_name/lpk_path"},' +
     '"package_name":{"type":"string","description":"Add the new unit to this loaded package instead of the active project"},' +
@@ -108,6 +122,13 @@ const
     '"lpk_path":{"type":"string","description":"Or a package by its .lpk path"},' +
     '"dry_run":{"type":"boolean","description":"List the stray files without deleting them ' +
     '(default true); pass false to actually delete"}}}';
+
+  SCHEMA_LIST_DIRECTORY =
+    '{"type":"object","properties":{' +
+    '"directory":{"type":"string","description":"The folder to list: absolute, or relative to the project''s folder (default: the project''s folder)"},' +
+    '"depth":{"type":"integer","description":"Levels to list, 1..5 (default 1: the folder''s own entries)"},' +
+    '"max_entries":{"type":"integer","description":"At most this many entries, 1..5000 (default 500); the result says truncated"},' +
+    '"include_hidden":{"type":"boolean","description":"Also list names that start with a dot, .git included (default false)"}}}';
 
   SCHEMA_OPEN_PROJECT =
     '{"type":"object","properties":{' +
@@ -440,6 +461,153 @@ begin
   LazarusIDE.PrepareBuildTarget(True);
 end;
 
+{ ── Build modes ──────────────────────────────────────────────────────────── }
+
+{ The build mode named AName: exact first, then ignoring case; nil if none.  AKnown is
+  the list of identifiers, for the refusal text. }
+function FindBuildMode(Proj: TProject; const AName: string;
+  out AKnown: string): TProjectBuildMode;
+var
+  I : Integer;
+begin
+  Result := nil;
+  AKnown := '';
+  for I := 0 to Proj.BuildModes.Count - 1 do
+  begin
+    AKnown := AKnown + IfThen(AKnown <> '', ', ') + Proj.BuildModes[I].Identifier;
+    if Proj.BuildModes[I].Identifier = AName then
+      Result := Proj.BuildModes[I];
+  end;
+  if Result = nil then
+    for I := 0 to Proj.BuildModes.Count - 1 do
+      if SameText(Proj.BuildModes[I].Identifier, AName) then
+        Exit(Proj.BuildModes[I]);
+end;
+
+{ build_mode (the active one) and build_modes (all) of project_get/set_settings }
+procedure AddBuildModes(AObj: TJSONObject; Proj: TProject);
+var
+  Arr : TJSONArray;
+  I   : Integer;
+begin
+  Arr := TJSONArray.Create;
+  for I := 0 to Proj.BuildModes.Count - 1 do
+    Arr.Add(Proj.BuildModes[I].Identifier);
+  AObj.Add('build_mode',  Proj.ActiveBuildMode.Identifier);
+  AObj.Add('build_modes', Arr);
+end;
+
+{ Forward: the switches helper is declared further down. }
+procedure AddSwitches(AObj: TJSONObject; AOpts: TLazCompilerOptions); forward;
+
+{ mode_options of project_get_settings: every build mode with its own custom options and
+  switches, so two modes can be compared without switching the active one back and forth.
+  Read only: project_set_settings still writes the active mode. }
+procedure AddModeOptions(AObj: TJSONObject; Proj: TProject);
+var
+  Arr : TJSONArray;
+  M   : TJSONObject;
+  I   : Integer;
+  Mode: TProjectBuildMode;
+begin
+  Arr := TJSONArray.Create;
+  for I := 0 to Proj.BuildModes.Count - 1 do
+  begin
+    Mode := Proj.BuildModes[I];
+    M := TJSONObject.Create;
+    M.Add('name',   Mode.Identifier);
+    M.Add('active', Mode = Proj.ActiveBuildMode);
+    if Assigned(Mode.LazCompilerOptions) then
+    begin
+      M.Add('custom_options', Mode.LazCompilerOptions.CustomOptions);
+      AddSwitches(M, Mode.LazCompilerOptions);
+    end;
+    Arr.Add(M);
+  end;
+  AObj.Add('mode_options', Arr);
+end;
+
+{ ── Application icon and manifest ────────────────────────────────────────── }
+
+const
+  ICON_MAX_BYTES = 1024 * 1024;
+
+{ The .ico file named by the icon parameter, '' when it is none/default/empty. }
+function IconParamFile(Proj: TProject; const AValue: string): string;
+var
+  V : string;
+begin
+  V := LowerCase(Trim(AValue));
+  if (V = '') or (V = 'none') or (V = 'default') then Exit('');
+  Result := CleanAndExpandFilename(
+    CreateAbsolutePath(Trim(AValue), ExtractFilePath(Proj.ProjectInfoFile)));
+end;
+
+{ '' when the icon parameter can be applied: none, default or a readable .ico of a sane
+  size.  Called before anything changes. }
+function CheckIconParam(Proj: TProject; const AValue: string): string;
+var
+  F   : string;
+  S   : TFileStream;
+  Hdr : array[0..3] of Byte;
+begin
+  Result := '';
+  F := IconParamFile(Proj, AValue);
+  if F = '' then Exit;
+  if not FileExists(F) then Exit('icon: file not found: ' + F);
+  try
+    S := TFileStream.Create(F, fmOpenRead or fmShareDenyNone);
+    try
+      if S.Size > ICON_MAX_BYTES then Exit('icon: file is larger than 1 MB');
+      FillChar(Hdr, SizeOf(Hdr), 0);
+      if S.Size >= 4 then S.ReadBuffer(Hdr, 4);
+      { ICONDIR: reserved 0, type 1 = icon }
+      if (Hdr[0] <> 0) or (Hdr[1] <> 0) or (Hdr[2] <> 1) or (Hdr[3] <> 0) then
+        Exit('icon: not a Windows .ico file (convert a PNG to .ico first): ' + F);
+    finally
+      S.Free;
+    end;
+  except
+    on E: Exception do Result := 'icon: cannot read ' + F + ': ' + E.Message;
+  end;
+end;
+
+procedure ApplyIconParam(Proj: TProject; const AValue: string);
+var
+  Icon : TProjectIcon;
+  V, F : string;
+  S    : TFileStream;
+begin
+  Icon := TProjectIcon(Proj.ProjResources[TProjectIcon]);
+  V := LowerCase(Trim(AValue));
+  F := IconParamFile(Proj, AValue);
+  if F <> '' then
+  begin
+    S := TFileStream.Create(F, fmOpenRead or fmShareDenyNone);
+    try
+      Icon.SetStream(S);
+    finally
+      S.Free;
+    end;
+  end
+  else if V = 'default' then
+    Icon.LoadDefaultIcon
+  else
+    Icon.IsEmpty := True;
+  Proj.Modified := True;
+end;
+
+{ icon_bytes (0 = no icon), icon_file and use_manifest of project_get/set_settings }
+procedure AddResources(AObj: TJSONObject; Proj: TProject);
+var
+  Icon : TProjectIcon;
+begin
+  Icon := TProjectIcon(Proj.ProjResources[TProjectIcon]);
+  AObj.Add('icon_bytes',   Length(Icon.IconData));
+  AObj.Add('icon_file',    Icon.IcoFileName);
+  AObj.Add('use_manifest', Proj.UseManifest);
+end;
+
 { debug_info of project_get/set_settings: none, or the -g format }
 function DebugInfoName(AOpts: TLazCompilerOptions): string;
 begin
@@ -469,6 +637,92 @@ begin
   else
     Result := False;
   end;
+end;
+
+{ The on/off compiler switches of project_get/set_settings, by parameter name.  The
+  debug-run ones (heaptrc, trash_variables, line_info, the checks) are what a leak or
+  crash hunt needs; the IDE keeps them per build mode in the compiler options. }
+const
+  SWITCH_NAMES : array[0..9] of string = ('heaptrc', 'trash_variables', 'line_info',
+    'io_checks', 'range_checks', 'overflow_checks', 'stack_checks', 'assertions',
+    'smart_link', 'verify_method_calls');
+
+function SwitchValue(AOpts: TLazCompilerOptions; AIndex: Integer): Boolean;
+begin
+  case AIndex of
+    0: Result := AOpts.UseHeaptrc;
+    1: Result := AOpts.TrashVariables;
+    2: Result := AOpts.UseLineInfoUnit;
+    3: Result := AOpts.IOChecks;
+    4: Result := AOpts.RangeChecks;
+    5: Result := AOpts.OverflowChecks;
+    6: Result := AOpts.StackChecks;
+    7: Result := AOpts.IncludeAssertionCode;
+    8: Result := AOpts.SmartLinkUnit;
+  else Result := AOpts.VerifyObjMethodCall;
+  end;
+end;
+
+procedure SetSwitchValue(AOpts: TLazCompilerOptions; AIndex: Integer; AValue: Boolean);
+begin
+  case AIndex of
+    0: AOpts.UseHeaptrc := AValue;
+    1: AOpts.TrashVariables := AValue;
+    2: AOpts.UseLineInfoUnit := AValue;
+    3: AOpts.IOChecks := AValue;
+    4: AOpts.RangeChecks := AValue;
+    5: AOpts.OverflowChecks := AValue;
+    6: AOpts.StackChecks := AValue;
+    7: AOpts.IncludeAssertionCode := AValue;
+    8: AOpts.SmartLinkUnit := AValue;
+  else AOpts.VerifyObjMethodCall := AValue;
+  end;
+end;
+
+{ '' when every switch given is a boolean and optimization is 0..3, else why not.
+  Called before anything changes. }
+function CheckSwitches(AParams: TJSONObject): string;
+var
+  SwitchName : string;
+  D          : TJSONData;
+begin
+  Result := '';
+  if AParams = nil then Exit;
+  for SwitchName in SWITCH_NAMES do
+  begin
+    D := AParams.Find(SwitchName);
+    if (D <> nil) and (D.JSONType <> jtBoolean) then
+      Exit(SwitchName + ' must be true or false');
+  end;
+  D := AParams.Find('optimization');
+  if D <> nil then
+    if (D.JSONType <> jtNumber) or (D.AsInteger < 0) or (D.AsInteger > 3) or
+       (D.AsFloat <> D.AsInteger) then
+      Exit('optimization must be 0 (none), 1, 2 or 3');
+end;
+
+procedure ApplySwitches(AParams: TJSONObject; AOpts: TLazCompilerOptions);
+var
+  I : Integer;
+  D : TJSONData;
+begin
+  if AParams = nil then Exit;
+  for I := Low(SWITCH_NAMES) to High(SWITCH_NAMES) do
+  begin
+    D := AParams.Find(SWITCH_NAMES[I]);
+    if D <> nil then SetSwitchValue(AOpts, I, D.AsBoolean);
+  end;
+  D := AParams.Find('optimization');
+  if D <> nil then AOpts.OptimizationLevel := D.AsInteger;
+end;
+
+procedure AddSwitches(AObj: TJSONObject; AOpts: TLazCompilerOptions);
+var
+  I : Integer;
+begin
+  for I := Low(SWITCH_NAMES) to High(SWITCH_NAMES) do
+    AObj.Add(SWITCH_NAMES[I], SwitchValue(AOpts, I));
+  AObj.Add('optimization', AOpts.OptimizationLevel);
 end;
 
 const
@@ -685,11 +939,129 @@ begin
   end;
 end;
 
+{ ── project_list_directory ───────────────────────────────────────────────── }
+
+{ The entries of ABase + ASub, folders first, then files, each sorted by name; ASub is
+  '' or ends with '/'.  Stops (AStop) once AEntries holds AMax of them. }
+procedure ListDirectoryInto(const ABase, ASub: string; ADepth, AMax: Integer;
+  AHidden: Boolean; AEntries: TJSONArray; var AStop: Boolean);
+var
+  SR      : TSearchRec;
+  Names   : TStringList;
+  Key     : string;
+  Name    : string;
+  IsDir   : Boolean;
+  Entry   : TJSONObject;
+begin
+  Names := TStringList.Create;
+  try
+    Names.CaseSensitive := False;
+    Names.Sorted := True;
+    Names.Duplicates := dupAccept;
+    if FindFirst(ABase + ASub + '*', faAnyFile, SR) = 0 then
+    try
+      repeat
+        if (SR.Name = '.') or (SR.Name = '..') then Continue;
+        if (not AHidden) and (SR.Name[1] = '.') then Continue;
+        { '0' sorts the folders before the files ('1') }
+        if (SR.Attr and faDirectory) <> 0 then Names.Add('0' + SR.Name)
+        else Names.Add('1' + SR.Name);
+      until FindNext(SR) <> 0;
+    finally
+      FindClose(SR);
+    end;
+    for Key in Names do
+    begin
+      if AEntries.Count >= AMax then
+      begin
+        AStop := True;
+        Exit;
+      end;
+      IsDir := Key[1] = '0';
+      Name := Copy(Key, 2, MaxInt);
+      Entry := TJSONObject.Create;
+      Entry.Add('path', ASub + Name);
+      if IsDir then
+        Entry.Add('type', 'dir')
+      else
+      begin
+        Entry.Add('type', 'file');
+        Entry.Add('size', FileSize(ABase + ASub + Name));
+      end;
+      AEntries.Add(Entry);
+      if IsDir and (ADepth > 1) then
+      begin
+        ListDirectoryInto(ABase, ASub + Name + '/', ADepth - 1, AMax, AHidden, AEntries, AStop);
+        if AStop then Exit;
+      end;
+    end;
+  finally
+    Names.Free;
+  end;
+end;
+
+procedure DoListDirectory(var Ctx: TMcpToolCall);
+var
+  Dir     : string;
+  Depth   : Integer = 1;
+  MaxN    : Integer = 500;
+  Hidden  : Boolean = False;
+  Stopped : Boolean = False;
+  Entries : TJSONArray;
+  Obj     : TJSONObject;
+begin
+  Dir := '';
+  if Assigned(Ctx.Params) then
+  begin
+    Dir    := Trim(Ctx.Params.Get('directory', ''));
+    Depth  := Ctx.Params.Get('depth', 1);
+    MaxN   := Ctx.Params.Get('max_entries', 500);
+    Hidden := Ctx.Params.Get('include_hidden', False);
+  end;
+  if Depth < 1 then Depth := 1;
+  if Depth > 5 then Depth := 5;
+  if MaxN < 1 then MaxN := 1;
+  if MaxN > 5000 then MaxN := 5000;
+  { relative to the project's folder, which is also the default }
+  if (Dir = '') or not FilenameIsAbsolute(Dir) then
+  begin
+    if not (Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+            (LazarusIDE.ActiveProject.ProjectInfoFile <> '')) then
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'No saved project: give an absolute directory';
+      Exit;
+    end;
+    Dir := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile) + Dir;
+  end;
+  Dir := IncludeTrailingPathDelimiter(ExpandFileName(Dir));
+  if not DirectoryExists(Dir) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'Not a directory: ' + Dir;
+    Exit;
+  end;
+  Entries := TJSONArray.Create;
+  Obj := TJSONObject.Create;
+  try
+    ListDirectoryInto(Dir, '', Depth, MaxN, Hidden, Entries, Stopped);
+    Obj.Add('directory', Dir);
+    Obj.Add('count', Entries.Count);
+    Obj.Add('truncated', Stopped);
+    Obj.Add('entries', Entries);
+    Entries := nil;
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Entries.Free;
+    Obj.Free;
+  end;
+end;
+
 { ── ide_answer_dialog helper ─────────────────────────────────────────────── }
 
 procedure DoAnswerDialog(var Ctx: TMcpToolCall);
 var
-  Wanted, ExpectCaption, DialogCaption, AvailStr : string;
+  Wanted, ExpectCaption, DialogCaption, AvailStr, NativeErr : string;
   Modal  : TCustomForm;
   Found  : TCustomButton;
   Avail  : TStringList;
@@ -714,9 +1086,37 @@ begin
   Modal := Screen.GetCurrentModalForm;
   if not Assigned(Modal) then
   begin
+    { Not an LCL form: on Windows, IDEMessageDialog/MessageDlg often raises a
+      native TaskDialog instead (TWin32WidgetSet.PromptUser calling
+      TaskDialogIndirect directly -- see McpNativeDialog.pas), which never
+      creates a TCustomForm for Screen to find. Try answering that instead
+      of just reporting it. }
+    if TryAnswerNativeDialog(ExpectCaption, Wanted, DialogCaption, NativeErr) then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('answered', True);
+        Obj.Add('dialog', DialogCaption);
+        Obj.Add('button', Wanted);
+        Obj.Add('native', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+      Exit;
+    end;
     Ctx.Error := True;
-    Ctx.Result := 'No LCL dialog is currently modal. A native Windows dialog, if any, ' +
-      'cannot be answered from here -- see ide_get_open_dialogs.';
+    Ctx.Result := 'No LCL dialog is currently modal. ' + NativeErr;
+    Exit;
+  end;
+
+  { a dialog that asks the user for consent (install, clone, push ...) is the user's }
+  if McpIsConsentDialog(Modal) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'The open dialog "' + Modal.Caption + '" asks the user for consent: only ' +
+      'the user can answer it, an assistant may not. Tell the user it is waiting; it ' +
+      'answers "no" by itself after a few minutes. Do not look for another way.';
     Exit;
   end;
 
@@ -790,6 +1190,8 @@ var
   SaveRes    : TModalResult;
   Existing   : TStringList;
   MacroIdx   : Integer;
+  Mode       : TProjectBuildMode;
+  ModeList   : string;
   LprPath    : string;
   CreatedLpi : Boolean;
   MacroText  : string;
@@ -990,7 +1392,7 @@ begin
   else if Name = 'ide_get_open_dialogs' then
   begin
     Result := True;
-    Arr := McpOpenDialogs;
+    Arr := McpOpenDialogs(True);
     Obj := TJSONObject.Create;
     try
       Obj.Add('count', Arr.Count);
@@ -1050,7 +1452,13 @@ begin
         Obj.Add('widgetset',          EffectiveWidgetset);
         Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
         if Assigned(Proj.LazCompilerOptions) then
+        begin
           Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
+          AddSwitches(Obj, Proj.LazCompilerOptions);
+        end;
+        AddBuildModes(Obj, TProject(Proj));
+        AddModeOptions(Obj, TProject(Proj));
+        AddResources(Obj, TProject(Proj));
       end
       else
         Obj.Add('error', 'No active project');
@@ -1082,6 +1490,42 @@ begin
       Ctx.Result := 'debug_info must be none, dwarf3, dwarf2, dwarf2set, stabs or auto';
       Exit;
     end;
+    Ctx.Result := CheckSwitches(Ctx.Params);
+    if Ctx.Result <> '' then
+    begin
+      Ctx.Error := True; Exit;
+    end;
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('use_manifest') <> nil) and
+       (Ctx.Params.Find('use_manifest').JSONType <> jtBoolean) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'use_manifest must be true or false'; Exit;
+    end;
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('icon') <> nil) then
+    begin
+      Ctx.Result := CheckIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
+      if Ctx.Result <> '' then
+      begin
+        Ctx.Error := True; Exit;
+      end;
+    end;
+    { the build mode first: every other setting here applies to the active mode }
+    if Assigned(Ctx.Params) and (Ctx.Params.Find('build_mode') <> nil) then
+    begin
+      Mode := FindBuildMode(TProject(Proj), Ctx.Params.Get('build_mode', ''), ModeList);
+      if Mode = nil then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Unknown build mode "' + Ctx.Params.Get('build_mode', '') +
+                      '"; one of: ' + ModeList;
+        Exit;
+      end;
+      if Mode <> TProject(Proj).ActiveBuildMode then
+      begin
+        TProject(Proj).ActiveBuildMode := Mode;
+        Proj.Modified := True;
+        LazarusIDE.PrepareBuildTarget(True);
+      end;
+    end;
     { first, so that an unknown widgetset changes nothing }
     if Assigned(Ctx.Params) and (Ctx.Params.Find('widgetset') <> nil) then
     begin
@@ -1106,6 +1550,11 @@ begin
         Proj.LazCompilerOptions.GenerateDebugInfo := DbgGen;
         if DbgGen then Proj.LazCompilerOptions.DebugInfoType := DbgType;
       end;
+      ApplySwitches(Ctx.Params, Proj.LazCompilerOptions);
+      if Ctx.Params.Find('use_manifest') <> nil then
+        TProject(Proj).UseManifest := Ctx.Params.Get('use_manifest', False);
+      if Ctx.Params.Find('icon') <> nil then
+        ApplyIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
     end;
     LazarusIDE.DoSaveProject([]);
     Obj := TJSONObject.Create;
@@ -1118,6 +1567,9 @@ begin
       Obj.Add('widgetset',          EffectiveWidgetset);
       Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
       Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
+      AddSwitches(Obj, Proj.LazCompilerOptions);
+      AddBuildModes(Obj, TProject(Proj));
+      AddResources(Obj, TProject(Proj));
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -1447,6 +1899,12 @@ begin
     DoProjectClean(Ctx);
   end
 
+  else if Name = 'project_list_directory' then
+  begin
+    Result := True;
+    DoListDirectory(Ctx);
+  end
+
   else if Name = 'ide_answer_dialog' then
   begin
     Result := True;
@@ -1475,7 +1933,9 @@ begin
     SCHEMA_REPORT, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_get_open_dialogs',
     'List modal dialogs currently blocking the IDE''s main thread: caption, text and ' +
-    'buttons for each (a short "summary" line too, when any are open). While one is ' +
+    'buttons for each (a short "summary" line too, when any are open). Message boxes, ' +
+    'the IDE''s own modal forms ("Some files have changed on disk", this plugin''s consent ' +
+    'dialogs; source "modal form") and, on Windows, native dialogs are listed. While one is ' +
     'open, no other tool call can make progress on the main thread -- ask the user to ' +
     'close or answer it; nothing here answers a dialog for you.',
     SCHEMA_GET_OPEN_DIALOGS, MCP_ANN_RO));
@@ -1485,7 +1945,9 @@ begin
   Tools.Add(MakeTool('project_get_settings',
     'Return active project compiler options: target OS/CPU, output directory, ' +
     'custom options, the widgetset the next build uses (widgetset_override: the ' +
-    'active build mode''s own choice, "" = the default), and project file path.',
+    'active build mode''s own choice, "" = the default), and project file path. ' +
+    'The other settings describe the active build mode; mode_options lists every mode ' +
+    'with its own custom_options and switches (read only).',
     SCHEMA_GET_PROJECT_SETTINGS, MCP_ANN_RO));
   Tools.Add(MakeTool('project_set_settings',
     'Write compiler options to the active project. All parameters are optional; ' +
@@ -1508,12 +1970,21 @@ begin
     'output pointed at the wrong directory. Defaults to the active project; pass ' +
     'package_name or lpk_path to target a package instead. dry_run defaults to true.',
     SCHEMA_CLEAN_PROJECT, MCP_ANN_DEST_IDEM));
+  Tools.Add(MakeTool('project_list_directory',
+    'List the files and folders of a directory on disk, not only the project''s own files ' +
+    '(project_list_files): docs, tests, tools and the like. Folders first, then files, ' +
+    'each sorted by name; paths are relative to the listed directory, with forward slashes; ' +
+    'files carry their size. depth goes down at most 5 levels; a result stops at ' +
+    'max_entries and says truncated.',
+    SCHEMA_LIST_DIRECTORY, MCP_ANN_RO));
   Tools.Add(MakeTool('ide_answer_dialog',
-    'Click a button on the LCL dialog currently blocking the IDE''s main thread ' +
-    '(see ide_get_open_dialogs for what''s open and its button captions). Only LCL ' +
-    'dialogs can be answered this way -- a native Windows dialog has no form to click ' +
-    'into. Pass caption too to guard against answering a different dialog than the one ' +
-    'you saw.',
+    'Click a button on the dialog currently blocking the IDE''s main thread ' +
+    '(see ide_get_open_dialogs for what''s open and its button captions). An LCL dialog is ' +
+    'answered through its form; on Windows a native dialog (a TaskDialog, no form) is answered ' +
+    'by clicking its button, and several of them need caption to pick one. A dialog that asks ' +
+    'the user for consent (install, clone ...) is never answered. Pass caption too to guard ' +
+    'against answering a different dialog than the one you saw. The list can show an answered ' +
+    'dialog for a few seconds more, until the call that opened it returns.',
     SCHEMA_ANSWER_DIALOG, MCP_ANN_DEST));
   Tools.Add(MakeTool('form_create',
     'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +

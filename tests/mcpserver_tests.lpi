@@ -19,7 +19,7 @@
         <PackageName Value="LazUtils"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="37">
+    <Units Count="38">
       <Unit0>
         <Filename Value="mcpserver_tests.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -168,6 +168,10 @@
         <Filename Value="tcreatefile.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit36>
+      <Unit37>
+        <Filename Value="theapreport.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit37>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

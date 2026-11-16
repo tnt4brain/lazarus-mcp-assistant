@@ -214,7 +214,8 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 |---|---|
 | `project_get_directory` | Root directory of the active project (contains the `.lpi`) |
 | `project_list_files` | Source files of the active project |
-| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, debug info (`debug_info`: none, dwarf3, ...; the debugger needs DWARF), compiler and FPC version, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does) |
+| `project_list_directory` | Files and folders of any directory on disk (depth up to 5, size per file, capped) |
+| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, debug info (`debug_info`: none, dwarf3, ...; the debugger needs DWARF), compiler and FPC version, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does), and the debug-run switches `heaptrc`, `trash_variables`, `line_info`, `io_checks`, `range_checks`, `overflow_checks`, `stack_checks`, `assertions`, `smart_link`, `verify_method_calls` and `optimization` (0-3); the build modes (`build_modes` lists them, `mode_options` gives each mode's own custom options and switches (read only), `build_mode` makes one active, and the other settings of the call then change that mode); the application `icon` (an .ico file, `default` or `none`) and `use_manifest` |
 | `project_add_file` / `project_remove_file` | Project file list (files stay on disk). Adding a file already in the project reports `already_in_project`. Removing a file open in the editor is refused until it is closed |
 | `project_create_unit` | New unit on disk, added to the project and opened |
 | `project_list_packages` | Required packages as in Project Inspector: version limits, resolved `.lpk`, status (`ok`, `not_found`, ...); `recursive` adds the whole graph in compile order |
@@ -223,7 +224,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_list_todos` | `TODO` / `FIXME` / `DONE` comments, as the IDE's ToDo List shows them |
 | `project_build` | Incremental build; returns success and errors |
 | `project_get_compiler_errors` | Errors and warnings of the last build |
-| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `wait_seconds`, default 10; a program still running comes back with `running: true`) |
+| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `wait_seconds`, default 10; a program still running comes back with `running: true`); a heaptrc report in stderr also comes back parsed as `heap_report` (unfreed blocks and bytes, each leak's size and call stack) |
 | `project_run_output` | The output of that program since the last read, its exit code once it ended; can wait for more, or stop it |
 | `project_run_input` | Sends text to the stdin of that program (`project_run` with `stdin` or `keep_stdin_open`), or closes it; returns the answer |
 | `project_get_windows` | The running program's visible windows (Windows: a tree of windowed controls, `Class "text" x,y wxh`, about 20 tokens a line. Linux (X11): the top-level windows only, found by process id, without the controls inside); `image` adds a PNG of each window (scaled to `max_size`), which also shows controls without a handle such as `TLabel`. Never waits for the program, so it also works while the program is paused in the debugger (the image is then copied from the screen). `ide=true` with `window` looks at the IDE's own windows instead (a form being built, a dialog); `window` is required then, so only the windows you name are shown |
@@ -242,6 +243,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `package_find_unit` | Which loaded packages contain a unit, and whether the project depends on them — for "Can't find unit" |
 | `package_add_file` / `package_remove_file` | Files of a `.lpk`, as the package editor's Add/Remove: unit name and `Register` detected, unit/include path extended when needed |
 | `package_add_dependency` / `package_remove_dependency` | Required packages of a `.lpk`, with version limits; cycles, unknown packages and new code for the IDE are refused (ADR-013) |
+| `package_save` | Write unsaved packages to disk: the named one, or all modified ones; refused, naming the cause, when the IDE would have to ask a question |
 | `package_set_info` | Version, description, author and/or license of a `.lpk`, as on the package options' Package page; returns old and new values |
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
 | `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS in-process or through curl; plain HTTP only when neither works) |
@@ -263,17 +265,24 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 | `ide_ping` | `{"status":"ok","version":"x.y","client":"<id>"}` — confirms the server is back after `ide_rebuild` and shows the caller's identity |
 | `ide_report` | Writes versions, plugin and project settings, packages and the last 200 lines of the three logs into one Markdown file in the Lazarus config folder (`mcp-report-<UTC time>.md`, three newest kept) and returns its path; the same as Tools > MCP Assistant > Write Report. For bug reports: read it before posting |
 | `ide_get_messages` | Everything in the Messages window, all urgency levels |
+| `ide_get_open_dialogs` | The dialogs blocking the IDE's main thread: LCL modal forms and native Windows dialogs, with caption, text and button captions |
+| `ide_answer_dialog` | Clicks a button of such a dialog: through the form for an LCL dialog, by clicking the button for a native one (Windows). Never answers a consent dialog (installing, cloning ...); `caption` picks one of several |
 | `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
 | `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s. Refused, changing nothing, while an editor or a package has unsaved changes (`save_unsaved` saves them first; a package that was never saved, or has a file missing on disk, still stops it) or the package does not compile (`skip_compile` skips that check); a build that fails leaves the IDE running, reopens the editors and brings the server back, with the errors as the answer (ADR-026) |
 | `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML; `suite` runs one class or test, `env` sets environment variables for the run (for example `MCP_DEBUG_TESTS`) |
-| `ide_show_markdown` | Show a Markdown document to the user in an IDE window (tabs, without taking the focus), rendered by `TIpHtmlPanel`: headings, lists, tables, code, http(s) links, and images from a project-relative path or a Base64 `data:` URI. Display only; returns `{shown, tab}`; `tab` replaces that document ([ADR-024](docs/adr/0024-show-markdown-tool.md)) |
+| `ide_show_markdown` | Show a Markdown document to the user in an IDE window (tabs, without taking the focus), rendered by `TIpHtmlPanel`: headings, lists, tables, code, http(s) links, and images from a project-relative path or a Base64 `data:` URI. Display only; returns `{shown, tab}`; `tab` replaces that document; `file` instead of `markdown` shows a Markdown file in one tab per file that follows it (the open editor's text, else the disk), so the text is not sent each time ([ADR-024](docs/adr/0024-show-markdown-tool.md)) |
 | *(menu)* | Tools > MCP Assistant > View Markdown..., View > Markdown Viewer... and the source editor's "View as Markdown" show the active `.md` file (or one you pick) in the same window, one tab per file; relative links to other `.md` files open in it |
 
 ### Git — `git_*`
 
-`git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`,
-`git_checkout`, `git_stash`, `git_stash_pop`, `git_reset` (soft/mixed only —
-no hard reset). `work_dir` defaults to the project directory.
+`git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`
+(`amend=true` folds the staged changes into the last commit; refused once a remote
+branch holds it), `git_checkout` (`create=true` makes a new branch), `git_branch_delete` (a merged local
+branch only, `git branch -d`; no force), `git_cherry_pick` (a commit or a range `a..b`;
+`abort=true` undoes one that stopped on a conflict), `git_archive` (committed files of a ref
+into a new .tar, .tar.gz, .tgz or .zip; never overwrites; the output path is write-checked), `git_stash` (all changes, or
+only `paths`), `git_stash_pop`, `git_reset` (soft/mixed only — no hard reset).
+`work_dir` defaults to the project directory.
 
 `git_init` makes a repository of an existing directory and keeps its files
 (`initial_branch`, default `main`; `gitignore=true` adds a Lazarus
@@ -432,7 +441,9 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestSettingsFile` | 3 | Nothing (always runs): settings save/load, obsolete keys removed |
 | `TTestProtocol` | 12 | MCP server reachable: JSON-RPC, `initialize` (version negotiation, instructions) |
 | `TTestAuth` | 7 | MCP server reachable |
-| `TTestProjectTools` | 6 | MCP server reachable |
+| `TTestProjectTools` | 15 | MCP server reachable: project tool schemas, `project_clean`, dialog tools, `project_list_directory` on a temp folder |
+| `TTestGitWrite` | 16 | MCP server reachable: `git_checkout`/`reset`/`stash`/`commit` (amend)/`branch_delete`/`cherry_pick`/`archive`/`init` on temp repositories |
+| `TTestDialogHooks` | 2 | Only with `MCP_TEST_HOOKS=1` set for the IDE and the test run: opens a real native dialog through a test-only hook and answers it with `ide_answer_dialog` |
 | `TTestSession` | 8 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp`, 404 for unknown session ids |
 | `TTestToolSmoke` | 22 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
