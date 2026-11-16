@@ -1840,11 +1840,13 @@ begin
     'package_name or lpk_path to target a package instead. dry_run defaults to true.',
     SCHEMA_CLEAN_PROJECT, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('ide_answer_dialog',
-    'Click a button on the LCL dialog currently blocking the IDE''s main thread ' +
-    '(see ide_get_open_dialogs for what''s open and its button captions). Only LCL ' +
-    'dialogs can be answered this way -- a native Windows dialog has no form to click ' +
-    'into. Pass caption too to guard against answering a different dialog than the one ' +
-    'you saw.',
+    'Click a button on the dialog currently blocking the IDE''s main thread ' +
+    '(see ide_get_open_dialogs for what''s open and its button captions). An LCL dialog is ' +
+    'answered through its form; on Windows a native dialog (a TaskDialog, no form) is answered ' +
+    'by clicking its button, and several of them need caption to pick one. A dialog that asks ' +
+    'the user for consent (install, clone ...) is never answered. Pass caption too to guard ' +
+    'against answering a different dialog than the one you saw. The list can show an answered ' +
+    'dialog for a few seconds more, until the call that opened it returns.',
     SCHEMA_ANSWER_DIALOG, MCP_ANN_DEST));
   Tools.Add(MakeTool('form_create',
     'Create a new form, data module or frame: a .pas unit and paired .lfm file, ' +

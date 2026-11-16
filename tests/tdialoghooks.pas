@@ -63,14 +63,14 @@ begin
 
   T := CallToolText('ide_get_open_dialogs', '{}', []);
   CheckTrue(Pos('MCP test dialog', T) > 0, 'the test dialog is open: ' + T);
-  CheckTrue(Pos('"count" : 1', T) > 0, 'exactly one dialog open: ' + T);
+  CheckTrue(Pos('"count":1', T) > 0, 'exactly one dialog open: ' + T);
 
   T := CallToolText('ide_answer_dialog',
     '{"button":"Cancel","caption":"MCP test dialog"}', []);
   CheckTrue(Pos('TOOL ERROR', T) <> 1, 'ide_answer_dialog answered it: ' + T);
 
   T := CallToolText('ide_get_open_dialogs', '{}', []);
-  CheckTrue(Pos('"count" : 0', T) > 0, 'the dialog is gone: ' + T);
+  CheckTrue(Pos('"count":0', T) > 0, 'the dialog is gone: ' + T);
 end;
 
 { Regression guard for the bug this suite was built to catch: a dialog that
