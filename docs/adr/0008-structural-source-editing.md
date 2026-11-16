@@ -1,6 +1,6 @@
 # ADR-008 — Token-Aware / Structural Source Editing
 
-**Status:** Tiers 1 and 2 built (renamed by ADR-010); overload disambiguation built 2026-11-15 (gap 1); tier 3 only partly: locals, no statement nodes (gaps 2 and 3 open)  
+**Status:** All three tiers built (tools renamed by ADR-010); see "As built" and "Follow-up"
 **Date:** 2026-10-06
 
 ## Context
@@ -169,36 +169,22 @@ source.
 |---|---|---|---|
 | `edit_at_position` | `editor_replace_range` (`start_line`, `start_col`, and `end_line`/`end_col` or `delete_len`; no end inserts) | `McpToolsEditor.pas` | Yes, and more: it takes a range end, opens the file if needed, `auto_save` |
 | `insert_after_uses` | `code_add_uses` (`in_interface` selects the section; duplicates handled) | `McpToolsCodeTools.pas` | Yes |
-| `insert_in_procedure` | `code_insert_in_procedure` | same | Located by name, see gap 1 |
-| `replace_procedure_body` | `code_replace_procedure_body` | same | Located by name, see gap 1 |
+| `insert_in_procedure` | `code_insert_in_procedure` | same | Located by name; several matches are refused with the candidates |
+| `replace_procedure_body` | `code_replace_procedure_body` | same | Same |
 | `add_to_class_section` | `code_add_to_class` (indents like the members around it) | same | Yes; tests in `tfinddeclaration.pas`, `tcodecomplete.pas` |
-| `get_ast_partial` | `code_get_procedure_ast` (`proc_name` + `class_name`, or `line`) | same | **Partly**, see gaps 2 and 3 |
+| `get_ast_partial` | `code_get_procedure_ast` (`proc_name` + `class_name`, or `line`) | same | Yes: statement tree, locals with types |
 
 `edit_text` and `replace_text` stayed as promised (now `editor_edit_text` and `editor_replace_range`).
 
-### Gaps against the decision
-
-1. **Overloads and same-named methods were not detected (fixed 2026-11-15, see Follow-up).** `FindProcBodyLines` returns at the first
-   match, and all three of `code_insert_in_procedure`, `code_replace_procedure_body` and
-   `code_get_procedure_ast` use it. The ADR's consequence ("return an error listing the candidates and
-   require a qualified name") was not built. Seen live: a unit with `Put(Integer)` and `Put(string)`:
-   `proc_name: "Put"` answered for the first overload without a word, the second is reachable only by
-   `line`. Without `class_name`, a name also matches the method of any class by its suffix (`.Create`),
-   and the first one wins. For the two *writing* tools this edits the wrong routine silently.
-2. **`code_get_procedure_ast` reports no statements.** `nodes` came back `[]` for a body with an
-   `if ... then` statement (two procedures tried), because CodeTools' tree does not go below the
-   `begin` block, and the `PScanner` token walk the ADR planned for statement level was never written.
-   The tool description and the README row ("block-level control flow, if/for/while/try/case") say more
-   than it delivers; what works is `scope`, `begin_line`, `end_line` and `locals`.
-3. **Locals carry a name and a line, no type** (the ADR's example has `"type"`).
-4. **Tests** (fixed for gap 1 and the three tools' basic results; the statement nodes of gap 2 have none yet, because there are none to test).
+The three things this check found missing (overloads silently resolved to the first match, an empty
+`nodes` list, locals without a type) were built the same day; see Follow-up.
 
 Not checked: the LF normalisation of inserted text and the cache flush before the CodeTools query
 (implementation notes above).
 
 ## Follow-up
 
-**Gap 1, done.** `FindProcBodyLines` collects every routine with a body that matches. One match: as
+**Overloads.** `FindProcBodyLines` collects every routine with a body that matches. One match: as
 before. Several: nothing is changed and the error lists them (`Ambiguous: "Put" matches 2 routines`, each
 with its line and its header line). The three tools take a `line` (any line inside the routine meant, so a
 line from the candidate list works) next to `class_name`; no routine contains that line: "not found", never a
@@ -206,6 +192,56 @@ guess. Tests: `tests/tprocedures.pas` (8, live: overloads refused and picked by 
 the AST tool; the same method in two classes refused and picked by `class_name`; a unique name and an
 unknown one as before; the file is untouched after a refusal).
 
-Gaps 2 and 3 are either built (a
-`PScanner` walk over the body's range, as the ADR describes) or the description and README are cut back
-to what the tool returns. Both need tests that read the result.
+**Statements and local types.** Not with `PScanner`, as the ADR planned, but with a small unit of our own,
+`McpStatements.pas` (pure RTL, no IDE) that holds only the parser: a tolerant recursive descent that never
+raises, so a half-typed body gives a shorter tree. It has no scanner. The tokens are the atoms CodeTools reads
+(`BodyStatements` in `McpToolsCodeTools.pas`, from the `begin` node of the routine), so comments, strings,
+directives, conditional code and includes are the compiler's own and cannot differ from what the other code
+tools see. Each atom is put at its line and column in the file with `CleanPosToCaret`; atoms from an include
+file are left out. The same mapping replaced `AbsoluteToLineCol` on cleaned positions in the other structural
+tools: that call is right only in plain files, and gave a wrong `end_line` after a skipped conditional block.
+`nodes` is now a tree:
+
+| field | meaning |
+|---|---|
+| `kind` | `begin`, `if`, `for`, `while`, `with`, `repeat`, `try_except`, `try_finally`, `case`, `of` (a case branch, `name` = its labels), `on` (an except handler, `name` = `E:Exception`), `else`, `asm`, `assign`, `call`, `inherited`, `raise`, `exit`, `break`, `continue`, `goto` |
+| `name` | the called routine or assigned variable (`Obj.Method`) |
+| `line`, `col`, `end_line` | where it starts and ends (`end_line` only when it spans lines), for `editor_replace_range` |
+| `role` | `then`/`else` for the branches of an `if`; `try`/`except`/`finally` for the parts of a `try` |
+| `else_line`, `handler_line` | the line of an `if`'s `else`, and of a `try`'s `except` or `finally` |
+| `children`, `nested` | the statements inside; the new parameter `depth` (default 1) says how many levels are listed, deeper ones are only counted as `nested` |
+
+Locals carry their `type` (`ExtractDefinitionNodeType`). Limits, written into the tool description: only the
+active branch of a conditional is seen (what the compiler would build) and an `asm` block is one node.
+Tests: `tests/tstatements.pas` (10, pure, with a test-local tokenizer: every construct against an expected
+tree, comments and strings, an else-if chain, line offset, a header on the `begin` line, the simple kinds,
+asm, bodies cut at every third character and with holes, 400 levels deep) and, live in `tprocedures.pas`,
+`TestAstStatementsAndLocalTypes` and `TestConditionalCodeIsTheCompilers` (skipped branches, right lines). One bug the tests found on the first run is worth keeping in mind: inside a Pascal
+is the result variable, not a recursive call.
+
+**Editing by node: `code_edit_statement`.** An AST→source printer was considered and not built: the tree is
+statement-level (expressions are token runs, not nodes), so printing it would drop comments, directives and
+formatting. The tree is used the other way round: the `line` and `col` it reports address a statement, and
+only that statement's text is cut and replaced, so the text around it is never regenerated. The assistant no
+longer has to send a whole body (`code_replace_procedure_body`) to change one statement.
+
+- Ops: `replace`, `delete`, `insert_before`, `insert_after`, `wrap` (`with`: `begin`, `try_finally`,
+  `try_except`, `if`, `while`, `for`, `with`, and `text` = the cleanup, handler, condition, header or
+  expression). The routine is the one whose body holds `line`, so no name is needed.
+- `McpStatementEdit.pas` (pure RTL, no IDE) takes the lines of the file and the tree and returns ONE range to
+  replace and its text; `DoEditStatement` applies it with `ReplaceText` on the editor (Ctrl+Z works). The
+  statement end is exact because `McpStatements` now tracks `EndCol` (internal; not in the JSON, to save tokens).
+- Text sent is dedented and then indented like the statement, so it can be sent with or without the
+  file's indentation; a `;` is added after inserted statements and dropped from a replacement.
+- Refused, with the reason: `delete` and `insert_*` on the only statement of an `if` branch, a loop, a
+  `with`, a handler or a case branch (deleting would leave `if x then ;`, which changes what follows; use
+  `replace` or `wrap` with `begin`); `wrap` of a case branch or handler; wrapping a `then` branch in an `if`
+  when the outer `if` has an `else` (it would take the `else`); several statements on one line without
+  `col` (the error lists the columns).
+- A statement sharing its line (`D; E;`) is handled inline; a trailing `// comment` stays on its line and
+  is never deleted.
+- Not done: moving a statement, `unwrap`, and positions in lines with non-ASCII text are bytes, as everywhere
+  in CodeTools.
+- Tests: `tests/tstatementedit.pas` (22, pure) and `TestEditStatement` in `tprocedures.pas` (live: wrap,
+  refusal, insert, delete with a trailing comment, replace in a branch, no routine at the line).
+is the result variable, not a recursive call.

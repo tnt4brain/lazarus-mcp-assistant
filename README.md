@@ -66,7 +66,7 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 |---|---|
 | `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
 | `code_get_unit_interface` | The interface section of a unit |
-| `code_get_procedure_ast` | Locals and block-level control flow (if/for/while/try/case…) of one routine, with line ranges |
+| `code_get_procedure_ast` | Locals (with type) and the statements of one routine as a tree (if/for/while/repeat/try/case/with, calls, assignments) with lines and columns; `depth` sets how many levels ([ADR-008](docs/adr/0008-structural-source-editing.md)) |
 | `code_find_declaration` | Where an identifier is declared, with a context snippet; follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
 | `code_goto_declaration` | Jump the editor cursor to a declaration |
 | `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
@@ -80,6 +80,7 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `package_move_unit` | Move a unit between two packages and add the requirement that makes necessary; refuses a cycle; `dry_run` shows the plan |
 | `code_add_uses` | Add a unit to the interface or implementation uses clause |
 | `code_insert_in_procedure` | Insert text right after a routine's `begin`; an overloaded name is refused with the candidates, `line` picks one |
+| `code_edit_statement` | Replace, delete, insert next to or wrap (begin, try, if, while, for, with) ONE statement of a body, found by the `line`/`col` of `code_get_procedure_ast`; the text around it stays ([ADR-008](docs/adr/0008-structural-source-editing.md)) |
 | `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end`; an overloaded name is refused with the candidates, `line` picks one |
 | `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
 | `code_complete` | Code completion as Ctrl+Shift+C does it: method bodies, property fields and setters, forward procedures, local variables, event handlers. Returns the changed lines |

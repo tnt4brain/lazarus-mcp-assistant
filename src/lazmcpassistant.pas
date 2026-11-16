@@ -17,7 +17,8 @@ uses
   McpSessionLog, McpRunProgram, McpTokens, McpTokensOptions, McpToolLog, 
   McpMessages, McpReport, McpLoggingOptions, McpMarkdown, McpImageInfo, 
   McpMarkdownView, McpToolsMarkdown, McpReviewView, McpDiff, McpReviewFlow, 
-  McpReviewPaths, McpReviewGutter, McpToolsCodeNav, LazarusPackageIntf;
+  McpReviewPaths, McpReviewGutter, McpToolsCodeNav, McpStatements, 
+  McpStatementEdit, LazarusPackageIntf;
 
 implementation
 
