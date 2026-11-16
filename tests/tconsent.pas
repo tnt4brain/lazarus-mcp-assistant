@@ -25,10 +25,41 @@ type
     procedure TestRebuildWithPackageRefused;
   end;
 
+  { An assistant must not be able to approve its own request: while a consent
+    dialog (here the one of git_clone) is open, ide_answer_dialog refuses to
+    click in it.
+
+    Opt-in, MCP_CONSENT_TESTS=1, and run it alone (--suite=TTestConsentDialog):
+    the dialog can only be answered by a human, so it stays up until somebody
+    presses "Don't clone" or 180 s pass, and the IDE's main thread is blocked
+    meanwhile.  The clone address does not exist, so even a "Clone" ends in an
+    error and writes nothing but an empty folder name that is never created. }
+  TTestConsentDialog = class(TTestCase)
+  protected
+    procedure SetUp; override;
+  published
+    procedure TestAnswerDialogRefusesConsent;
+  end;
+
 implementation
 
 uses
   Classes, SysUtils;
+
+type
+  { git_clone blocks until the dialog is answered; the test must not }
+  TCloneAsker = class(TThread)
+  protected
+    procedure Execute; override;
+  end;
+
+procedure TCloneAsker.Execute;
+begin
+  CallToolText('git_clone',
+    '{"url":"https://invalid.invalid/mcp-consent-probe.git","target_dir":' +
+    JsonStr(IncludeTrailingPathDelimiter(GetTempDir(False)) +
+      'mcp-consent-probe-' + IntToStr(GetTickCount64)) + '}', []);
+end;
 
 function ProbeLpk: string;
 begin
@@ -73,6 +104,43 @@ begin
   CheckTrue(Pos('lpk_path', T) > 0, 'names the unknown parameter: ' + T);
   CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
     'the IDE is still up');
+end;
+
+procedure TTestConsentDialog.SetUp;
+begin
+  if GetEnvironmentVariable('MCP_CONSENT_TESTS') = '' then
+    Ignore('opt-in: set MCP_CONSENT_TESTS=1 and run only this suite; it opens a consent ' +
+           'dialog that nobody but a human may close (up to 180 s)');
+end;
+
+procedure TTestConsentDialog.TestAnswerDialogRefusesConsent;
+var
+  Asker : TCloneAsker;
+  T     : string;
+  I     : Integer;
+begin
+  Asker := TCloneAsker.Create(True);
+  Asker.FreeOnTerminate := False;
+  try
+    Asker.Start;
+    T := '';
+    { the dialog needs a moment to appear: until then no modal form exists }
+    for I := 1 to 40 do
+    begin
+      Sleep(250);
+      T := CallToolText('ide_answer_dialog', '{"button":"Clone"}', []);
+      if Pos('No LCL dialog is currently modal', T) = 0 then Break;
+    end;
+    CheckEquals(1, Pos('TOOL ERROR:', T), 'refused: ' + T);
+    CheckTrue(Pos('asks the user for consent', T) > 0, 'says why: ' + T);
+    CheckTrue(Pos('answered', T) = 0, 'nothing was clicked: ' + T);
+    { the dialog is still there: a refusal must not have closed it }
+    T := CallToolText('ide_answer_dialog', '{"button":"Clone"}', []);
+    CheckTrue(Pos('asks the user for consent', T) > 0, 'still refused, still open: ' + T);
+  finally
+    Asker.WaitFor;
+    Asker.Free;
+  end;
 end;
 
 end.

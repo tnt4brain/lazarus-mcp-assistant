@@ -189,6 +189,7 @@ begin
     GetTestRegistry.AddTest(TTestSession.Suite);
     GetTestRegistry.AddTest(TTestToolSmoke.Suite);
     GetTestRegistry.AddTest(TTestConsent.Suite);
+    GetTestRegistry.AddTest(TTestConsentDialog.Suite);
     GetTestRegistry.AddTest(TTestPackageEdit.Suite);
     GetTestRegistry.AddTest(TTestFormUndo.Suite);
     GetTestRegistry.AddTest(TTestCodeComplete.Suite);
