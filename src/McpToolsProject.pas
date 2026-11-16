@@ -25,7 +25,7 @@ uses
   PackageDefs,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpToolsPackages, McpDialogWatch, McpIdeListeners,
-  McpSessionLog, McpToolLog, McpReport;
+  McpSessionLog, McpToolLog, McpReport, McpConsent;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -934,6 +934,16 @@ begin
     Ctx.Error := True;
     Ctx.Result := 'No LCL dialog is currently modal. A native Windows dialog, if any, ' +
       'cannot be answered from here -- see ide_get_open_dialogs.';
+    Exit;
+  end;
+
+  { a dialog that asks the user for consent (install, clone, push ...) is the user's }
+  if McpIsConsentDialog(Modal) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'The open dialog "' + Modal.Caption + '" asks the user for consent: only ' +
+      'the user can answer it, an assistant may not. Tell the user it is waiting; it ' +
+      'answers "no" by itself after a few minutes. Do not look for another way.';
     Exit;
   end;
 

@@ -35,6 +35,11 @@ function McpConfirmPackageInstall(const ALpkPath, AToolName: string;
 function McpConfirmClone(const AUrl, ATargetDir, ABranch, AToolName: string;
   ADepth: Integer; out AReason: string): Boolean;
 
+{ Is AForm one of the consent dialogs above?  ide_answer_dialog refuses to click in it: the
+  dialog exists so that a human decides, and the assistant must not be able to approve
+  its own request. }
+function McpIsConsentDialog(AForm: TObject): Boolean;
+
 const
   { written by package_download into the package's folder; the dialog shows it }
   MCP_DOWNLOAD_MARKER = 'mcp-download.json';
@@ -247,6 +252,11 @@ begin
   finally
     D.Free;
   end;
+end;
+
+function McpIsConsentDialog(AForm: TObject): Boolean;
+begin
+  Result := AForm is TMcpConsentForm;
 end;
 
 procedure LogToIDE(const AMsg: string);
