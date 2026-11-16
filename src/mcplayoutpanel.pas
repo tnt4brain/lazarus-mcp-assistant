@@ -34,7 +34,7 @@ implementation
 uses
   LazLogger, Clipbrd,
   McpToolsProject, McpDebugGuard, McpLauncher, McpOptions, McpTokensOptions, McpRefKeeper,
-  McpExceptionLog, McpMarkdownView;
+  McpExceptionLog, McpMarkdownView, McpReviewView, McpReviewFlow;
 
 { Called from the menu: makes a named token for a client on another machine and puts
   the config for it on the clipboard (ADR-021).  The primary token is never copied. }
@@ -216,6 +216,7 @@ begin
     InitializeExceptionLog;
     RegisterChatPanel;
     RegisterMarkdownWindow;
+    RegisterReviewWindow;
     RegisterIDECloseHook;
     // Defer auto-start (and the debugger guard) until after the IDE message
     // loop is running
@@ -234,6 +235,9 @@ begin
     RegisterIDEMenuCommand(
       SourceEditorMenuRoot, 'McpViewMarkdownEditor', 'View as Markdown',
       nil, @McpMarkdownViewActive);
+    RegisterIDEMenuCommand(
+      McpMenu, 'McpReviewActive', 'Review Active File Against Disk...',
+      nil, @McpReviewActiveEditor);
     RegisterIDEMenuSection(McpMenu, 'McpSep1');
     RegisterIDEMenuCommand(
       McpMenu, 'McpOptions', 'Options...',

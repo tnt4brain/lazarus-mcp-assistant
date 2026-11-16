@@ -55,6 +55,18 @@ function McpPrimaryAddress: string;
   repository directory), not against the IDE's working directory. }
 function McpNormalizePath(const S: string): string;
 
+{ APath lies inside ARoot (both absolute; '.' and '..' are resolved first, and the comparison is
+  the file system's: case-insensitive on Windows).  A drive or file system root as ARoot contains
+  nothing: a project there must not open the whole disk. }
+function McpPathIsUnder(const APath, ARoot: string): Boolean;
+
+{ Some segment of APath is AName, whatever the case (.git, say). }
+function McpPathHasSegment(const APath, AName: string): Boolean;
+
+{ The working tree that holds ADir: the nearest folder above it (or itself) with a .git entry,
+  with a trailing separator; '' when there is none. }
+function McpRepoRoot(const ADir: string): string;
+
 { McpNormalizePath for every path argument of a tools/call (file, file_path,
   form_file, lpk_path, work_dir, ...), in place.  AArgs may be nil. }
 procedure McpNormalizePathArgs(AArgs: TJSONObject);
@@ -82,6 +94,50 @@ begin
     Result := CleanAndExpandFilename(S)
   else
     Result := S;
+end;
+
+function McpPathIsUnder(const APath, ARoot: string): Boolean;
+var
+  P, R, Bare : string;
+begin
+  Result := False;
+  if not (FilenameIsAbsolute(APath) and FilenameIsAbsolute(ARoot)) then Exit;
+  P := McpNormalizePath(APath);
+  Bare := ExcludeTrailingPathDelimiter(McpNormalizePath(ARoot));
+  if (ExtractFilePath(Bare) = '') or (ExtractFilePath(Bare) = Bare) then Exit;   { a root }
+  R := Bare + PathDelim;
+  Result := (Length(P) > Length(R)) and (CompareFilenames(Copy(P, 1, Length(R)), R) = 0);
+end;
+
+function McpPathHasSegment(const APath, AName: string): Boolean;
+var
+  I, Start : Integer;
+begin
+  Result := False;
+  Start := 1;
+  for I := 1 to Length(APath) + 1 do
+    if (I > Length(APath)) or (APath[I] in ['/', '\']) then
+    begin
+      if SameText(Copy(APath, Start, I - Start), AName) then Exit(True);
+      Start := I + 1;
+    end;
+end;
+
+function McpRepoRoot(const ADir: string): string;
+var
+  D, Up : string;
+begin
+  Result := '';
+  if not FilenameIsAbsolute(ADir) then Exit;
+  D := ExcludeTrailingPathDelimiter(McpNormalizePath(ADir));
+  while D <> '' do
+  begin
+    if DirectoryExists(D + PathDelim + '.git') or FileExists(D + PathDelim + '.git') then
+      Exit(D + PathDelim);
+    Up := ExtractFileDir(D);
+    if (Up = '') or (Up = D) then Break;
+    D := Up;
+  end;
 end;
 
 procedure McpNormalizePathArgs(AArgs: TJSONObject);

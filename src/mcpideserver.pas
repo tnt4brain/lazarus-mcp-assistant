@@ -9,7 +9,7 @@ uses
   Classes, SysUtils, SyncObjs, fphttpserver, httpdefs, fpjson, jsonparser,
   Process,
   LazIDEIntf, LazLogger, PackageIntf,
-  McpIdeListeners, McpIdeState;
+  McpIdeListeners, McpIdeState, McpReviewFlow;
 
 type
   { Re-publishes Address so callers can bind to 127.0.0.1 }
@@ -667,12 +667,21 @@ begin
                   'project_create work now; use one of them first.';
     Exit;
   end;
+  { files an agent wrote with its own tools: reloaded now, so this call sees them
+    and the IDE does not ask the user later (ADR-011) }
+  McpReloadChangedFiles;
   try
     McpDispatch(ToolName, Ctx, Handled);
     if not Handled then
     begin
       Ctx.Error  := True;
       Ctx.Result := 'Unknown tool: ' + ToolName;
+    end;
+    { a file the agent wrote while the IDE held unsaved edits in it (ADR-025) }
+    if GMcpReviewNotice <> '' then
+    begin
+      Ctx.Result := Ctx.Result + LineEnding + LineEnding + 'Note: ' + GMcpReviewNotice;
+      GMcpReviewNotice := '';
     end;
   except
     on E: Exception do

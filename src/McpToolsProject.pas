@@ -24,7 +24,7 @@ uses
   Project, ModeMatrixOpts, TransferMacros,   { IdeProject/IdeConfig, linked via IdeDebugger }
   PackageDefs,
   fpjson, jsonparser,
-  McpToolContext, McpToolsPackages, McpDialogWatch, McpIdeListeners,
+  McpToolContext, McpToolHelpers, McpToolsPackages, McpDialogWatch, McpIdeListeners,
   McpSessionLog, McpToolLog, McpReport;
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
@@ -1252,6 +1252,10 @@ begin
       end;
     end;
     FilePath := IncludeTrailingPathDelimiter(FilePath) + NewName + '.pas';
+    if not McpCheckWritable(FilePath, PkgErr) then
+    begin
+      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+    end;
     Kind := LowerCase(Ctx.Params.Get('kind', 'form'));
     if Kind = 'form' then
       Desc := FileDescriptorForm
@@ -1522,7 +1526,8 @@ begin
     'Open a project (.lpi), closing the current one. Given a program''s .lpr ' +
     'with no .lpi, writes one next to it first (the IDE otherwise has only an unsaved ' +
     'default project open), so build, run and debug work on it. Refused while ' +
-    'debugging or building, or with unsaved changes. Clears the Messages window.',
+    'debugging or building, or with unsaved changes. Clears the Messages window. ' +
+    'Not limited to any folder, and the project''s folder then becomes one the write tools may change.',
     SCHEMA_OPEN_PROJECT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_close',
     'Close the current project, like File > Close Project: the IDE is left with no ' +
@@ -1538,7 +1543,8 @@ begin
   Tools.Add(MakeTool('project_create',
     'Create a new Lazarus project from a template. Call project_list_templates to ' +
     'discover available templates. Returns ' +
-    '{"project_file":"<path>","project_type":"<name>"}.',
+    '{"project_file":"<path>","project_type":"<name>"}. Not limited to any folder (a new ' +
+    'project has none to be inside), and its folder then becomes one the write tools may change.',
     SCHEMA_CREATE_PROJECT, MCP_ANN_WRITE));
 end;
 

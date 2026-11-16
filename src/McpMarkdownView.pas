@@ -14,7 +14,7 @@ unit McpMarkdownView;
 interface
 
 uses
-  Classes, SysUtils, Graphics;
+  Classes, SysUtils, Graphics, Forms;
 
 const
   MCP_MD_MAX_TABS = 8;
@@ -40,6 +40,10 @@ procedure McpMarkdownPickFile(Sender: TObject);
   package's Register. }
 procedure RegisterMarkdownWindow;
 
+{ A floating window of the plugin goes to the monitor of the IDE's main window (the
+  window layout may put a new one on the primary monitor). }
+procedure MoveToIdeMonitor(AForm: TCustomForm);
+
 { The picture of an img of a rendered document: a local file (relative to ABaseDir) or an
   "mcp-img:N" of AImages ('type:base64').  Checks type, size and the pixel count; nil with the
   reason in AWhy when it is not shown.  The caller frees the picture. }
@@ -49,7 +53,7 @@ function McpLoadMarkdownPicture(const AUrl, ABaseDir: string; AImages: TStrings;
 implementation
 
 uses
-  Forms, Controls, ComCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
+  Controls, ComCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
   LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEMsgIntf, IDEExternToolIntf,
   McpMarkdown, McpImageInfo, McpMessages;
 

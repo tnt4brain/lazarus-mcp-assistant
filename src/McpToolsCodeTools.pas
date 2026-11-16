@@ -5,7 +5,7 @@ unit McpToolsCodeTools;
   code_get_identifier_info, code_get_outline, code_find_references, code_rename_identifier,
   code_goto_declaration, project_search, project_create_unit, code_add_uses,
   code_insert_in_procedure, code_replace_procedure_body, code_add_to_class, code_complete,
-  code_get_procedure_ast.
+  code_get_procedure_ast, code_edit_statement.
   All edit tools work through the editor buffer with an optional auto_save flag. }
 
 {$mode objfpc}{$H+}
@@ -13,7 +13,7 @@ unit McpToolsCodeTools;
 interface
 
 uses
-  CodeCache;
+  Classes, fpjson, CodeCache;
 
 { CodeToolBoss.LoadFile that also finds a file created since the IDE last
   looked at its directory: the IDE's file caches still say it does not exist,
@@ -21,16 +21,24 @@ uses
   Main thread. }
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
 
+{ The files a search over Code's project (or package, by package_name or lpk_path in
+  Params) covers, plus the scopes "also", search_dir and max_files ask for, as
+  code_find_references takes them.  X/Y is the identifier searched for (the extra files
+  are those that mention it).  Main thread. }
+function McpScopeFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
+  Files: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
+  out Err: string): Boolean;
+
 implementation
 
 uses
-  Classes, SysUtils, StrUtils, LCLVersion,
+  SysUtils, StrUtils, LCLVersion,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf, MacroIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   BasicCodeTools,
   Controls,
-  fpjson, jsonparser,
-  McpToolContext, McpToolHelpers, McpLineDiff;
+  jsonparser,
+  McpToolContext, McpToolHelpers, McpLineDiff, McpStatements, McpStatementEdit;
 
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
 begin
@@ -196,8 +204,20 @@ const
     '"proc_name":{"type":"string","description":"Procedure or function name to inspect (without class prefix)"},' +
     '"class_name":{"type":"string","description":"Class name for a method; omit for standalone procedures"},' +
     '"line":{"type":"integer","description":"1-based line inside the procedure — alternative to proc_name; finds the enclosing scope"},' +
-    '"col":{"type":"integer","description":"1-based column used together with line"}},' +
+    '"col":{"type":"integer","description":"1-based column used together with line"},' +
+    '"depth":{"type":"integer","description":"How many levels of statements to list (default 1: those of the body; deeper ones are counted as nested). Up to 10"}},' +
     '"required":["file"]}';
+
+  SCHEMA_EDIT_STATEMENT =
+    '{"type":"object","properties":{' +
+    '"file":{"type":"string","description":"Absolute path"},' +
+    '"line":{"type":"integer","description":"Line of the statement, as code_get_procedure_ast reported it"},' +
+    '"col":{"type":"integer","description":"Column of the statement, as reported; needed only when several statements start on that line"},' +
+    '"op":{"type":"string","enum":["replace","delete","insert_before","insert_after","wrap"],"description":"replace: new text instead of the statement. delete: remove it (only where it is one of a list). insert_before / insert_after: new statements next to it (only where it is one of a list). wrap: put it inside another construct, see with"},' +
+    '"with":{"type":"string","enum":["begin","try_finally","try_except","if","while","for","with"],"description":"For wrap: the construct"},' +
+    '"text":{"type":"string","description":"replace/insert: the statement(s), without the indentation of the file (it is added). wrap: try_finally the cleanup, try_except the handler, if/while the condition, for the loop header such as I := 0 to 9, with the expression; not needed for begin"},' +
+    '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
+    '"required":["file","line","op"]}';
 
   SCHEMA_COMPLETE_CODE =
     '{"type":"object","properties":{' +
@@ -209,16 +229,34 @@ const
 
 { ── Structural helpers ───────────────────────────────────────────────────── }
 
+{ Line and column, in the file, of a position in CodeTools' cleaned source.  The two differ where
+  the compiler skips code (conditional branches) or reads an include file, so TCodeBuffer.AbsoluteToLineCol
+  on a node position is right in plain files only.  Falls back to it when the position is
+  outside the scanned code or belongs to another buffer. }
+procedure CleanToLineCol(Tool: TCodeTool; CodeBuf: TCodeBuffer; CleanPos: Integer;
+  out ALine, ACol: Integer);
+var
+  XY : TCodeXYPosition;
+begin
+  if Assigned(Tool) and Tool.CleanPosToCaret(CleanPos, XY) and (XY.Code = CodeBuf) then
+  begin
+    ALine := XY.Y;
+    ACol  := XY.X;
+  end
+  else
+    CodeBuf.AbsoluteToLineCol(CleanPos, ALine, ACol);
+end;
+
 { Extract qualified name from a ctnProcedure node's source line, lower-cased.
   E.g. 'TMyClass.DoSomething' or 'dosomething'. }
-function ExtractProcNodeName(CodeBuf: TCodeBuffer;
+function ExtractProcNodeName(Tool: TCodeTool; CodeBuf: TCodeBuffer;
   Node: TCodeTreeNode): string;
 var
   L, C, I : Integer;
   S       : string;
 begin
   Result := '';
-  CodeBuf.AbsoluteToLineCol(Node.StartPos, L, C);
+  CleanToLineCol(Tool, CodeBuf, Node.StartPos, L, C);
   S := Trim(CodeBuf.GetLine(L - 1, False));
   I := 1;
   while (I <= Length(S)) and not (S[I] in [' ', #9]) do Inc(I);
@@ -269,17 +307,17 @@ begin
         end;
         if Assigned(BeginNode) then
         begin
-          NodeName := ExtractProcNodeName(CodeBuf, Node);
+          NodeName := ExtractProcNodeName(Tool, CodeBuf, Node);
           if (NodeName = SearchKey) or
              ((ClassName = '') and
               (RightStr(NodeName, Length(SearchKey) + 1) = '.' + SearchKey)) then
           begin
-            CodeBuf.AbsoluteToLineCol(Node.StartPos, ProcFrom, C);
-            CodeBuf.AbsoluteToLineCol(Node.EndPos - 1, ProcTo, C);
+            CleanToLineCol(Tool, CodeBuf, Node.StartPos, ProcFrom, C);
+            CleanToLineCol(Tool, CodeBuf, Node.EndPos - 1, ProcTo, C);
             if (PickLine <= 0) or ((PickLine >= ProcFrom) and (PickLine <= ProcTo)) then
             begin
-              CodeBuf.AbsoluteToLineCol(BeginNode.StartPos, BL, C);
-              CodeBuf.AbsoluteToLineCol(BeginNode.EndPos - 1, EL, C);
+              CleanToLineCol(Tool, CodeBuf, BeginNode.StartPos, BL, C);
+              CleanToLineCol(Tool, CodeBuf, BeginNode.EndPos - 1, EL, C);
               Header := Trim(CodeBuf.GetLine(ProcFrom - 1, False));
               Item := TJSONObject.Create;
               Item.Add('line', ProcFrom);
@@ -358,9 +396,9 @@ begin
         if Assigned(SectNode) then
         begin
           if Assigned(SectNode.NextBrother) then
-            CodeBuf.AbsoluteToLineCol(SectNode.NextBrother.StartPos, InsertLine, C)
+            CleanToLineCol(Tool, CodeBuf, SectNode.NextBrother.StartPos, InsertLine, C)
           else
-            CodeBuf.AbsoluteToLineCol(ClsNode.EndPos - 1, InsertLine, C);
+            CleanToLineCol(Tool, CodeBuf, ClsNode.EndPos - 1, InsertLine, C);
           Result := True;
           Exit;
         end;
@@ -520,6 +558,7 @@ end;
 procedure DoRenameIdentifier(var Ctx: TMcpToolCall);
 var
   FilePath, NewName, Ident : string;
+  Refused                  : string;
   Line, Col, I             : Integer;
   DeclX, DeclY, DeclTop    : Integer;
   DryRun, AutoSave, OldOpen: Boolean;
@@ -657,6 +696,15 @@ begin
       Ctx.Result := Obj.AsJSON;
       Exit;
     end;
+    { all or nothing: a reference in a file that may not be changed (the RTL, the LCL, another
+      project's sources) stops the rename before anything is touched }
+    for I := 0 to Bufs.Count - 1 do
+      if not McpCheckWritable(TCodeBuffer(Bufs[I]).Filename, Refused) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Nothing was renamed. ' + Refused + ' (dry_run lists every reference.)';
+        Exit;
+      end;
 
     for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
       OpenBefore.Add(SourceEditorManagerIntf.SourceEditors[I].FileName);
@@ -1010,10 +1058,265 @@ begin
   end;
 end;
 
+function McpScopeFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
+  Files: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
+  out Err: string): Boolean;
+var
+  Ctx2    : TMcpToolCall;
+  Handled : Boolean;
+  List    : TJSONArray;
+  J       : Integer;
+  HasSelf : Boolean;
+begin
+  Result := False;
+  Used := False; Truncated := False; Searched := 0; Err := '';
+  Ctx2.Params := Params; Ctx2.Result := ''; Ctx2.Error := False; Ctx2.StopServer := nil;
+  McpDispatch('project_list_files', Ctx2, Handled);
+  if Ctx2.Error then begin Err := Ctx2.Result; Exit; end;
+  List := TJSONArray(GetJSON(Ctx2.Result));
+  try
+    for J := 0 to List.Count - 1 do
+      Files.Add(List.Strings[J]);
+  finally
+    List.Free;
+  end;
+  HasSelf := False;
+  for J := 0 to Files.Count - 1 do
+    if SameFileName(Files[J], Code.Filename) then HasSelf := True;
+  if not HasSelf then Files.Add(Code.Filename);
+  Result := AddExtraFiles(Params, Code, X, Y, Files, Used, Truncated, Searched, Err);
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
+
+{ The statements of the body whose begin block is BeginNode.  McpStatements has no scanner: the
+  tokens are the atoms CodeTools reads, so comments, directives, conditional code and includes
+  are the compiler's, each put at its line in the file.  Atoms that come from an include file
+  are left out. }
+function BodyStatements(Tool: TCodeTool; CodeBuf: TCodeBuffer;
+  BeginNode: TCodeTreeNode): TStmtNode;
+var
+  Toks : TStmtTokens;
+  N    : Integer;
+  XY   : TCodeXYPosition;
+  Txt  : string;
+  Ch   : Char;
+  I    : Integer;
+begin
+  SetLength(Toks, 0);
+  N := 0;
+  Tool.MoveCursorToCleanPos(BeginNode.StartPos);
+  repeat
+    Tool.ReadNextAtom;
+    if (Tool.CurPos.StartPos >= BeginNode.EndPos) or
+       (Tool.CurPos.EndPos <= Tool.CurPos.StartPos) then Break;
+    if not (Tool.CleanPosToCaret(Tool.CurPos.StartPos, XY) and (XY.Code = CodeBuf)) then Continue;
+    Txt := Copy(Tool.Src, Tool.CurPos.StartPos, Tool.CurPos.EndPos - Tool.CurPos.StartPos);
+    if N = Length(Toks) then SetLength(Toks, N * 2 + 64);
+    Toks[N].Txt  := Txt;
+    Toks[N].Up   := UpperCase(Txt);
+    Toks[N].Line := XY.Y;
+    Toks[N].Col  := XY.X;
+    Toks[N].EndLine := XY.Y;
+    Toks[N].EndCol  := XY.X + Length(Txt);
+    for I := 1 to Length(Txt) do          { a token that runs over lines (a block comment is not one) }
+      if Txt[I] = #10 then
+      begin
+        Inc(Toks[N].EndLine);
+        Toks[N].EndCol := Length(Txt) - I + 1;
+      end;
+    Ch := Txt[1];
+    if (Ch in ['A'..'Z', 'a'..'z', '_', '&']) or (Ch >= #128) then Toks[N].Kind := 0
+    else if Ch in ['0'..'9', '$', '%', '#', ''''] then Toks[N].Kind := 2
+    else Toks[N].Kind := 1;
+    Inc(N);
+  until False;
+  Result := ParseStatementTokens(Toks, N);
+end;
+
+{ A statement as JSON; ADepth levels are listed, deeper ones only counted ("nested"). }
+function StatementJson(N: TStmtNode; ADepth: Integer): TJSONObject;
+var
+  I    : Integer;
+  Kids : TJSONArray;
+begin
+  Result := TJSONObject.Create;
+  Result.Add('kind', N.Kind);
+  if N.Name <> '' then Result.Add('name', N.Name);
+  Result.Add('line', N.Line);
+  Result.Add('col', N.Col);
+  if N.EndLine > N.Line then Result.Add('end_line', N.EndLine);
+  if N.Role <> '' then Result.Add('role', N.Role);
+  if N.ElseLine > 0 then Result.Add('else_line', N.ElseLine);
+  if N.HandlerLine > 0 then Result.Add('handler_line', N.HandlerLine);
+  if N.Children.Count > 0 then
+    if ADepth > 1 then
+    begin
+      Kids := TJSONArray.Create;
+      for I := 0 to N.Children.Count - 1 do
+        Kids.Add(StatementJson(TStmtNode(N.Children[I]), ADepth - 1));
+      Result.Add('children', Kids);
+    end
+    else
+      Result.Add('nested', N.Children.Count);
+end;
+
+function StatementsJson(ARoot: TStmtNode; ADepth: Integer): TJSONArray;
+var
+  I : Integer;
+begin
+  Result := TJSONArray.Create;
+  for I := 0 to ARoot.Children.Count - 1 do
+    Result.Add(StatementJson(TStmtNode(ARoot.Children[I]), ADepth));
+end;
+
+{ The begin block of the routine whose body holds ALine, and the routine's name. }
+function FindBeginBlockAtLine(Tool: TCodeTool; CodeBuf: TCodeBuffer; ALine: Integer;
+  out BeginNode: TCodeTreeNode; out ProcName: string): Boolean;
+var
+  Node, Child : TCodeTreeNode;
+  BL, EL, X   : Integer;
+begin
+  Result := False;
+  BeginNode := nil;
+  ProcName := '';
+  Node := Tool.Tree.Root;
+  while Assigned(Node) do
+  begin
+    if Node.Desc = ctnProcedure then
+    begin
+      Child := Node.FirstChild;
+      while Assigned(Child) do
+      begin
+        if Child.Desc = ctnBeginBlock then
+        begin
+          CleanToLineCol(Tool, CodeBuf, Child.StartPos, BL, X);
+          CleanToLineCol(Tool, CodeBuf, Child.EndPos - 1, EL, X);
+          if (ALine >= BL) and (ALine <= EL) then
+          begin
+            BeginNode := Child;
+            ProcName := ExtractProcNodeName(Tool, CodeBuf, Node);
+            Exit(True);
+          end;
+        end;
+        Child := Child.NextBrother;
+      end;
+    end;
+    if Assigned(Node.FirstChild) then Node := Node.FirstChild
+    else if Assigned(Node.NextBrother) then Node := Node.NextBrother
+    else
+    begin
+      repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
+      if Assigned(Node) then Node := Node.NextBrother;
+    end;
+  end;
+end;
+
+{ code_edit_statement: one statement of a body, found by the line and column
+  code_get_procedure_ast reported, replaced, deleted, wrapped or given a neighbour.  The text of
+  the file around it is untouched (McpStatementEdit does the text work, and has no IDE). }
+procedure DoEditStatement(var Ctx: TMcpToolCall);
+var
+  FilePath, Op, W, Text, ProcName, Why : string;
+  Line, Col, I, Added                  : Integer;
+  AutoSave                             : Boolean;
+  CodeBuf                              : TCodeBuffer;
+  Tool                                 : TCodeTool;
+  BeginNode                            : TCodeTreeNode;
+  Root                                 : TStmtNode;
+  Lines                                : TStringList;
+  Edit                                 : TStmtEdit;
+  Ed                                   : TSourceEditorInterface;
+  Obj                                  : TJSONObject;
+begin
+  if not Assigned(Ctx.Params) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+  end;
+  FilePath := Ctx.Params.Get('file', '');
+  Op       := Ctx.Params.Get('op', '');
+  W        := Ctx.Params.Get('with', '');
+  Text     := Ctx.Params.Get('text', '');
+  Line     := Ctx.Params.Get('line', 0);
+  Col      := Ctx.Params.Get('col', 0);
+  AutoSave := Ctx.Params.Get('auto_save', False);
+  if (FilePath = '') or (Op = '') or (Line < 1) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'file, op and line required'; Exit;
+  end;
+  Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+  if not LazarusIDE.BeginCodeTools then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+    Exit;
+  end;
+  CodeBuf := McpLoadCode(FilePath, False);
+  if not Assigned(CodeBuf) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+  end;
+  if not CodeToolBoss.Explore(CodeBuf, Tool, True, False) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
+  end;
+  if not FindBeginBlockAtLine(Tool, CodeBuf, Line, BeginNode, ProcName) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'No routine body contains line ' + IntToStr(Line); Exit;
+  end;
+  Root := BodyStatements(Tool, CodeBuf, BeginNode);
+  try
+    Lines := TStringList.Create;
+    try
+      for I := 0 to CodeBuf.LineCount - 1 do
+        Lines.Add(CodeBuf.GetLine(I, False));
+      Edit := EditStatement(Lines, Root, Line, Col, Op, W, Text);
+    finally
+      Lines.Free;
+    end;
+  finally
+    Root.Free;
+  end;
+  if not Edit.Ok then
+  begin
+    Ctx.Error := True; Ctx.Result := Edit.Error; Exit;
+  end;
+  if not Assigned(Ed) then
+  begin
+    if not McpCheckFileToOpen(FilePath, Why) then
+    begin
+      Ctx.Error := True; Ctx.Result := Why; Exit;
+    end;
+    if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
+    end;
+    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+  end;
+  Ed.ReplaceText(Point(Edit.StartCol, Edit.StartLine), Point(Edit.EndCol, Edit.EndLine),
+                 Edit.NewText);
+  if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
+  Added := 0;
+  for I := 1 to Length(Edit.NewText) do
+    if Edit.NewText[I] = #10 then Inc(Added);
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('file',      FilePath);
+    Obj.Add('procedure', ProcName);
+    Obj.Add('op',        LowerCase(Op));
+    Obj.Add('line',      Edit.StartLine);
+    Obj.Add('end_line',  Edit.StartLine + Added);
+    if AutoSave then Obj.Add('saved', True);
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
 
 function DoDispatchCodeTools(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  Root       : TStmtNode;
+  MaxDepth   : Integer;
   FilePath   : string;
   Symbol     : string;
   NewName    : string;
@@ -1203,7 +1506,7 @@ begin
         if TreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition, ctnConstDefinition,
                               ctnProcedure, ctnProperty, ctnUseUnit] then
         begin
-          CodeBuf.AbsoluteToLineCol(TreeNode.StartPos, NewY, NewX);
+          CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, NewY, NewX);
           Entry := TJSONObject.Create;
           Entry.Add('kind', NodeDescriptionAsString(TreeNode.Desc));
           Entry.Add('line', NewY);
@@ -1406,6 +1709,10 @@ begin
       begin
         Ctx.Error := True; Ctx.Result := 'No active project to resolve relative path'; Exit;
       end;
+    end;
+    if not McpCheckWritable(FilePath, Why) then
+    begin
+      Ctx.Error := True; Ctx.Result := Why; Exit;
     end;
     if FileExists(FilePath) then
     begin
@@ -1771,6 +2078,12 @@ begin
     DoCompleteCode(Ctx);
   end
 
+  else if Name = 'code_edit_statement' then
+  begin
+    Result := True;
+    DoEditStatement(Ctx);
+  end
+
   else if Name = 'code_get_procedure_ast' then
   begin
     Result := True;
@@ -1783,6 +2096,9 @@ begin
     NewName  := Ctx.Params.Get('class_name', '');
     NewY     := Ctx.Params.Get('line',       0);
     NewX     := Ctx.Params.Get('col',        0);
+    MaxDepth := Ctx.Params.Get('depth',      1);
+    if MaxDepth < 1 then MaxDepth := 1;
+    if MaxDepth > 10 then MaxDepth := 10;
     if FilePath = '' then
     begin
       Ctx.Error := True; Ctx.Result := 'file required'; Exit;
@@ -1822,7 +2138,7 @@ begin
           begin
             if Child.Desc = ctnBeginBlock then
             begin
-              CodeBuf.AbsoluteToLineCol(Child.StartPos, I, J);
+              CleanToLineCol(Tool, CodeBuf, Child.StartPos, I, J);
               if I = BeginLine then begin BeginNode := Child; Break; end;
             end;
             Child := Child.NextBrother;
@@ -1851,13 +2167,13 @@ begin
           begin
             if Child.Desc = ctnBeginBlock then
             begin
-              CodeBuf.AbsoluteToLineCol(Child.StartPos,   I, J);
-              CodeBuf.AbsoluteToLineCol(Child.EndPos - 1, EndLine, J);
+              CleanToLineCol(Tool, CodeBuf, Child.StartPos,   I, J);
+              CleanToLineCol(Tool, CodeBuf, Child.EndPos - 1, EndLine, J);
               if (NewY >= I) and (NewY <= EndLine) then
               begin
                 BeginNode := Child;
                 BeginLine := I;
-                Symbol    := ExtractProcNodeName(CodeBuf, TreeNode);
+                Symbol    := ExtractProcNodeName(Tool, CodeBuf, TreeNode);
                 Break;
               end;
             end;
@@ -1899,9 +2215,11 @@ begin
             begin
               if TreeNode.Desc = ctnVarDefinition then
               begin
-                CodeBuf.AbsoluteToLineCol(TreeNode.StartPos, I, J);
+                CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, I, J);
                 Entry := TJSONObject.Create;
                 Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
+                Why := Tool.ExtractDefinitionNodeType(TreeNode);
+                if Why <> '' then Entry.Add('type', Why);
                 Entry.Add('line', I);
                 Outline.Add(Entry);
               end;
@@ -1912,27 +2230,19 @@ begin
         end;
       end;
       Obj.Add('locals', Outline);
-      { Block-level nodes: direct children of the BeginBlock }
-      RefArr := TJSONArray.Create;
+      { The statements: CodeTools' tree ends at the begin block, so the body text is read by
+        McpStatements }
       if Assigned(BeginNode) then
       begin
-        Child := BeginNode.FirstChild;
-        while Assigned(Child) do
-        begin
-          CodeBuf.AbsoluteToLineCol(Child.StartPos, I, J);
-          RefObj := TJSONObject.Create;
-          RefObj.Add('kind', LowerCase(NodeDescriptionAsString(Child.Desc)));
-          RefObj.Add('line', I);
-          if Child.EndPos > Child.StartPos then
-          begin
-            CodeBuf.AbsoluteToLineCol(Child.EndPos - 1, J, NewTopLine);
-            if J > I then RefObj.Add('end_line', J);
-          end;
-          RefArr.Add(RefObj);
-          Child := Child.NextBrother;
+        Root := BodyStatements(Tool, CodeBuf, BeginNode);
+        try
+          Obj.Add('nodes', StatementsJson(Root, MaxDepth));
+        finally
+          Root.Free;
         end;
-      end;
-      Obj.Add('nodes', RefArr);
+      end
+      else
+        Obj.Add('nodes', TJSONArray.Create);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;
@@ -1996,7 +2306,9 @@ begin
     SCHEMA_LIST_TODOS, MCP_ANN_RO));
   Tools.Add(MakeTool('project_create_unit',
     'Create a new Pascal unit file on disk, add it to the active project, ' +
-    'and open it in the editor. Provide content or receive a blank unit skeleton.',
+    'and open it in the editor. Provide content or receive a blank unit skeleton. ' +
+    'Only inside the project, a loaded package, the git working tree holding either, or the temp ' +
+    'folder; an existing file is refused.',
     SCHEMA_CREATE_UNIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_add_uses',
     'Add a unit to the uses clause of a Pascal file using Codetools. ' +
@@ -2040,10 +2352,26 @@ begin
     'use auto_save=true or editor_save to persist to disk.',
     SCHEMA_COMPLETE_CODE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_get_procedure_ast',
-    'Return a procedure''s local variables and its block-level control flow ' +
-    '(if, for, while, try, case, ...) with line ranges, for use with ' +
-    'editor_replace_range.',
+    'Return a routine''s local variables (name, type, line) and its statements as a tree: ' +
+    'kind (begin, if, for, while, with, repeat, try_except, try_finally, case, of, on, else, ' +
+    'assign, call, ...), name (the called routine or assigned variable), line, col, end_line, ' +
+    'and for an if its else_line, for a try its handler_line. depth (default 1) says how many ' +
+    'levels are listed; deeper ones show as "nested": n. For use with editor_replace_range. ' +
+    'The body is read with the CodeTools scanner, so only the active {$IFDEF} branch is seen; an asm block is one node. ' +
+    'To change one statement use code_edit_statement with its line and col. ' +
+    'An overloaded name is refused with the candidates; pass line or class_name.',
     SCHEMA_GET_AST_PARTIAL, MCP_ANN_RO));
+  Tools.Add(MakeTool('code_edit_statement',
+    'Change ONE statement of a routine body without sending the body: take its line and col from ' +
+    'code_get_procedure_ast, then replace it, delete it, insert statements before or after it, or ' +
+    'wrap it in begin..end, try..finally, try..except, if, while, for or with. Only that statement''s ' +
+    'text changes: the comments, directives and formatting around it stay. The text you send ' +
+    'is indented like the statement, so write it without indentation. delete and insert need ' +
+    'a statement that is one of a list (a begin block, a try part, a repeat, a case); the one ' +
+    'statement of an if, a loop or a handler is refused with the reason (use replace, or wrap with begin). ' +
+    'Positions of the statements after the edit change: read code_get_procedure_ast again. ' +
+    'Uses the editor undo stack (Ctrl+Z works).',
+    SCHEMA_EDIT_STATEMENT, MCP_ANN_WRITE));
 end;
 
 { True if CodeTools last failed because it could not find a unit or an

@@ -43,6 +43,11 @@ var
     answered automatically — see OnActiveFormChanged. }
   GMcpToolCallsActive: LongInt = 0;
 
+{ Reloads the open editors whose file an agent changed on disk with its own tools,
+  so the IDE does not ask the user later.  An editor with unsaved changes is never
+  touched.  Returns the number of editors reloaded.  Main thread only. }
+function McpReloadChangedFiles: Integer;
+
 procedure InitializeIdeHooks;
 procedure FinalizeIdeHooks;
 
@@ -70,8 +75,9 @@ function FindButtonByModalResult(AParent: TWinControl; AResult: TModalResult): T
 implementation
 
 uses
-  LazLogger, CheckLst, CodeCache,
-  McpDebugGuard;  { GMcpDriven }
+  LazLogger, CheckLst, CodeCache, CodeToolManager,
+  McpDebugGuard,  { GMcpDriven }
+  McpReviewFlow, McpReviewPaths;
 
 function NormalizeButtonCaption(const S: string): string;
 var
@@ -153,28 +159,129 @@ begin
   Screen.RemoveHandlerRemoveForm(@OnFormRemoved);
 end;
 
+var
+  GSeenFileAge: TStringList = nil;   { file name -> FileAge when last compared }
+
+{ Not LazarusIDE.DoCheckFilesOnDisk: its dialog, answered automatically, threw away
+  the unsaved edit of an editor whose file had changed too (checked live,
+  2026-11-13).  Here a modified editor is never overwritten: it goes to the review
+  window (McpReviewFlow). }
+function McpReloadChangedFiles: Integer;
+var
+  I, N     : Integer;
+  Ed       : TSourceEditorInterface;
+  FileName : string;
+  Stamp    : string;
+  Disk     : TStringList;
+  Base     : string;
+  Buf      : TCodeBuffer;
+  Asked, Kept, Taken : TStringList;   { the files of this pass that went to the user / by policy }
+begin
+  Result := 0;
+  if SourceEditorManagerIntf = nil then Exit;
+  if GSeenFileAge = nil then GSeenFileAge := TStringList.Create;
+  Disk := TStringList.Create;
+  Asked := TStringList.Create;
+  Kept := TStringList.Create;
+  Taken := TStringList.Create;
+  try
+    N := SourceEditorManagerIntf.SourceEditorCount;
+    for I := 0 to N - 1 do
+    try
+      Ed := SourceEditorManagerIntf.SourceEditors[I];
+      if Ed = nil then Continue;
+      FileName := Ed.FileName;
+      if (FileName = '') or not FileExists(FileName) then Continue;
+      Stamp := McpFileStamp(FileName);          { not FileAge: two seconds are too coarse }
+      if GSeenFileAge.Values[FileName] = Stamp then Continue;
+      GSeenFileAge.Values[FileName] := Stamp;
+      Disk.LoadFromFile(FileName);
+      if Ed.Modified then
+      begin
+        { Unsaved changes: never touched here.  When the file changed since the editor
+          and the disk last agreed, the user is asked (ADR-025). }
+        if Disk.Text = Ed.Lines.Text then Continue;
+        if McpReviewBase(FileName, Base) then
+        begin
+          if Disk.Text = Base then Continue;           { the disk did not change }
+        end
+        else
+        begin
+          Buf := CodeToolBoss.FindFile(FileName);
+          if (Buf = nil) or not Buf.FileOnDiskHasChanged then Continue;
+        end;
+        case McpReviewOffer(Ed, Disk.Text) of
+          roAsk       : Asked.Add(ExtractFileName(FileName));
+          roEditorWon : Kept.Add(ExtractFileName(FileName));
+          roDiskWon   : Taken.Add(ExtractFileName(FileName));
+        end;
+        Continue;
+      end;
+      if Disk.Text <> Ed.Lines.Text then
+      begin
+        if Assigned(LazarusIDE) and (LazarusIDE.DoRevertEditorFile(FileName) = mrOK) then
+        begin
+          Inc(Result);
+          DebugLn(['[MCP Assistant] reloaded ', FileName, ' (changed on disk)']);
+        end
+        else
+          Continue;
+      end;
+      McpReviewNoteBase(FileName, Ed.Lines.Text);    { editor and disk agree: the base }
+    except
+      on E: Exception do
+        DebugLn(['[MCP Assistant] reload check of an editor: ', E.Message]);
+    end;
+    McpReviewNotice(Asked, Kept, Taken);       { one sentence for the model, every file in it }
+  finally
+    Taken.Free;
+    Kept.Free;
+    Asked.Free;
+    Disk.Free;
+  end;
+end;
+
 { In the IDE's "files changed on disk" dialog: take the check off every file whose
   open editor has unsaved changes. }
-procedure UncheckModifiedEditors(AForm: TCustomForm);
+function UncheckModifiedEditors(AForm: TCustomForm): Integer;
 var
   List : TComponent;
   I    : Integer;
   Obj  : TObject;
   Ed   : TSourceEditorInterface;
 begin
+  Result := 0;
   List := AForm.FindComponent('FilesListBox');
-  if not (List is TCheckListBox) then Exit;
+  if not (List is TCheckListBox) then Exit(1);      { unknown dialog: leave it to the user }
   for I := 0 to TCheckListBox(List).Count - 1 do
   begin
     Obj := TCheckListBox(List).Items.Objects[I];
-    if not (Obj is TCodeBuffer) then Continue;
-    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(TCodeBuffer(Obj).Filename);
-    if Assigned(Ed) and Ed.Modified and TCheckListBox(List).Checked[I] then
+    if Obj is TCodeBuffer then
     begin
-      TCheckListBox(List).Checked[I] := False;
-      DebugLn(['[MCP Assistant] kept ', TCodeBuffer(Obj).Filename,
-               ' (unsaved editor changes) out of the disk reload']);
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(TCodeBuffer(Obj).Filename);
+      if Assigned(Ed) and Ed.Modified and TCheckListBox(List).Checked[I] then
+      begin
+        TCheckListBox(List).Checked[I] := False;
+        DebugLn(['[MCP Assistant] kept ', TCodeBuffer(Obj).Filename,
+                 ' (unsaved editor changes) out of the disk reload']);
+      end;
     end;
+    if TCheckListBox(List).Checked[I] then Inc(Result);
+  end;
+end;
+
+type
+  { The review pass, after the IDE's dialog is gone (not inside its activation). }
+  TMcpDeferredReload = class
+    procedure Run(Data: PtrInt);
+  end;
+
+procedure TMcpDeferredReload.Run(Data: PtrInt);
+begin
+  try
+    McpReloadChangedFiles;
+  finally
+    Free;
   end;
 end;
 
@@ -194,14 +301,18 @@ begin
     if GMcpDriven then
       AutoAnswer(Form, mrOK);
   end
-  else if Form.ClassNameIs('TDiskDiffsDlg') and (GMcpToolCallsActive > 0) then
+  else if Form.ClassNameIs('TDiskDiffsDlg') then
     begin
       { "Some files have changed on disk" — typically files an agent edited.
         The dialog pre-checks every file whose project unit is not modified,
         so a file open in an editor but not in the project, with unsaved
-        changes, was checked and reloaded over them.  Uncheck those first. }
-      UncheckModifiedEditors(Form);
-      AutoAnswer(Form, mrOK);
+        changes, was checked and reloaded over them.  Uncheck those first: they go
+        to the review window (ADR-025).  During a tool call the dialog is answered
+        as it is; otherwise (the IDE just got the focus back) only when nothing
+        is left checked, so the user still decides about the rest. }
+      { the review pass runs when the dialog is gone (OnFormRemoved), however it was answered }
+      if (UncheckModifiedEditors(Form) = 0) or (GMcpToolCallsActive > 0) then
+        AutoAnswer(Form, mrOK);
     end;
 end;
 
@@ -249,7 +360,15 @@ begin
 end;
 
 procedure TMcpIdeHookManager.OnFormRemoved(Sender: TObject; Form: TCustomForm);
+var
+  Reload: TMcpDeferredReload;
 begin
+  if Assigned(Form) and Form.ClassNameIs('TDiskDiffsDlg') then
+  begin
+    { the IDE has done its own reload; now the files it left alone go to the review }
+    Reload := TMcpDeferredReload.Create;
+    Application.QueueAsyncCall(@Reload.Run, 0);
+  end;
   if Assigned(Form) and Form.ClassNameIs('TIDEExceptionDlg') then
   begin
     GMcpLastExceptionLabel  := '';
@@ -334,5 +453,6 @@ end;
 
 finalization
   FinalizeIdeHooks;
+  FreeAndNil(GSeenFileAge);
 end.
 

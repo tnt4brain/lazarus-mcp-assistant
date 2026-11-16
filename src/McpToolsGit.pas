@@ -1122,7 +1122,8 @@ begin
     'Clone a repository into a new folder (git clone). The user is asked in the IDE for ' +
     'every clone and may say no; do not retry then. Runs without stopping the IDE and never ' +
     'asks for credentials (an address that needs them fails). Returns the .lpi projects and ' +
-    '.lpk packages found in the clone; open one with project_open. Nothing is built or opened.',
+    '.lpk packages found in the clone; open one with project_open. Nothing is built or opened. ' +
+    'The target folder is not limited (it is new); opening a project from it makes it writable.',
     SCHEMA_GIT_CLONE, MCP_ANN_CLONE));
   Tools.Add(MakeTool('git_reset',
     'Reset the current HEAD to target. mode=mixed (default) unstages changes ' +

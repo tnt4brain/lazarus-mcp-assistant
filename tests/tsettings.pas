@@ -54,6 +54,7 @@ begin
     CheckEquals('default', S.WinTerminal, 'Windows keeps its console by default');
     CheckFalse(S.AllowPackageInstall, 'installing packages is off by default');
     CheckEquals('127.0.0.1', S.ListenAddress, 'listens on the loopback by default');
+    CheckEquals('ask', S.ReviewPolicy, 'a changed file with unsaved edits asks by default');
   finally
     S.Free;
   end;
@@ -78,6 +79,7 @@ begin
     S.GitPath             := 'C:\Program Files\Git\cmd\git.exe';
     S.AllowPackageInstall := True;
     S.ListenAddress       := '192.168.1.5';
+    S.ReviewPolicy        := 'disk';
     S.SaveSettings;
   finally
     S.Free;
@@ -99,6 +101,7 @@ begin
     CheckEquals('C:\Program Files\Git\cmd\git.exe', S.GitPath);
     CheckTrue(S.AllowPackageInstall);
     CheckEquals('192.168.1.5', S.ListenAddress);
+    CheckEquals('disk', S.ReviewPolicy);
   finally
     S.Free;
   end;

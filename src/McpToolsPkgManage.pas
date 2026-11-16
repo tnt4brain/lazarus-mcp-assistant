@@ -669,11 +669,14 @@ begin
     SCHEMA_LIST, MCP_ANN_RO));
   Tools.Add(MakeTool('package_open',
     'Load an .lpk into the IDE without installing it, so the other package_* tools ' +
-    'and package_compile can use it by name. editor=true also shows its package editor.',
+    'and package_compile can use it by name. editor=true also shows its package editor. ' +
+    'Not limited to any folder, and the package''s folder then becomes one the write tools may change.',
     SCHEMA_OPEN, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_create',
     'Create a package: writes name.lpk (and an optional first unit) in a directory ' +
-    'and loads it in the IDE. Requires FCL unless requires says otherwise.',
+    'and loads it in the IDE. Requires FCL unless requires says otherwise. ' +
+    'Not limited to any folder (a new package has none to be inside), and the folder then becomes ' +
+    'one the write tools may change.',
     SCHEMA_CREATE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('package_get_settings',
     'A package''s type, output directory, unit/include search paths, compiler options, ' +

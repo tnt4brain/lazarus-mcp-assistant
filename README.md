@@ -52,6 +52,7 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `editor_list_open` | All open editor tabs |
 | `editor_read_file` | Read any file by absolute path; prefers the live editor buffer (unsaved changes) over disk |
 | `editor_open` | Open a file in the editor without moving the cursor; returns `already_open` |
+| `editor_create_file` | Create a new text file on the IDE's machine and open it; only inside the project, a loaded package's folder or the temp folder, never in `.git`, no overwrite unless `overwrite:true` (and not while open) |
 | `editor_get_cursor` / `editor_set_cursor` | Read / move the cursor (opens the file if needed) |
 | `editor_get_selection` | Selected text and its range |
 | `editor_edit_text` | **Preferred edit.** Replace `old_string` with `new_string`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
@@ -60,20 +61,46 @@ or changed outside the IDE (by the assistant's shell, say) are seen at once.
 | `editor_revert` | Discard unsaved changes and reload from disk |
 | `editor_close` | Close a tab, discarding unsaved changes |
 
+`editor_edit_text`, `editor_replace_range`, `editor_create_file` and `project_create_unit` write only inside
+the active project's directory, the folder of a loaded package (not one that ships with Lazarus, such as the
+LCL, unless the project itself is inside the Lazarus folder), the git working tree that holds either (a
+package's tests and docs sit above its source folder) and the temp folder, never inside a `.git` folder: the
+same for a client on this machine and one on another. A path anywhere else is refused with the list of folders.
+The `code_*` and `form_*` tools that change files follow the same rule (`code_rename_identifier` checks every
+file it would touch and renames nothing if one is outside); `dry_run` is never refused. So do the tools that
+change an existing package's `.lpk` (`package_add_file`, `package_remove_file`, `package_add_dependency`,
+`package_remove_dependency`, `package_set_info`, `package_set_settings`, and both packages of `package_move_unit`).
+Not limited: `editor_save`, `editor_revert`, `editor_close`, and the tools listed below that create, open,
+download, install or uninstall.
+
+**What the limits do not do.** The tools that create or open something are not limited to any folder, because a
+new project or package has no folder to be inside: `project_create`, `project_open`, `package_create`,
+`package_open` and `git_clone`. What they create or open then becomes the active project or a loaded package,
+so its folder becomes writable. The limits keep a client from writing where it has not been given access; they
+do not stop one that may create or open a project from giving itself a new place. If that matters to you,
+the lever is a consent switch for those tools (like `AllowPackageInstall`), not a path rule.
+
 ### CodeTools — `code_*`
 
 | Tool | Description |
 |---|---|
 | `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
 | `code_get_unit_interface` | The interface section of a unit |
-| `code_get_procedure_ast` | Locals and block-level control flow (if/for/while/try/case…) of one routine, with line ranges |
+| `code_get_procedure_ast` | Locals (with type) and the statements of one routine as a tree (if/for/while/repeat/try/case/with, calls, assignments) with lines and columns; `depth` sets how many levels ([ADR-008](docs/adr/0008-structural-source-editing.md)) |
 | `code_find_declaration` | Where an identifier is declared, with a context snippet; follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
 | `code_goto_declaration` | Jump the editor cursor to a declaration |
 | `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
 | `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
 | `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
+| `code_find_descendants` | The classes (and interface implementers) below a class or interface, the whole tree unless `direct_only`; scope as `code_find_references` ([ADR-027](docs/adr/0027-navigation-and-refactoring-tools.md)) |
+| `code_find_overrides` | The methods of the same name in the classes below the one that declares a method: override, reintroduce or plain |
+| `code_unit_dependencies` | Uses graph: of one unit (uses, used by, unneeded units) or of the whole project with its cycles |
+| `code_find_unused` | Symbols of a unit nothing refers to (a hint: widen the search before deleting public API) |
+| `code_extract_method` | Extract statements into a procedure or method, as the IDE's Extract Procedure; `dry_run` reports what is possible |
+| `package_move_unit` | Move a unit between two packages and add the requirement that makes necessary; refuses a cycle; `dry_run` shows the plan |
 | `code_add_uses` | Add a unit to the interface or implementation uses clause |
 | `code_insert_in_procedure` | Insert text right after a routine's `begin`; an overloaded name is refused with the candidates, `line` picks one |
+| `code_edit_statement` | Replace, delete, insert next to or wrap (begin, try, if, while, for, with) ONE statement of a body, found by the `line`/`col` of `code_get_procedure_ast`; the text around it stays ([ADR-008](docs/adr/0008-structural-source-editing.md)) |
 | `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end`; an overloaded name is refused with the candidates, `line` picks one |
 | `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
 | `code_complete` | Code completion as Ctrl+Shift+C does it: method bodies, property fields and setters, forward procedures, local variables, event handlers. Returns the changed lines |
@@ -274,7 +301,16 @@ its own repository.
 
 Nobody is at the IDE's keyboard while a tool call executes, so the plugin
 answers the IDE's "Some files have changed on disk" dialog with *Reload*,
-which reloads only files without unsaved editor changes. Every HTTP response
+which reloads only files without unsaved editor changes. Before each call it
+also reloads, quietly, the open editors whose file an agent changed with its own
+tools. An editor with unsaved changes is never overwritten: when its file changed on
+disk, a review window opens (the Tools menu opens it by hand too) with three
+panes, the editor's text, the result and the disk's text, a merge of both where
+the changes do not overlap, and per-change arrows to take either side; only the
+result pane is editable, and nothing is written to the disk. *Options > MCP
+Assistant* can instead keep the editor's text and save the disk's version beside
+the file as `name.ext.agent`, or let the editor take the disk's text (undo with
+Ctrl+Z). The next tool result tells the assistant which happened. Every HTTP response
 carries `Connection: close`, and the server's sockets are not inheritable, so a
 program started by the IDE cannot keep a connection open.
 
@@ -405,6 +441,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
 | `TTestCodeFormat` | 7 | MCP server reachable: `code_format` on temp files (whole file, line range, parse errors, include files, trailing lines) |
 | `TTestCodeRename` | 5 | MCP server reachable: `code_rename_identifier` on two temp units (dry run, rename into unsaved editors, unsaved edits, `auto_save`, refusals) |
+| `TTestCodeNav` | 11 | MCP server reachable: descendants, overrides, unit uses, unused symbols, extract method (dry run, real, bad name), move unit (plan, cycle refusal) on small temp units |
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` of a new package is refused; `ide_rebuild` refuses `lpk_path` |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 

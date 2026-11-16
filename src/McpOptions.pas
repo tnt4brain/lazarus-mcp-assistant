@@ -36,6 +36,8 @@ type
     FWinIds          : TStringList;
     FGitPath        : TFileNameEdit;
     FAllowInstall    : TCheckBox;
+    FReviewGroup     : TGroupBox;
+    FReviewPolicy    : TComboBox;  { ask, editor wins, disk wins (ADR-025) }
     FServerGroup     : TGroupBox;
     FListen          : TEdit;
     FListenNote      : TLabel;
@@ -158,6 +160,16 @@ begin
   AddLabel(FToolsGroup, 'git executable (empty: git on PATH):');
   FGitPath := TFileNameEdit.Create(Self);
   Place(FGitPath, FToolsGroup);
+
+  FReviewGroup := AddGroup('A file with unsaved edits changed on disk');
+  AddLabel(FReviewGroup, 'What to do when a file changed on disk (an assistant wrote it) ' +
+                         'while its editor holds unsaved edits:');
+  FReviewPolicy := TComboBox.Create(Self);
+  FReviewPolicy.Style := csDropDownList;
+  FReviewPolicy.Items.Add('Ask me: open the review window');
+  FReviewPolicy.Items.Add('The editor wins: keep my text, save the disk version as name.ext.agent');
+  FReviewPolicy.Items.Add('The disk wins: the editor takes the disk text (Ctrl+Z undoes it)');
+  Place(FReviewPolicy, FReviewGroup);
 
   FServerGroup := AddGroup('Server');
   AddLabel(FServerGroup, 'Listen on this IPv4 address (127.0.0.1: this machine only; ' +
@@ -302,6 +314,9 @@ begin
   {$ENDIF}
   FGitPath.Text       := McpSettings.GitPath;
   FAllowInstall.Checked := McpSettings.AllowPackageInstall;
+  if McpSettings.ReviewPolicy = 'editor' then FReviewPolicy.ItemIndex := 1
+  else if McpSettings.ReviewPolicy = 'disk' then FReviewPolicy.ItemIndex := 2
+  else FReviewPolicy.ItemIndex := 0;
   FListen.Text         := McpSettings.ListenAddress;
   ListenChanged(nil);
   FFileLabel.Caption   := 'Stored in ' + McpSettings.ConfigFileName;
@@ -336,6 +351,11 @@ begin
   {$ENDIF}
   McpSettings.GitPath             := Trim(FGitPath.Text);
   McpSettings.AllowPackageInstall := FAllowInstall.Checked;
+  case FReviewPolicy.ItemIndex of
+    1: McpSettings.ReviewPolicy := 'editor';
+    2: McpSettings.ReviewPolicy := 'disk';
+  else McpSettings.ReviewPolicy := 'ask';
+  end;
   McpSettings.SaveSettings;
   McpSyncAllowInstallMenu;
 end;

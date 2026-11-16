@@ -4,7 +4,7 @@ unit McpToolsEditor;
 { Editor / navigation tools: editor_get_active, editor_read_file, project_list_files,
   editor_list_open, editor_get_cursor, editor_get_selection, editor_edit_text,
   editor_replace_range, editor_set_cursor, editor_save, editor_close, editor_revert,
-  editor_open. }
+  editor_open, editor_create_file. }
 
 {$mode objfpc}{$H+}
 
@@ -17,7 +17,7 @@ uses
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils, Controls,
   fpjson,
   PackageIntf, PackageDefs,
-  McpToolContext, McpToolHelpers, McpToolsPackages;
+  McpToolContext, McpToolHelpers, McpToolsPackages, McpUtils;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -96,6 +96,106 @@ const
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path to the file to open in the editor"}},' +
     '"required":["file"]}';
+
+  SCHEMA_CREATE_FILE =
+    '{"type":"object","properties":{' +
+    '"file":{"type":"string","description":"Path of the new file: absolute, or relative to the project directory. Must be inside the project directory, the folder of a loaded package, or the system temp folder"},' +
+    '"text":{"type":"string","description":"The content (UTF-8); empty for an empty file. Line ends become the platform''s"},' +
+    '"overwrite":{"type":"boolean","description":"Replace the file if it exists (default false). Refused while it is open in an editor"},' +
+    '"open":{"type":"boolean","description":"Open it in the editor afterwards (default true)"}},' +
+    '"required":["file"]}';
+
+  { largest content editor_create_file writes }
+  CREATE_CAP = 2000000;
+
+{ ── editor_create_file ───────────────────────────────────────────────────── }
+
+procedure DoCreateFile(var Ctx: TMcpToolCall);
+var
+  FilePath, Text, Err : string;
+  Overwrite, DoOpen, Existed : Boolean;
+  FS    : TFileStream;
+  Obj   : TJSONObject;
+begin
+  if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+  begin
+    Ctx.Error := True; Ctx.Result := 'file required'; Exit;
+  end;
+  FilePath  := Ctx.Params.Get('file', '');
+  Text      := Ctx.Params.Get('text', '');
+  Overwrite := Ctx.Params.Get('overwrite', False);
+  DoOpen    := Ctx.Params.Get('open', True);
+  if not FilenameIsAbsolute(FilePath) then
+  begin
+    if Assigned(LazarusIDE.ActiveProject) and (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
+      FilePath := McpNormalizePath(ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile) + FilePath)
+    else
+    begin
+      Ctx.Error := True;
+      Ctx.Result := 'A relative path needs a saved project to resolve against: give an absolute one';
+      Exit;
+    end;
+  end;
+  if (FilePath[Length(FilePath)] in ['/', '\']) or DirectoryExists(FilePath) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'That is a directory, not a file: ' + FilePath; Exit;
+  end;
+  if not McpCheckWritable(FilePath, Err) then
+  begin
+    Ctx.Error := True; Ctx.Result := Err; Exit;
+  end;
+  if Length(Text) > CREATE_CAP then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'Too large: ' + IntToStr(Length(Text)) + ' bytes (the limit is ' + IntToStr(CREATE_CAP) + ')';
+    Exit;
+  end;
+  Existed := FileExists(FilePath);
+  if Existed and not Overwrite then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'File already exists: ' + FilePath + ' (overwrite:true replaces it)';
+    Exit;
+  end;
+  if Existed and Assigned(SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath)) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'The file is open in an editor: use editor_edit_text, or editor_close it first';
+    Exit;
+  end;
+  Text := StringReplace(StringReplace(Text, #13#10, #10, [rfReplaceAll]), #10, LineEnding, [rfReplaceAll]);
+  try
+    if not ForceDirectories(ExtractFileDir(FilePath)) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not create the folder of ' + FilePath; Exit;
+    end;
+    FS := TFileStream.Create(FilePath, fmCreate);
+    try
+      if Length(Text) > 0 then FS.WriteBuffer(Text[1], Length(Text));
+    finally
+      FS.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not write ' + FilePath + ': ' + E.Message; Exit;
+    end;
+  end;
+  InvalidateFileStateCache(FilePath);
+  if DoOpen then
+    DoOpen := LazarusIDE.DoOpenEditorFile(FilePath, -1, -1, [ofOnlyIfExists, ofRegularFile]) = mrOK;
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('file',    FilePath);
+    Obj.Add('created', not Existed);
+    if Existed then Obj.Add('replaced', True);
+    Obj.Add('bytes',   Length(Text));
+    Obj.Add('opened',  DoOpen);
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
@@ -445,6 +545,10 @@ begin
     SyncFilePath := Ctx.Params.Get('file', '');
     if SyncFilePath <> '' then
     begin
+      if not McpCheckWritable(SyncFilePath, SyncText) then
+      begin
+        Ctx.Error := True; Ctx.Result := SyncText; Exit;
+      end;
       Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
       if not Assigned(Ed) then
       begin
@@ -465,6 +569,10 @@ begin
     if not Assigned(Ed) then
     begin
       Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
+    end;
+    if not McpCheckWritable(Ed.FileName, SyncText) then
+    begin
+      Ctx.Error := True; Ctx.Result := SyncText; Exit;
     end;
     SyncNewName := Ctx.Params.Get('new_text', '');
     if HasLen then
@@ -513,6 +621,10 @@ begin
     SyncFilePath := Ctx.Params.Get('file', '');
     if SyncFilePath <> '' then
     begin
+      if not McpCheckWritable(SyncFilePath, SyncText) then
+      begin
+        Ctx.Error := True; Ctx.Result := SyncText; Exit;
+      end;
       Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
       if not Assigned(Ed) then
       begin
@@ -533,6 +645,10 @@ begin
     if not Assigned(Ed) then
     begin
       Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
+    end;
+    if not McpCheckWritable(Ed.FileName, SyncText) then
+    begin
+      Ctx.Error := True; Ctx.Result := SyncText; Exit;
     end;
     SyncText := StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]);
     SyncMatchPositions := TList.Create;
@@ -684,6 +800,12 @@ begin
     end;
   end
 
+  else if Name = 'editor_create_file' then
+  begin
+    Result := True;
+    DoCreateFile(Ctx);
+  end
+
   else if Name = 'editor_open' then
   begin
     Result := True;
@@ -750,11 +872,15 @@ begin
     'Replace a range of text in the editor buffer, e.g. at coordinates from ' +
     'code_get_outline, code_find_declaration or code_get_procedure_ast. The range ' +
     'ends at end_line/end_col or after delete_len characters; with neither, ' +
-    'new_text is inserted. Empty new_text deletes. Opens the file if needed; Ctrl+Z works.',
+    'new_text is inserted. Empty new_text deletes. Opens the file if needed; Ctrl+Z works. ' +
+    'Only files inside the project, a loaded package, the git working tree holding either, or the ' +
+    'temp folder; anything else is refused.',
     SCHEMA_REPLACE_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_edit_text',
     'Replace old_string with new_string in the editor buffer (opens the file if ' +
-    'needed; Ctrl+Z works). Prefer this over editor_replace_range: no stale line numbers.',
+    'needed; Ctrl+Z works). Prefer this over editor_replace_range: no stale line numbers. ' +
+    'Only files inside the project, a loaded package, the git working tree holding either, or the ' +
+    'temp folder; anything else is refused.',
     SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_save',
     'Save the editor buffer to disk. Omit file to save the active editor.',
@@ -767,13 +893,45 @@ begin
     'Discard unsaved editor changes and reload the file from disk. ' +
     'Omit file to revert the active editor.',
     SCHEMA_REVERT_FILE, MCP_ANN_DEST_IDEM));
+  Tools.Add(MakeTool('editor_create_file',
+    'Create a new text file with the given content, on the machine the IDE runs on, and open it ' +
+    'in the editor. Allowed inside the project directory, the folder of a loaded package and the ' +
+    'system temp folder, or the git working tree holding the project or a package, never inside a ' +
+    '.git folder; an existing file is refused unless ' +
+    'overwrite is true (and then only when no editor has it open). Missing folders are created. ' +
+    'The file is not added to the project or a package: use project_add_file or package_add_file. ' +
+    'For a Pascal unit that should join the project, project_create_unit does both.',
+    SCHEMA_CREATE_FILE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_open',
     'Open a file in the IDE editor and make it the active tab, ' +
     'without moving the cursor. Returns {"file":..., "already_open":bool}.',
     SCHEMA_OPEN_FILE, MCP_ANN_RO));
 end;
 
+{ McpDispatch's check.  An empty name means the active editor's file; no editor or an untitled
+  buffer (nothing on disk) passes, the tool reports its own error. }
+function CheckWritableOrActive(const AFileName: string; out AWhy: string): Boolean;
+var
+  F  : string;
+  Ed : TSourceEditorInterface;
+begin
+  F := AFileName;
+  if F = '' then
+  begin
+    Ed := SourceEditorManagerIntf.ActiveEditor;
+    if Ed <> nil then F := Ed.FileName;
+  end;
+  if (F = '') or not FilenameIsAbsolute(F) then
+  begin
+    AWhy := '';
+    Exit(True);
+  end;
+  Result := McpCheckWritable(F, AWhy);
+end;
+
 initialization
+  GMcpWriteCheck := @CheckWritableOrActive;
+  GMcpPackageCheck := @McpCheckPackageWritable;
   RegisterMcpGroup(@DispatchEditorTool);
   RegisterMcpSchemas(@RegisterEditorSchemas);
 
