@@ -245,8 +245,8 @@ var
   Lines : TStringList;
   Line  : string;
 begin
-  if Raw = '' then begin Result := '(no output)'; Exit; end;
-  if IsError then begin Result := Raw; Exit; end;
+  if Raw = '' then Exit('(no output)');
+  if IsError then Exit(Raw);
   Lines := TStringList.Create;
   try
     Lines.Text := Raw;
@@ -393,7 +393,7 @@ var
     K, E : Integer;
   begin
     K := Pos(Key, S);
-    if K = 0 then begin Result := -1; Exit; end;
+    if K = 0 then Exit(-1);
     Inc(K, Length(Key));
     E := K;
     while (E <= Length(S)) and (S[E] in ['0'..'9']) do Inc(E);

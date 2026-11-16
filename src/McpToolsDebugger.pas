@@ -1405,10 +1405,7 @@ begin
     Inc(Elapsed, Interval);
     TThread.Synchronize(nil, @GSyncHelper.ReadState);
     if GSyncHelper.OutState in [dsInit, dsRun, dsPause, dsInternalPause] then
-    begin
-      Result := True;
-      Exit;
-    end;
+      Exit(True);
   until Elapsed >= WaitMs;
 end;
 

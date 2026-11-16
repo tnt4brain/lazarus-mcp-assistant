@@ -274,19 +274,13 @@ begin
   M := Length(B) - Pre - Suf;
   if (N = 0) and (M = 0) then Exit;
   if (N = 0) or (M = 0) then
-  begin
-    Result := OneHunk(Pre, N, Pre, M);
-    Exit;
-  end;
+    Exit(OneHunk(Pre, N, Pre, M));
   SetLength(ADel, N);
   SetLength(BIns, M);
   for I := 0 to N - 1 do ADel[I] := False;
   for J := 0 to M - 1 do BIns[J] := False;
   if not MyersMarks(A, B, Pre, N, Pre, M, ADel, BIns) then
-  begin
-    Result := OneHunk(Pre, N, Pre, M);
-    Exit;
-  end;
+    Exit(OneHunk(Pre, N, Pre, M));
   { runs of marked lines are the hunks }
   Cnt := 0;
   I := 0;

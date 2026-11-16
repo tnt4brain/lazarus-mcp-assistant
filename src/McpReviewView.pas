@@ -864,7 +864,7 @@ begin
       end;
     if Row < 0 then Row := FNav[High(FNav)];
   end;
-  Row := Row - 2;                         { a little context above }
+  Dec(Row, 2);                           { a little context above }
   if Row < 0 then Row := 0;
   FEdM.TopLine := Row + 1;
 end;

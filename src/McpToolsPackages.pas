@@ -659,10 +659,7 @@ begin
   { no TLS library in the IDE: the curl executable brings its own }
   ATransport := 'https (curl)';
   if CurlGet(AUrl, AStream, AErr) then
-  begin
-    Result := True;
-    Exit;
-  end;
+    Exit(True);
   AUrl := 'http://' + Copy(AHttpsUrl, Length('https://') + 1, MaxInt);
   ATransport := 'http';
   Result := Get(AUrl, AErr);
@@ -1132,7 +1129,7 @@ begin
   begin
     AErr := 'package_name or lpk_path required'; Exit;
   end;
-  if not AForEdit then begin Result := True; Exit; end;
+  if not AForEdit then Exit(True);
   if APkg.IsVirtual then
   begin AErr := APkg.Name + ' has not been saved yet'; Exit; end;
   if APkg.ReadOnly then

@@ -472,18 +472,12 @@ begin
     Data := GetJSON(Body);
   except
     on E: Exception do
-    begin
-      Result := '{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}';
-      Exit;
-    end;
+      Exit('{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}');
   end;
 
   try
     if not (Data is TJSONObject) then
-    begin
-      Result := '{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Not an object"}}';
-      Exit;
-    end;
+      Exit('{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Not an object"}}');
     Req    := TJSONObject(Data);
     ID     := Req.Find('id');
     Params := TJSONObject(Req.Find('params'));
@@ -1521,7 +1515,7 @@ var
   Proc   : TProcess;
   SL     : TStringList;
 begin
-  if GMcpGitHash <> '' then begin Result := GMcpGitHash; Exit; end;
+  if GMcpGitHash <> '' then Exit(GMcpGitHash);
   Result := 'unknown';
   IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
   if not Assigned(IDEPkg) then begin GMcpGitHash := Result; Exit; end;
@@ -1610,10 +1604,7 @@ begin
       McpDispatch(AName, Ctx, Handled);
     except
       on E: Exception do
-      begin
-        Result := 'failed: ' + E.ClassName + ': ' + E.Message;
-        Exit;
-      end;
+        Exit('failed: ' + E.ClassName + ': ' + E.Message);
     end;
     if not Handled then Exit('not available');
     Result := Ctx.Result;

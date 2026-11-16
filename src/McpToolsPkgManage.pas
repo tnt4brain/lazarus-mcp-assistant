@@ -523,10 +523,7 @@ begin
   if (Method <> 'auto') and (Method <> 'ide') and (Method <> 'lazbuild') then
   begin AErr := 'method must be auto, ide or lazbuild'; Exit; end;
   if Method = 'lazbuild' then
-  begin
-    Result := '{"use_lazbuild":true}';
-    Exit;
-  end;
+    Exit('{"use_lazbuild":true}');
   Name := Trim(AParams.Get('package_name', ''));
   Lpk  := Trim(AParams.Get('lpk_path', ''));
   Pkg  := nil;
@@ -539,10 +536,7 @@ begin
   if Pkg = nil then
   begin
     if (Method = 'auto') and (Lpk <> '') then
-    begin
-      Result := '{"use_lazbuild":true}';
-      Exit;
-    end;
+      Exit('{"use_lazbuild":true}');
     if Lpk = '' then
     begin
       AErr := 'Package not loaded: ' + Name + '. Give its lpk_path instead.';
