@@ -439,7 +439,9 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestSettingsFile` | 3 | Nothing (always runs): settings save/load, obsolete keys removed |
 | `TTestProtocol` | 12 | MCP server reachable: JSON-RPC, `initialize` (version negotiation, instructions) |
 | `TTestAuth` | 7 | MCP server reachable |
-| `TTestProjectTools` | 6 | MCP server reachable |
+| `TTestProjectTools` | 15 | MCP server reachable: project tool schemas, `project_clean`, dialog tools, `project_list_directory` on a temp folder |
+| `TTestGitWrite` | 16 | MCP server reachable: `git_checkout`/`reset`/`stash`/`commit` (amend)/`branch_delete`/`cherry_pick`/`archive`/`init` on temp repositories |
+| `TTestDialogHooks` | 2 | Only with `MCP_TEST_HOOKS=1` set for the IDE and the test run: opens a real native dialog through a test-only hook and answers it with `ide_answer_dialog` |
 | `TTestSession` | 8 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp`, 404 for unknown session ids |
 | `TTestToolSmoke` | 22 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
