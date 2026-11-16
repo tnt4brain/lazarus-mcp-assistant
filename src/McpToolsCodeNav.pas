@@ -1031,15 +1031,18 @@ end;
 function KindOf(const S: string; out K: TExtractProcType): Boolean;
 begin
   Result := True;
-  if (S = '') or (S = 'procedure') then K := eptProcedure
-  else if S = 'procedure_with_interface' then K := eptProcedureWithInterface
-  else if S = 'sub_procedure' then K := eptSubProcedure
-  else if S = 'sub_procedure_same_level' then K := eptSubProcedureSameLvl
-  else if S = 'private_method' then K := eptPrivateMethod
-  else if S = 'protected_method' then K := eptProtectedMethod
-  else if S = 'public_method' then K := eptPublicMethod
-  else if S = 'published_method' then K := eptPublishedMethod
-  else Result := False;
+  case S of
+    '', 'procedure':           K := eptProcedure;
+    'procedure_with_interface': K := eptProcedureWithInterface;
+    'sub_procedure':           K := eptSubProcedure;
+    'sub_procedure_same_level': K := eptSubProcedureSameLvl;
+    'private_method':          K := eptPrivateMethod;
+    'protected_method':        K := eptProtectedMethod;
+    'public_method':           K := eptPublicMethod;
+    'published_method':        K := eptPublishedMethod;
+  else
+    Result := False;
+  end;
 end;
 
 function DoExtract(var Ctx: TMcpToolCall): Boolean;

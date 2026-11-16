@@ -496,26 +496,37 @@ begin
     end;
 
     Method := Req.Get('method', '');
-    if      Method = 'initialize'       then Result := HandleInitialize(ID, Params, AClientId, ANewSession)
-    else if Method = 'ping'             then Result := HandlePing(ID)
-    else if Method = 'tools/list'       then Result := HandleToolsList(ID)
-    else if Method = 'tools/call'       then
-    begin
-      InterLockedIncrement(GMcpToolCallsActive);  { lets IDE modals be auto-answered }
-      try
-        Result := HandleToolsCall(ID, Params, AClientId);
-      finally
-        InterLockedDecrement(GMcpToolCallsActive);
+    case Method of
+      'initialize':
+        Result := HandleInitialize(ID, Params, AClientId, ANewSession);
+      'ping':
+        Result := HandlePing(ID);
+      'tools/list':
+        Result := HandleToolsList(ID);
+      'tools/call':
+      begin
+        InterLockedIncrement(GMcpToolCallsActive);  { lets IDE modals be auto-answered }
+        try
+          Result := HandleToolsCall(ID, Params, AClientId);
+        finally
+          InterLockedDecrement(GMcpToolCallsActive);
+        end;
       end;
-    end
-    else if Method = 'resources/list'   then Result := HandleResourcesList(ID)
-    else if Method = 'resources/read'          then Result := HandleResourcesRead(ID, Params)
-    else if Method = 'resources/templates/list' then Result := HandleResourcesTemplatesList(ID)
-    else if Method = 'completion/complete'      then Result := HandleCompletionComplete(ID, Params)
-    else if Method = 'prompts/list'             then Result := HandlePromptsList(ID)
-    else if Method = 'prompts/get'              then Result := HandlePromptsGet(ID, Params)
+      'resources/list':
+        Result := HandleResourcesList(ID);
+      'resources/read':
+        Result := HandleResourcesRead(ID, Params);
+      'resources/templates/list':
+        Result := HandleResourcesTemplatesList(ID);
+      'completion/complete':
+        Result := HandleCompletionComplete(ID, Params);
+      'prompts/list':
+        Result := HandlePromptsList(ID);
+      'prompts/get':
+        Result := HandlePromptsGet(ID, Params);
     else
       Result := RPCError(ID, -32601, 'Method not found');
+    end;
   finally
     Data.Free;
   end;

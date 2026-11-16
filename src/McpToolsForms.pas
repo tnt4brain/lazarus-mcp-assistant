@@ -1490,12 +1490,14 @@ begin
     for I := 0 to N - 1 do
     begin
       if (I = 0) and not ToParent then Continue;
-      if AlignTo = 'left' then         Ctls[I].Left := RefL
-      else if AlignTo = 'right' then   Ctls[I].Left := RefR - Ctls[I].Width
-      else if AlignTo = 'top' then     Ctls[I].Top  := RefT
-      else if AlignTo = 'bottom' then  Ctls[I].Top  := RefB - Ctls[I].Height
-      else if AlignTo = 'hcenter' then Ctls[I].Left := RefL + (RefW - Ctls[I].Width) div 2
-      else if AlignTo = 'vcenter' then Ctls[I].Top  := RefT + (RefH - Ctls[I].Height) div 2;
+      case AlignTo of
+        'left':    Ctls[I].Left := RefL;
+        'right':   Ctls[I].Left := RefR - Ctls[I].Width;
+        'top':     Ctls[I].Top  := RefT;
+        'bottom':  Ctls[I].Top  := RefB - Ctls[I].Height;
+        'hcenter': Ctls[I].Left := RefL + (RefW - Ctls[I].Width) div 2;
+        'vcenter': Ctls[I].Top  := RefT + (RefH - Ctls[I].Height) div 2;
+      end;
     end;
   end;
 

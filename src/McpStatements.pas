@@ -269,151 +269,153 @@ begin
       Exit(ParseStatement());
     end;
 
-    if Kw = 'BEGIN' then
-    begin
-      Node := TStmtNode.Create('begin', FT[FP].Line, FT[FP].Col);
-      Take;
-      ParseList(Node, '');
-      if CurIs('END') then Take;
-      Finish(Node);
-      Exit(Node);
-    end
-    else if Kw = 'IF' then
-    begin
-      Node := TStmtNode.Create('if', FT[FP].Line, FT[FP].Col);
-      Take;
-      if SkipTo('THEN') then
+    case Kw of
+      'BEGIN':
       begin
-        if not (AtStop or CurIs('ELSE')) then
-        begin
-          Sub := ParseStatement();
-          if Sub <> nil then begin Sub.Role := 'then'; Node.Children.Add(Sub); end;
-        end;
-        if CurIs('ELSE') then
-        begin
-          Node.ElseLine := FT[FP].Line;
-          Take;
-          Sub := ParseStatement();
-          if Sub <> nil then begin Sub.Role := 'else'; Node.Children.Add(Sub); end;
-        end;
-      end;
-      Finish(Node);
-      Exit(Node);
-    end
-    else if (Kw = 'FOR') or (Kw = 'WHILE') or (Kw = 'WITH') then
-    begin
-      Node := TStmtNode.Create(LowerCase(Kw), FT[FP].Line, FT[FP].Col);
-      Take;
-      if SkipTo('DO') then
-      begin
-        Sub := ParseStatement();
-        if Sub <> nil then Node.Children.Add(Sub);
-      end;
-      Finish(Node);
-      Exit(Node);
-    end
-    else if Kw = 'REPEAT' then
-    begin
-      Node := TStmtNode.Create('repeat', FT[FP].Line, FT[FP].Col);
-      Take;
-      ParseList(Node, '');
-      if CurIs('UNTIL') then
-      begin
+        Node := TStmtNode.Create('begin', FT[FP].Line, FT[FP].Col);
         Take;
-        if FP < FN then
-          ParseSimple('call').Free;         { the condition, up to the ; }
+        ParseList(Node, '');
+        if CurIs('END') then Take;
+        Finish(Node);
+        Exit(Node);
       end;
-      Finish(Node);
-      Exit(Node);
-    end
-    else if Kw = 'TRY' then
-    begin
-      Node := TStmtNode.Create('try_finally', FT[FP].Line, FT[FP].Col);
-      Take;
-      ParseList(Node, 'try');
-      if CurIs('EXCEPT') or CurIs('FINALLY') then
+      'IF':
       begin
-        if CurIs('EXCEPT') then Node.Kind := 'try_except';
-        Node.HandlerLine := FT[FP].Line;
-        Labels := LowerCase(FT[FP].Up);
+        Node := TStmtNode.Create('if', FT[FP].Line, FT[FP].Col);
         Take;
-        ParseList(Node, Labels);
-      end;
-      if CurIs('END') then Take;
-      Finish(Node);
-      Exit(Node);
-    end
-    else if Kw = 'CASE' then
-    begin
-      Node := TStmtNode.Create('case', FT[FP].Line, FT[FP].Col);
-      Take;
-      if SkipTo('OF') then
-        while FP < FN do
+        if SkipTo('THEN') then
         begin
-          while CurSym(';') do Take;
-          if (FP >= FN) or CurIs('END') then Break;
+          if not (AtStop or CurIs('ELSE')) then
+          begin
+            Sub := ParseStatement();
+            if Sub <> nil then begin Sub.Role := 'then'; Node.Children.Add(Sub); end;
+          end;
           if CurIs('ELSE') then
           begin
-            Sub := TStmtNode.Create('else', FT[FP].Line, FT[FP].Col);
+            Node.ElseLine := FT[FP].Line;
             Take;
-            ParseList(Sub, '');
-            Finish(Sub);
-            Node.Children.Add(Sub);
-            Break;
+            Sub := ParseStatement();
+            if Sub <> nil then begin Sub.Role := 'else'; Node.Children.Add(Sub); end;
           end;
-          { labels up to the colon }
-          Sub := TStmtNode.Create('of', FT[FP].Line, FT[FP].Col);
-          Labels := '';
-          D := 0;
+        end;
+        Finish(Node);
+        Exit(Node);
+      end;
+      'FOR', 'WHILE', 'WITH':
+      begin
+        Node := TStmtNode.Create(LowerCase(Kw), FT[FP].Line, FT[FP].Col);
+        Take;
+        if SkipTo('DO') then
+        begin
+          Sub := ParseStatement();
+          if Sub <> nil then Node.Children.Add(Sub);
+        end;
+        Finish(Node);
+        Exit(Node);
+      end;
+      'REPEAT':
+      begin
+        Node := TStmtNode.Create('repeat', FT[FP].Line, FT[FP].Col);
+        Take;
+        ParseList(Node, '');
+        if CurIs('UNTIL') then
+        begin
+          Take;
+          if FP < FN then
+            ParseSimple('call').Free;         { the condition, up to the ; }
+        end;
+        Finish(Node);
+        Exit(Node);
+      end;
+      'TRY':
+      begin
+        Node := TStmtNode.Create('try_finally', FT[FP].Line, FT[FP].Col);
+        Take;
+        ParseList(Node, 'try');
+        if CurIs('EXCEPT') or CurIs('FINALLY') then
+        begin
+          if CurIs('EXCEPT') then Node.Kind := 'try_except';
+          Node.HandlerLine := FT[FP].Line;
+          Labels := LowerCase(FT[FP].Up);
+          Take;
+          ParseList(Node, Labels);
+        end;
+        if CurIs('END') then Take;
+        Finish(Node);
+        Exit(Node);
+      end;
+      'CASE':
+      begin
+        Node := TStmtNode.Create('case', FT[FP].Line, FT[FP].Col);
+        Take;
+        if SkipTo('OF') then
           while FP < FN do
           begin
-            if FT[FP].Kind = 1 then
+            while CurSym(';') do Take;
+            if (FP >= FN) or CurIs('END') then Break;
+            if CurIs('ELSE') then
             begin
-              if (FT[FP].Txt = '(') or (FT[FP].Txt = '[') then Inc(D)
-              else if ((FT[FP].Txt = ')') or (FT[FP].Txt = ']')) and (D > 0) then Dec(D)
-              else if (D = 0) and (FT[FP].Txt = ':') then Break
-              else if (D = 0) and (FT[FP].Txt = ';') then Break;
+              Sub := TStmtNode.Create('else', FT[FP].Line, FT[FP].Col);
+              Take;
+              ParseList(Sub, '');
+              Finish(Sub);
+              Node.Children.Add(Sub);
+              Break;
             end;
-            if Length(Labels) < 60 then Labels := Labels + FT[FP].Txt;
-            Take;
+            { labels up to the colon }
+            Sub := TStmtNode.Create('of', FT[FP].Line, FT[FP].Col);
+            Labels := '';
+            D := 0;
+            while FP < FN do
+            begin
+              if FT[FP].Kind = 1 then
+              begin
+                if (FT[FP].Txt = '(') or (FT[FP].Txt = '[') then Inc(D)
+                else if ((FT[FP].Txt = ')') or (FT[FP].Txt = ']')) and (D > 0) then Dec(D)
+                else if (D = 0) and (FT[FP].Txt = ':') then Break
+                else if (D = 0) and (FT[FP].Txt = ';') then Break;
+              end;
+              if Length(Labels) < 60 then Labels := Labels + FT[FP].Txt;
+              Take;
+            end;
+            Sub.Name := Labels;
+            if CurSym(':') then
+            begin
+              Take;
+              Body := ParseStatement();
+              if Body <> nil then Sub.Children.Add(Body);
+            end;
+            Finish(Sub);
+            Node.Children.Add(Sub);
           end;
-          Sub.Name := Labels;
-          if CurSym(':') then
-          begin
-            Take;
-            Body := ParseStatement();
-            if Body <> nil then Sub.Children.Add(Body);
-          end;
-          Finish(Sub);
-          Node.Children.Add(Sub);
-        end;
-      if CurIs('END') then Take;
-      Finish(Node);
-      Exit(Node);
-    end
-    else if Kw = 'ELSE' then
-    begin
-      { the else part of an except block }
-      Node := TStmtNode.Create('else', FT[FP].Line, FT[FP].Col);
-      Take;
-      ParseList(Node, '');
-      Finish(Node);
-      Exit(Node);
-    end
-    else if Kw = 'ASM' then
-    begin
-      Node := TStmtNode.Create('asm', FT[FP].Line, FT[FP].Col);
-      Take;
-      while (FP < FN) and not CurIs('END') do Take;
-      if CurIs('END') then Take;
-      Finish(Node);
-      Exit(Node);
-    end
-    else if (Kw = 'RAISE') or (Kw = 'EXIT') or (Kw = 'BREAK') or (Kw = 'CONTINUE') or
-            (Kw = 'GOTO') or (Kw = 'INHERITED') then
-      Exit(ParseSimple(LowerCase(Kw)))
+        if CurIs('END') then Take;
+        Finish(Node);
+        Exit(Node);
+      end;
+      'ELSE':
+      begin
+        { the else part of an except block }
+        Node := TStmtNode.Create('else', FT[FP].Line, FT[FP].Col);
+        Take;
+        ParseList(Node, '');
+        Finish(Node);
+        Exit(Node);
+      end;
+      'ASM':
+      begin
+        Node := TStmtNode.Create('asm', FT[FP].Line, FT[FP].Col);
+        Take;
+        while (FP < FN) and not CurIs('END') do Take;
+        if CurIs('END') then Take;
+        Finish(Node);
+        Exit(Node);
+      end;
+
+      'RAISE', 'EXIT', 'BREAK', 'CONTINUE', 'GOTO', 'INHERITED':
+        Exit(ParseSimple(LowerCase(Kw)));
     else
       Exit(ParseSimple('call'));
+    end;
   finally
     Dec(FDepth);
   end;

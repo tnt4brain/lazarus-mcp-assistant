@@ -920,11 +920,14 @@ begin
     Recursive := False;
     Exit(ExtractFilePath(Code.Filename));
   end;
-  if AName = 'lcl' then S := '$(LazarusDir)/lcl'
-  else if AName = 'components' then S := '$(LazarusDir)/components'
-  else if AName = 'rtl' then S := '$(FPCSrcDir)/rtl'
-  else if AName = 'fcl' then S := '$(FPCSrcDir)/packages'
-  else Exit;
+  case AName of
+    'lcl':        S := '$(LazarusDir)/lcl';
+    'components': S := '$(LazarusDir)/components';
+    'rtl':        S := '$(FPCSrcDir)/rtl';
+    'fcl':        S := '$(FPCSrcDir)/packages';
+  else
+    Exit;
+  end;
   if Assigned(IDEMacros) and IDEMacros.SubstituteMacros(S) then
     Result := SetDirSeparators(S);
 end;

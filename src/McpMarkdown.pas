@@ -1711,12 +1711,15 @@ begin
     if (Copy(First, 1, 2) = '[!') and (P > 3) then
     begin
       Kind := LowerCase(Copy(First, 3, P - 3));
-      if Kind = 'note' then Color := '#0D6EFD'
-      else if Kind = 'tip' then Color := '#198754'
-      else if Kind = 'important' then Color := '#6F42C1'
-      else if Kind = 'warning' then Color := '#FD7E14'
-      else if Kind = 'caution' then Color := '#DC3545'
-      else Kind := '';
+      case Kind of
+        'note':      Color := '#0D6EFD';
+        'tip':       Color := '#198754';
+        'important': Color := '#6F42C1';
+        'warning':   Color := '#FD7E14';
+        'caution':   Color := '#DC3545';
+      else
+        Kind := '';
+      end;
       if Kind <> '' then
       begin
         Title := Trim(Copy(First, P + 1, MaxInt));
