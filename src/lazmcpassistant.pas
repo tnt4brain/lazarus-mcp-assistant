@@ -18,7 +18,8 @@ uses
   McpMessages, McpReport, McpLoggingOptions, McpMarkdown, McpImageInfo, 
   McpMarkdownView, McpToolsMarkdown, McpReviewView, McpDiff, McpReviewFlow, 
   McpReviewPaths, McpReviewGutter, McpToolsCodeNav, McpStatements, 
-  McpStatementEdit, McpHeapReport, LazarusPackageIntf;
+  McpStatementEdit, McpHeapReport, McpTestHooks, McpNativeDialog, 
+  LazarusPackageIntf;
 
 implementation
 
