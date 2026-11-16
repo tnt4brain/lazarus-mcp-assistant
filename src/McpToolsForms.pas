@@ -1275,6 +1275,7 @@ end;
 function SnapBegin(out ASnap: TSnapshot; ADesigner: TIDesigner;
   const AComps: array of TComponent): Boolean;
 var
+  Comp : TComponent;
   I, J, N : Integer;
   T       : TComponent;
   Dup     : Boolean;
@@ -1284,9 +1285,9 @@ begin
   Result := ASnap.Group.Designer <> nil;
   if not Result then Exit;
   N := 0;
-  for I := 0 to High(AComps) do
+  for Comp in AComps do
   begin
-    T := SnapshotTarget(ADesigner.LookupRoot, AComps[I]);
+    T := SnapshotTarget(ADesigner.LookupRoot, Comp);
     if T = nil then
     begin
       ASnap.Targets := nil;

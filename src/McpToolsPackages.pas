@@ -212,6 +212,7 @@ end;
 { Search the cached catalog; main thread (install state comes from the IDE). }
 function SearchOnlineCatalog(AParams: TJSONObject; out AErr: string): string;
 var
+  Term : string;
   En : TJSONEnum;
   FileName, Text, Hay, Category : string;
   Words     : TStringArray;
@@ -222,7 +223,7 @@ var
   F         : TJSONObject;
   Res, FArr : TJSONArray;
   Obj, FObj, PObj : TJSONObject;
-  I, W, Matches, MaxRes    : Integer;
+  I, Matches, MaxRes       : Integer;
   Ok        : Boolean;
   BaseDir, Lpk, Desc : string;
   SL        : TStringList;
@@ -286,8 +287,8 @@ begin
                    TJSONObject(En.Value).Get('Description', '');
       Hay := LowerCase(Hay);
       Ok := True;
-      for W := 0 to High(Words) do
-        if Pos(Words[W], Hay) = 0 then
+      for Term in Words do
+        if Pos(Term, Hay) = 0 then
         begin
           Ok := False; Break;
         end;

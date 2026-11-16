@@ -75,6 +75,7 @@ end;
   last line, not a line of the file. }
 procedure TReviewGutterPart.CompareWithDisk;
 var
+  Hunk : TDiffHunk;
   Mine  : TDiffLines;
   Hunks : TDiffHunks;
   I, J, N : Integer;
@@ -88,11 +89,11 @@ begin
   SetLength(FTick, 0);
   SetLength(FTick, N + 1);
   Hunks := DiffLines(Mine, FDisk);
-  for I := 0 to High(Hunks) do
+  for Hunk in Hunks do
   begin
-    for J := Hunks[I].AStart to Hunks[I].AStart + Hunks[I].ALen - 1 do
-      if Hunks[I].BLen = 0 then FKind[J] := KindAdded else FKind[J] := KindModified;
-    if (Hunks[I].ALen = 0) and (Hunks[I].AStart <= N) then FTick[Hunks[I].AStart] := True;
+    for J := Hunk.AStart to Hunk.AStart + Hunk.ALen - 1 do
+      if Hunk.BLen = 0 then FKind[J] := KindAdded else FKind[J] := KindModified;
+    if (Hunk.ALen = 0) and (Hunk.AStart <= N) then FTick[Hunk.AStart] := True;
   end;
   FStamp := TSynEdit(SynEdit).ChangeStamp;
 end;

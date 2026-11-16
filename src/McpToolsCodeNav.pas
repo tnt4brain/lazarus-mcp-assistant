@@ -167,10 +167,10 @@ end;
 
 function InfoKnown(const Infos: TClassInfos; const Info: TClassInfo): Boolean;
 var
-  I : Integer;
+  Known : TClassInfo;
 begin
-  for I := 0 to High(Infos) do
-    if (Infos[I].Code = Info.Code) and (Infos[I].Y = Info.Y) and (Infos[I].X = Info.X) then
+  for Known in Infos do
+    if (Known.Code = Info.Code) and (Known.Y = Info.Y) and (Known.X = Info.X) then
       Exit(True);
   Result := False;
 end;
@@ -294,16 +294,16 @@ end;
 
 function InfosToJson(const Infos: TClassInfos): TJSONArray;
 var
-  I : Integer;
+  Info : TClassInfo;
   O : TJSONObject;
 begin
   Result := TJSONArray.Create;
-  for I := 0 to High(Infos) do
+  for Info in Infos do
   begin
-    O := PosObj(Infos[I].Code, Infos[I].X, Infos[I].Y);
-    O.Add('class', Infos[I].Name);
-    O.Add('parent', Infos[I].Parent);
-    O.Add('depth', Infos[I].Depth);
+    O := PosObj(Info.Code, Info.X, Info.Y);
+    O.Add('class', Info.Name);
+    O.Add('parent', Info.Parent);
+    O.Add('depth', Info.Depth);
     Result.Add(O);
   end;
 end;
@@ -391,8 +391,9 @@ end;
 
 function DoOverrides(var Ctx: TMcpToolCall): Boolean;
 var
+  Info : TClassInfo;
   Code, DCode, MCode : TCodeBuffer;
-  MX, MY, TopLine, BTop, BBottom, CleanPos, I : Integer;
+  MX, MY, TopLine, BTop, BBottom, CleanPos    : Integer;
   Tool, Tool2 : TCodeTool;
   Node, ProcNode, Proc2, TypeDef : TCodeTreeNode;
   MethodName, ClassName, Err, Kind : string;
@@ -440,8 +441,8 @@ begin
     Arr := TJSONArray.Create;
     Obj := TJSONObject.Create;
     try
-      for I := 0 to High(Infos) do
-        if FindMethodIn(Infos[I].Code, Infos[I].X, Infos[I].Y, MethodName, Tool2, Proc2) then
+      for Info in Infos do
+        if FindMethodIn(Info.Code, Info.X, Info.Y, MethodName, Tool2, Proc2) then
         begin
           if Tool2.ProcNodeHasSpecifier(Proc2, psOverride) then Kind := 'override'
           else if Tool2.ProcNodeHasSpecifier(Proc2, psReintroduce) then Kind := 'reintroduce'
@@ -450,7 +451,7 @@ begin
           if Tool2.CleanPosToCaret(Tool2.CurPos.StartPos, At) then
           begin
             O := PosObj(At.Code, At.X, At.Y);
-            O.Add('class', Infos[I].Name);
+            O.Add('class', Info.Name);
             O.Add('kind', Kind);
             O.Add('signature', Trim(At.Code.GetLine(At.Y - 1, False)));
             Arr.Add(O);
@@ -816,10 +817,10 @@ end;
 procedure AddCand(var C: TCands; const AName, AKind, AOwner: string; APos: Integer;
   const ANote: string);
 var
-  I : Integer;
+  Item : TCand;
 begin
-  for I := 0 to High(C) do
-    if (C[I].Name = AName) and (C[I].Owner = AOwner) and (C[I].Kind = AKind) then Exit;
+  for Item in C do
+    if (Item.Name = AName) and (Item.Owner = AOwner) and (Item.Kind = AKind) then Exit;
   SetLength(C, Length(C) + 1);
   C[High(C)].Name := AName;
   C[High(C)].Kind := AKind;
@@ -900,6 +901,7 @@ end;
 
 function DoUnused(var Ctx: TMcpToolCall): Boolean;
 var
+  Item : TCand;
   Code     : TCodeBuffer;
   Tool, Tool2 : TCodeTool;
   Files, Texts, Cand : TStringList;
@@ -953,12 +955,12 @@ begin
       Stream.Free;
     end;
     Checked := 0;
-    for I := 0 to High(C) do
+    for Item in C do
     begin
       if Checked >= MaxSym then Break;
       Inc(Checked);
-      Low := LowerCase(C[I].Name);
-      if not Tool.CleanPosToCaret(C[I].NamePos, At) then Continue;
+      Low := LowerCase(Item.Name);
+      if not Tool.CleanPosToCaret(Item.NamePos, At) then Continue;
       Cand := TStringList.Create;
       try
         for J := 0 to Files.Count - 1 do
@@ -967,7 +969,7 @@ begin
         Tree := nil;
         if not CodeToolBoss.FindReferencesInFiles(Cand, At.Code, Point(At.X, At.Y), False, Tree) then
         begin
-          DbgNote := DbgNote + 'FAILED ' + C[I].Name + ': ' + CodeToolBoss.ErrorMessage + ' | ';
+          DbgNote := DbgNote + 'FAILED ' + Item.Name + ': ' + CodeToolBoss.ErrorMessage + ' | ';
           Continue;
         end;
         Refs := 0;
@@ -1004,9 +1006,9 @@ begin
         if Refs = 0 then
         begin
           O := PosObj(At.Code, At.X, At.Y);
-          O.Add('name', IfThen(C[I].Owner <> '', C[I].Owner + '.', '') + C[I].Name);
-          O.Add('kind', C[I].Kind);
-          if C[I].Note <> '' then O.Add('note', C[I].Note);
+          O.Add('name', IfThen(Item.Owner <> '', Item.Owner + '.', '') + Item.Name);
+          O.Add('kind', Item.Kind);
+          if Item.Note <> '' then O.Add('note', Item.Note);
           Arr.Add(O);
         end;
       finally

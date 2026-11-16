@@ -712,7 +712,8 @@ end;
 
 procedure TReviewPage.StripPaint(Sender: TObject);
 var
-  I, Side: Integer;
+  Row : Integer;
+  Side   : Integer;
   R: TRect;
   C: TCanvas;
   TW, TH: Integer;
@@ -727,9 +728,9 @@ begin
   C.Font.Assign(FEdM.Font);
   Rows := StripRows(Side);
   if Side = 0 then Sign := '>>' else Sign := '<<';   { pulls the side's text into the result }
-  for I := 0 to High(Rows) do
+  for Row in Rows do
   begin
-    R := ArrowRect(Rows[I]);
+    R := ArrowRect(Row);
     if (R.Bottom < 0) or (R.Top > TPaintBox(Sender).Height) then Continue;
     C.Brush.Color := BlendColor(FEdM.Color, RGBToColor(70, 130, 220), 35);
     C.Pen.Color := BlendColor(FEdM.Color, RGBToColor(70, 130, 220), 70);
@@ -781,8 +782,9 @@ end;
   clipboard, for the user to paste into the assistant. }
 procedure TReviewPage.ExplainClick(Sender: TObject);
 var
+  Hunk : TDiffHunk;
   S: string;
-  I, J: Integer;
+  J   : Integer;
   H: TDiffHunks;
 begin
   if FEditing then ReadWorkingCopy;
@@ -792,12 +794,12 @@ begin
     'and "+" lines are on disk. ' +
     'Please explain what each change does, whether they conflict, and which to keep.' +
     LineEnding + LineEnding + '```diff' + LineEnding;
-  for I := 0 to High(H) do
+  for Hunk in H do
   begin
-    S := S + Format('@@ result line %d, disk line %d @@', [H[I].AStart + 1, H[I].BStart + 1]) +
+    S := S + Format('@@ result line %d, disk line %d @@', [Hunk.AStart + 1, Hunk.BStart + 1]) +
       LineEnding;
-    for J := 0 to H[I].ALen - 1 do S := S + '-' + FResult[H[I].AStart + J] + LineEnding;
-    for J := 0 to H[I].BLen - 1 do S := S + '+' + FTheirs[H[I].BStart + J] + LineEnding;
+    for J := 0 to Hunk.ALen - 1 do S := S + '-' + FResult[Hunk.AStart + J] + LineEnding;
+    for J := 0 to Hunk.BLen - 1 do S := S + '+' + FTheirs[Hunk.BStart + J] + LineEnding;
   end;
   S := S + '```' + LineEnding;
   Clipboard.AsText := S;
@@ -836,6 +838,7 @@ end;
 
 procedure TReviewPage.GoToChange(ADirection: Integer);
 var
+  NavRow : Integer;
   I, Row, Cur: Integer;
 begin
   if Length(FNav) = 0 then Exit;
@@ -843,10 +846,10 @@ begin
   Row := -1;
   if ADirection > 0 then
   begin
-    for I := 0 to High(FNav) do
-      if FNav[I] > Cur + 1 then
+    for NavRow in FNav do
+      if NavRow > Cur + 1 then
       begin
-        Row := FNav[I];
+        Row := NavRow;
         Break;
       end;
     if Row < 0 then Row := FNav[0];

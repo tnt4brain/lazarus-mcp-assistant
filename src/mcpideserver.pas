@@ -296,15 +296,15 @@ end;
   fill CookieFields). }
 function CookieValue(const AHeader, AName: string): string;
 var
+  Part : string;
   Parts : TStringArray;
-  I     : Integer;
   S     : string;
 begin
   Result := '';
   Parts  := AHeader.Split([';']);
-  for I := 0 to High(Parts) do
+  for Part in Parts do
   begin
-    S := Trim(Parts[I]);
+    S := Trim(Part);
     if SameText(Copy(S, 1, Length(AName) + 1), AName + '=') then
       Exit(Copy(S, Length(AName) + 2, MaxInt));
   end;
@@ -1665,6 +1665,7 @@ var
   Cfg    : string;
   Info, Sett, Toks : string;
   TokItems : TMcpClientTokens;
+  TokItem  : TMcpClientToken;
   I      : Integer;
   Proj   : Boolean;
   Text   : string;
@@ -1710,10 +1711,10 @@ begin
 
   Toks := '';
   TokItems := McpSettings.ClientTokens.Items;
-  for I := 0 to High(TokItems) do
+  for TokItem in TokItems do
   begin
     if Toks <> '' then Toks := Toks + ', ';
-    Toks := Toks + TokItems[I].Name;
+    Toks := Toks + TokItem.Name;
   end;
   if Toks = '' then Toks := '(none)';
   Sett := '- listen address: ' + McpSettings.ListenAddress + LineEnding +

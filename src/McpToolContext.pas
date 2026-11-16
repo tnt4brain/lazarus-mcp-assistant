@@ -245,7 +245,7 @@ end;
 
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 var
-  I   : Integer;
+  DispatchGroup : TMcpGroupDispatch;
   Why : string;
 begin
   Handled := False;
@@ -256,8 +256,8 @@ begin
     Handled := True;
     Exit;
   end;
-  for I := 0 to High(GDispatchGroups) do
-    if GDispatchGroups[I](Name, Ctx) then
+  for DispatchGroup in GDispatchGroups do
+    if DispatchGroup(Name, Ctx) then
     begin
       Handled := True;
       Exit;
@@ -266,10 +266,10 @@ end;
 
 procedure McpRegisterSchemas(Tools: TJSONArray);
 var
-  I : Integer;
+  SchemaGroup : TMcpSchemaReg;
 begin
-  for I := 0 to High(GSchemaGroups) do
-    GSchemaGroups[I](Tools);
+  for SchemaGroup in GSchemaGroups do
+    SchemaGroup(Tools);
   SortToolsByName(Tools);
 end;
 
@@ -281,11 +281,11 @@ end;
 
 procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 var
-  I : Integer;
+  BlockingGroup : TMcpGroupDispatch;
 begin
   Handled := False;
-  for I := 0 to High(GBlockingGroups) do
-    if GBlockingGroups[I](Name, Ctx) then
+  for BlockingGroup in GBlockingGroups do
+    if BlockingGroup(Name, Ctx) then
     begin
       Handled := True;
       Exit;
@@ -349,7 +349,8 @@ end;
 function McpValidateArgs(const ToolName: string; Args: TJSONObject;
   out Msg: string): Boolean;
 var
-  I, J     : Integer;
+  SchemaGroup : TMcpSchemaReg;
+  J        : Integer;
   En       : TJSONEnum;
   Names    : TStringList;
   Hint     : string;
@@ -367,8 +368,8 @@ begin
     if GSchemaCache = nil then
     begin
       GSchemaCache := TJSONArray.Create;
-      for I := 0 to High(GSchemaGroups) do
-        GSchemaGroups[I](GSchemaCache);
+      for SchemaGroup in GSchemaGroups do
+        SchemaGroup(GSchemaCache);
     end;
     Schema := nil;
     for En in GSchemaCache do
@@ -509,29 +510,29 @@ end;
 
 procedure McpListResources(Resources: TJSONArray);
 var
-  I   : Integer;
+  ResourceEntry : TMcpResourceEntry;
   Obj : TJSONObject;
 begin
-  for I := 0 to High(GResourceEntries) do
+  for ResourceEntry in GResourceEntries do
   begin
     Obj := TJSONObject.Create;
-    Obj.Add('uri',         GResourceEntries[I].Uri);
-    Obj.Add('name',        GResourceEntries[I].Name);
-    Obj.Add('description', GResourceEntries[I].Description);
-    Obj.Add('mimeType',    GResourceEntries[I].MimeType);
+    Obj.Add('uri',         ResourceEntry.Uri);
+    Obj.Add('name',        ResourceEntry.Name);
+    Obj.Add('description', ResourceEntry.Description);
+    Obj.Add('mimeType',    ResourceEntry.MimeType);
     Resources.Add(Obj);
   end;
 end;
 
 function McpReadResource(const AUri: string; out Content: string): Boolean;
 var
-  I : Integer;
+  ResourceEntry : TMcpResourceEntry;
 begin
   Result := False;
-  for I := 0 to High(GResourceEntries) do
-    if GResourceEntries[I].Uri = AUri then
+  for ResourceEntry in GResourceEntries do
+    if ResourceEntry.Uri = AUri then
     begin
-      Content := GResourceEntries[I].GetText();
+      Content := ResourceEntry.GetText();
       Result  := True;
       Exit;
     end;

@@ -418,6 +418,8 @@ end;
 
 function McpOpenDialogs(AWithForms: Boolean): TJSONArray;
 var
+  OpenDlg : TOpenDialog_;
+  ModalDlg : TModalForm_;
   I, K : Integer;
   O   : TJSONObject;
   {$IFDEF WINDOWS}
@@ -429,30 +431,30 @@ begin
   Result := TJSONArray.Create;
   GLock.Enter;
   try
-    for I := 0 to High(GOpen) do
+    for OpenDlg in GOpen do
     begin
       O := TJSONObject.Create;
-      O.Add('caption', GOpen[I].Caption);
-      O.Add('text',    GOpen[I].Text);
-      O.Add('buttons', GOpen[I].Buttons);
+      O.Add('caption', OpenDlg.Caption);
+      O.Add('text',    OpenDlg.Text);
+      O.Add('buttons', OpenDlg.Buttons);
       O.Add('source',  'IDE dialog');
       Result.Add(O);
     end;
     if AWithForms then
     begin
       if GetCurrentThreadId = MainThreadID then PruneModalForms;
-      for I := 0 to High(GModal) do
+      for ModalDlg in GModal do
       begin
         { a message or question dialog is both: listed once, with its full text above }
         K := 0;
         while (K < Result.Count) and
-              (TJSONObject(Result[K]).Get('caption', '') <> GModal[I].Caption) do
+              (TJSONObject(Result[K]).Get('caption', '') <> ModalDlg.Caption) do
           Inc(K);
         if K < Result.Count then Continue;
         O := TJSONObject.Create;
-        O.Add('caption', GModal[I].Caption);
-        O.Add('text',    GModal[I].Text);
-        O.Add('buttons', GModal[I].Buttons);
+        O.Add('caption', ModalDlg.Caption);
+        O.Add('text',    ModalDlg.Text);
+        O.Add('buttons', ModalDlg.Buttons);
         O.Add('source',  'modal form');
         Result.Add(O);
       end;

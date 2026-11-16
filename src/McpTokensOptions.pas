@@ -387,8 +387,8 @@ end;
 
 procedure TMcpTokensFrame.RevokeTokenClick(Sender: TObject);
 var
+  Item : TMcpClientToken;
   Items   : TMcpClientTokens;
-  I       : Integer;
   TokName : string;
 begin
   if not Assigned(McpSettings) or (FTokenList.Selected = nil) then Exit;
@@ -397,11 +397,11 @@ begin
        'cut off at once, and a debug session it holds ends.', mtConfirmation,
        [mbYes, mbNo], 0) <> mrYes then Exit;
   Items := McpSettings.ClientTokens.Items;
-  for I := 0 to High(Items) do
-    if Items[I].Name = TokName then
+  for Item in Items do
+    if Item.Name = TokName then
     begin
-      McpSettings.ClientTokens.Revoke(Items[I].Id);
-      McpForgetTokenSessions(Items[I].Id);
+      McpSettings.ClientTokens.Revoke(Item.Id);
+      McpForgetTokenSessions(Item.Id);
       McpLogSession('token "' + TokName + '" revoked');
       Break;
     end;

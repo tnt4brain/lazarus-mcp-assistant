@@ -221,9 +221,9 @@ end;
 
 function TMcpTokenStore.Add(const AName: string; out AToken, AErr: string): Boolean;
 var
+  Item : TMcpClientToken;
   T   : TMcpClientToken;
   Id  : array[0..3] of Byte;
-  I   : Integer;
 begin
   Result := False;
   AToken := '';
@@ -236,8 +236,8 @@ begin
       AErr := 'At most ' + IntToStr(MCP_MAX_TOKENS) + ' tokens: revoke one first';
       Exit;
     end;
-    for I := 0 to High(FItems) do
-      if SameText(FItems[I].Name, Trim(AName)) then
+    for Item in FItems do
+      if SameText(Item.Name, Trim(AName)) then
       begin
         AErr := 'There is a token named "' + Trim(AName) + '" already';
         Exit;

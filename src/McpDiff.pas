@@ -459,8 +459,9 @@ function MergeAutoEx(const Base, Mine, Theirs: TDiffLines;
   out Applied, Conflicts: Integer; out FromTheirs: TLineFlags;
   out LinesRemoved: Integer): TDiffLines;
 var
+  Item : TMergeChunk;
   C    : TMergeChunks;
-  I, J, N: Integer;
+  J, N   : Integer;
   Part : TDiffLines;
 begin
   Result := nil;
@@ -471,19 +472,19 @@ begin
   SetLength(FromTheirs, Length(Theirs));
   N := 0;
   C := Merge3(Base, Mine, Theirs);
-  for I := 0 to High(C) do
+  for Item in C do
   begin
-    if C[I].Kind = mkTheirs then
+    if Item.Kind = mkTheirs then
     begin
-      Part := Slice(Theirs, C[I].TheirStart, C[I].TheirLen);
-      for J := 0 to C[I].TheirLen - 1 do FromTheirs[C[I].TheirStart + J] := True;
-      Inc(LinesRemoved, C[I].MineLen);
+      Part := Slice(Theirs, Item.TheirStart, Item.TheirLen);
+      for J := 0 to Item.TheirLen - 1 do FromTheirs[Item.TheirStart + J] := True;
+      Inc(LinesRemoved, Item.MineLen);
       Inc(Applied);
     end
     else
     begin
-      Part := Slice(Mine, C[I].MineStart, C[I].MineLen);
-      if C[I].Kind = mkConflict then Inc(Conflicts);
+      Part := Slice(Mine, Item.MineStart, Item.MineLen);
+      if Item.Kind = mkConflict then Inc(Conflicts);
     end;
     SetLength(Result, N + Length(Part));
     for J := 0 to High(Part) do Result[N + J] := Part[J];
