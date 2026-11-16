@@ -558,6 +558,7 @@ end;
 procedure DoRenameIdentifier(var Ctx: TMcpToolCall);
 var
   FilePath, NewName, Ident : string;
+  Refused                  : string;
   Line, Col, I             : Integer;
   DeclX, DeclY, DeclTop    : Integer;
   DryRun, AutoSave, OldOpen: Boolean;
@@ -695,6 +696,15 @@ begin
       Ctx.Result := Obj.AsJSON;
       Exit;
     end;
+    { all or nothing: a reference in a file that may not be changed (the RTL, the LCL, another
+      project's sources) stops the rename before anything is touched }
+    for I := 0 to Bufs.Count - 1 do
+      if not McpCheckWritable(TCodeBuffer(Bufs[I]).Filename, Refused) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Nothing was renamed. ' + Refused + ' (dry_run lists every reference.)';
+        Exit;
+      end;
 
     for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
       OpenBefore.Add(SourceEditorManagerIntf.SourceEditors[I].FileName);
@@ -1700,6 +1710,10 @@ begin
         Ctx.Error := True; Ctx.Result := 'No active project to resolve relative path'; Exit;
       end;
     end;
+    if not McpCheckWritable(FilePath, Why) then
+    begin
+      Ctx.Error := True; Ctx.Result := Why; Exit;
+    end;
     if FileExists(FilePath) then
     begin
       Ctx.Error := True; Ctx.Result := 'File already exists: ' + FilePath; Exit;
@@ -2292,7 +2306,9 @@ begin
     SCHEMA_LIST_TODOS, MCP_ANN_RO));
   Tools.Add(MakeTool('project_create_unit',
     'Create a new Pascal unit file on disk, add it to the active project, ' +
-    'and open it in the editor. Provide content or receive a blank unit skeleton.',
+    'and open it in the editor. Provide content or receive a blank unit skeleton. ' +
+    'Only inside the project, a loaded package, the git working tree holding either, or the temp ' +
+    'folder; an existing file is refused.',
     SCHEMA_CREATE_UNIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_add_uses',
     'Add a unit to the uses clause of a Pascal file using Codetools. ' +

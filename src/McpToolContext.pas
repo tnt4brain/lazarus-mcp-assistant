@@ -71,6 +71,25 @@ var
     that ends without restarting the IDE uses it to bring the server back. }
   GMcpRestartServer : TProcedure = nil;
 
+type
+  TMcpWriteCheck = function(const AFileName: string; out AWhy: string): Boolean;
+
+var
+  { Set by McpToolsEditor to McpCheckWritable (this unit has no IDE dependency, so the test
+    project can build it); nil allows everything. }
+  GMcpWriteCheck : TMcpWriteCheck = nil;
+
+type
+  { A package by name or by .lpk path (one of them is ''): may its .lpk be changed? }
+  TMcpPackageWriteCheck = function(const AName, ALpk: string; out AWhy: string): Boolean;
+
+var
+  GMcpPackageCheck : TMcpPackageWriteCheck = nil;
+
+{ False, with AWhy, when AName is a tool that changes a file or a form outside the folders
+  GMcpWriteCheck allows.  McpDispatch applies it before any tool runs. }
+function McpWriteAllowed(const AName: string; AParams: TJSONObject; out AWhy: string): Boolean;
+
 { Called by SyncCallTool and HandleToolsList respectively. }
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 procedure McpRegisterSchemas(Tools: TJSONArray);
@@ -144,11 +163,86 @@ begin
   GSchemaGroups[High(GSchemaGroups)] := Fn;
 end;
 
+const
+  { Tools that change the file their `file` argument names (a dry run only reads) }
+  { these change an existing package's .lpk (package_move_unit two of them) }
+  PACKAGE_WRITERS : array[0..6] of string = (
+    'package_add_file', 'package_remove_file', 'package_add_dependency',
+    'package_remove_dependency', 'package_set_info', 'package_set_settings',
+    'package_move_unit');
+
+  FILE_WRITERS : array[0..8] of string = (
+    'code_add_uses', 'code_add_to_class', 'code_insert_in_procedure',
+    'code_replace_procedure_body', 'code_edit_statement', 'code_complete', 'code_format',
+    'code_rename_identifier', 'code_extract_method');
+  { Tools that change the form their `form_file` argument names }
+  FORM_WRITERS : array[0..11] of string = (
+    'form_set_properties', 'form_add_component', 'form_delete_component', 'form_arrange',
+    'form_create_event_handler', 'form_add_collection_item', 'form_delete_collection_item',
+    'form_move_collection_item', 'form_add_menu_item', 'form_move_menu_item', 'form_undo',
+    'form_redo');
+
+function PackageArgAllowed(const AArg: string; out AWhy: string): Boolean;
+begin
+  Result := True;
+  AWhy := '';
+  if (AArg = '') or not Assigned(GMcpPackageCheck) then Exit;
+  if LowerCase(ExtractFileExt(AArg)) = '.lpk' then
+    Result := GMcpPackageCheck('', AArg, AWhy)
+  else
+    Result := GMcpPackageCheck(AArg, '', AWhy);
+end;
+
+function McpWriteAllowed(const AName: string; AParams: TJSONObject; out AWhy: string): Boolean;
+var
+  Arg, F : string;
+  I      : Integer;
+begin
+  Result := True;
+  AWhy := '';
+  if AParams = nil then Exit;
+  for I := Low(PACKAGE_WRITERS) to High(PACKAGE_WRITERS) do
+    if AName = PACKAGE_WRITERS[I] then
+    begin
+      if AParams.Get('dry_run', False) then Exit;
+      if AName = 'package_move_unit' then
+      begin
+        Result := PackageArgAllowed(AParams.Get('from_package', ''), AWhy) and
+                  PackageArgAllowed(AParams.Get('to_package', ''), AWhy);
+        Exit;
+      end;
+      F := AParams.Get('lpk_path', '');
+      if (F <> '') and Assigned(GMcpPackageCheck) then
+        Result := GMcpPackageCheck('', F, AWhy)
+      else if Assigned(GMcpPackageCheck) then
+        Result := GMcpPackageCheck(AParams.Get('package_name', ''), '', AWhy);
+      Exit;
+    end;
+  Arg := '';
+  for I := Low(FILE_WRITERS) to High(FILE_WRITERS) do
+    if AName = FILE_WRITERS[I] then Arg := 'file';
+  for I := Low(FORM_WRITERS) to High(FORM_WRITERS) do
+    if AName = FORM_WRITERS[I] then Arg := 'form_file';
+  if Arg = '' then Exit;
+  if AParams.Get('dry_run', False) then Exit;
+  F := AParams.Get(Arg, '');                 { '' = the active editor; the hook resolves it }
+  if Assigned(GMcpWriteCheck) then
+    Result := GMcpWriteCheck(F, AWhy);
+end;
+
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
 var
-  I : Integer;
+  I   : Integer;
+  Why : string;
 begin
   Handled := False;
+  if not McpWriteAllowed(Name, Ctx.Params, Why) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := Why;
+    Handled := True;
+    Exit;
+  end;
   for I := 0 to High(GDispatchGroups) do
     if GDispatchGroups[I](Name, Ctx) then
     begin

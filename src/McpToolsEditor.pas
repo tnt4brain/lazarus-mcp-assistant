@@ -110,30 +110,10 @@ const
 
 { ── editor_create_file ───────────────────────────────────────────────────── }
 
-{ The folders a file may be created in: the active project's, those of the loaded packages, and
-  the system temp folder.  A file anywhere else is for the user's own hands (or a shell). }
-procedure WritableRoots(ARoots: TStrings);
-var
-  I : Integer;
-  D : string;
-begin
-  if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
-     (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
-    ARoots.Add(ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile));
-  for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
-  begin
-    D := PackageEditingInterface.GetPackages(I).DirectoryExpanded;
-    if D <> '' then ARoots.Add(D);
-  end;
-  ARoots.Add(GetTempDir(False));
-end;
-
 procedure DoCreateFile(var Ctx: TMcpToolCall);
 var
   FilePath, Text, Err : string;
-  Overwrite, DoOpen, Existed, Allowed : Boolean;
-  Roots : TStringList;
-  I     : Integer;
+  Overwrite, DoOpen, Existed : Boolean;
   FS    : TFileStream;
   Obj   : TJSONObject;
 begin
@@ -160,30 +140,9 @@ begin
   begin
     Ctx.Error := True; Ctx.Result := 'That is a directory, not a file: ' + FilePath; Exit;
   end;
-  if McpPathHasSegment(FilePath, '.git') then
+  if not McpCheckWritable(FilePath, Err) then
   begin
-    Ctx.Error := True;
-    Ctx.Result := 'Refused: nothing is written inside a .git folder (hooks run code)';
-    Exit;
-  end;
-  Roots := TStringList.Create;
-  try
-    WritableRoots(Roots);
-    Allowed := False;
-    for I := 0 to Roots.Count - 1 do
-      if McpPathIsUnder(FilePath, Roots[I]) then Allowed := True;
-    if not Allowed then
-    begin
-      Err := '';
-      for I := 0 to Roots.Count - 1 do
-        Err := Err + ' ' + Roots[I];
-      Ctx.Error := True;
-      Ctx.Result := 'Refused: ' + FilePath + ' is outside the folders files may be created in (the ' +
-        'project directory, a loaded package''s folder, the temp folder):' + Err;
-      Exit;
-    end;
-  finally
-    Roots.Free;
+    Ctx.Error := True; Ctx.Result := Err; Exit;
   end;
   if Length(Text) > CREATE_CAP then
   begin
@@ -586,6 +545,10 @@ begin
     SyncFilePath := Ctx.Params.Get('file', '');
     if SyncFilePath <> '' then
     begin
+      if not McpCheckWritable(SyncFilePath, SyncText) then
+      begin
+        Ctx.Error := True; Ctx.Result := SyncText; Exit;
+      end;
       Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
       if not Assigned(Ed) then
       begin
@@ -606,6 +569,10 @@ begin
     if not Assigned(Ed) then
     begin
       Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
+    end;
+    if not McpCheckWritable(Ed.FileName, SyncText) then
+    begin
+      Ctx.Error := True; Ctx.Result := SyncText; Exit;
     end;
     SyncNewName := Ctx.Params.Get('new_text', '');
     if HasLen then
@@ -654,6 +621,10 @@ begin
     SyncFilePath := Ctx.Params.Get('file', '');
     if SyncFilePath <> '' then
     begin
+      if not McpCheckWritable(SyncFilePath, SyncText) then
+      begin
+        Ctx.Error := True; Ctx.Result := SyncText; Exit;
+      end;
       Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(SyncFilePath);
       if not Assigned(Ed) then
       begin
@@ -674,6 +645,10 @@ begin
     if not Assigned(Ed) then
     begin
       Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
+    end;
+    if not McpCheckWritable(Ed.FileName, SyncText) then
+    begin
+      Ctx.Error := True; Ctx.Result := SyncText; Exit;
     end;
     SyncText := StringReplace(Ed.Lines.Text, #13#10, #10, [rfReplaceAll]);
     SyncMatchPositions := TList.Create;
@@ -897,11 +872,15 @@ begin
     'Replace a range of text in the editor buffer, e.g. at coordinates from ' +
     'code_get_outline, code_find_declaration or code_get_procedure_ast. The range ' +
     'ends at end_line/end_col or after delete_len characters; with neither, ' +
-    'new_text is inserted. Empty new_text deletes. Opens the file if needed; Ctrl+Z works.',
+    'new_text is inserted. Empty new_text deletes. Opens the file if needed; Ctrl+Z works. ' +
+    'Only files inside the project, a loaded package, the git working tree holding either, or the ' +
+    'temp folder; anything else is refused.',
     SCHEMA_REPLACE_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_edit_text',
     'Replace old_string with new_string in the editor buffer (opens the file if ' +
-    'needed; Ctrl+Z works). Prefer this over editor_replace_range: no stale line numbers.',
+    'needed; Ctrl+Z works). Prefer this over editor_replace_range: no stale line numbers. ' +
+    'Only files inside the project, a loaded package, the git working tree holding either, or the ' +
+    'temp folder; anything else is refused.',
     SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_save',
     'Save the editor buffer to disk. Omit file to save the active editor.',
@@ -917,7 +896,8 @@ begin
   Tools.Add(MakeTool('editor_create_file',
     'Create a new text file with the given content, on the machine the IDE runs on, and open it ' +
     'in the editor. Allowed inside the project directory, the folder of a loaded package and the ' +
-    'system temp folder only, never inside a .git folder; an existing file is refused unless ' +
+    'system temp folder, or the git working tree holding the project or a package, never inside a ' +
+    '.git folder; an existing file is refused unless ' +
     'overwrite is true (and then only when no editor has it open). Missing folders are created. ' +
     'The file is not added to the project or a package: use project_add_file or package_add_file. ' +
     'For a Pascal unit that should join the project, project_create_unit does both.',
@@ -928,7 +908,30 @@ begin
     SCHEMA_OPEN_FILE, MCP_ANN_RO));
 end;
 
+{ McpDispatch's check.  An empty name means the active editor's file; no editor or an untitled
+  buffer (nothing on disk) passes, the tool reports its own error. }
+function CheckWritableOrActive(const AFileName: string; out AWhy: string): Boolean;
+var
+  F  : string;
+  Ed : TSourceEditorInterface;
+begin
+  F := AFileName;
+  if F = '' then
+  begin
+    Ed := SourceEditorManagerIntf.ActiveEditor;
+    if Ed <> nil then F := Ed.FileName;
+  end;
+  if (F = '') or not FilenameIsAbsolute(F) then
+  begin
+    AWhy := '';
+    Exit(True);
+  end;
+  Result := McpCheckWritable(F, AWhy);
+end;
+
 initialization
+  GMcpWriteCheck := @CheckWritableOrActive;
+  GMcpPackageCheck := @McpCheckPackageWritable;
   RegisterMcpGroup(@DispatchEditorTool);
   RegisterMcpSchemas(@RegisterEditorSchemas);
 

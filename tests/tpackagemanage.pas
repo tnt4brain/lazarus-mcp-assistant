@@ -133,7 +133,9 @@ begin
   CheckTrue(Pos('package_name or lpk_path required', T) > 0, T);
   T := Call('package_get_info', '{"lpk_path":"C:/nowhere/x.lpk"}');
   CheckTrue(Pos('No such .lpk', T) > 0, T);
-  T := Call('package_set_settings', '{"package_name":"LazUtils"}');
+  { a package of ours, so the folder rule lets the call reach the argument check; with no setting
+    given nothing is changed }
+  T := Call('package_set_settings', '{"package_name":"LazMcpAssistant"}');
   CheckTrue(Pos('Give at least one of', T) > 0, T);
   T := Call('package_compile', '{"package_name":"NoSuchPackageXyz"}');
   CheckTrue(Pos('Package not loaded', T) > 0, T);

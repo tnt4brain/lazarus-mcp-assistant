@@ -29,6 +29,7 @@ type
     procedure TestRenameLegacyFileArg;
     procedure TestPathIsUnder;
     procedure TestPathHasSegment;
+    procedure TestRepoRoot;
   end;
 
 implementation
@@ -56,6 +57,34 @@ begin
   {$IFDEF WINDOWS}
   AssertTrue('Windows does not care about case', McpPathIsUnder(UpperCase(Root) + Sep + 'A.PAS', Root));
   {$ENDIF}
+end;
+
+procedure TTestUtils.TestRepoRoot;
+var
+  Base, Deep : string;
+  F : TextFile;
+begin
+  Base := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcprepo' + PathDelim;
+  Deep := Base + 'a' + PathDelim + 'b' + PathDelim;
+  ForceDirectories(Deep);
+  ForceDirectories(Base + '.git');
+  try
+    AssertEquals('the folder with .git', Base, McpRepoRoot(Deep));
+    AssertEquals('the folder itself', Base, McpRepoRoot(Base));
+    AssertEquals('a relative path has none', '', McpRepoRoot('a' + PathDelim + 'b'));
+    { a worktree has a .git file, not a folder }
+    RemoveDir(Base + '.git');
+    AssignFile(F, Base + '.git');
+    Rewrite(F);
+    WriteLn(F, 'gitdir: elsewhere');
+    CloseFile(F);
+    AssertEquals('.git as a file', Base, McpRepoRoot(Deep));
+  finally
+    DeleteFile(Base + '.git');
+    RemoveDir(Deep);
+    RemoveDir(Base + 'a' + PathDelim);
+    RemoveDir(Base);
+  end;
 end;
 
 procedure TTestUtils.TestPathHasSegment;

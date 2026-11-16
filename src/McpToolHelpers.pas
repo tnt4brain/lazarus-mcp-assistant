@@ -19,7 +19,7 @@ function McpGetUnitInterface(const FilePath: string; out IsError: Boolean): stri
 function McpRunLazbuild(const LpkPath: string; out IsError: Boolean;
   AClean: Boolean = False): string;
 
-{ McpRunLazbuild as {method, success, errors, output}; errors are the compiler's
+{ McpRunLazbuild as a JSON object (method, success, errors, output); errors are the compiler's
   "file(line,col) Error: text" lines. }
 function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean;
   AClean: Boolean = False): string;
@@ -63,10 +63,115 @@ procedure McpOffsetToLineCol(const S: string; Offset: Integer;
   is renewed. }
 function McpCheckFileToOpen(const AFileName: string; out AErr: string): Boolean;
 
+{ The folders a tool may create or change a file in: the active project's directory, the folder of
+  every loaded package except those that ship with Lazarus (under $(LazarusDir), unless the project
+  itself is there), the git working tree that holds either of those (a package's tests and
+  docs sit above its source folder), and the system temp folder.  Without this a client, local
+  or on another machine, could write anywhere the IDE's user can. }
+procedure McpWritableRoots(ARoots: TStrings);
+
+{ True when AFileName (absolute) may be written: inside McpWritableRoots, and not inside a .git
+  folder (its hooks run code).  Else False with the reason. }
+function McpCheckWritable(const AFileName: string; out AErr: string): Boolean;
+
+{ The same for a package's .lpk, named by AName (a loaded package) or by ALpk.  A name that is not
+  loaded passes: the tool reports it. }
+function McpCheckPackageWritable(const AName, ALpk: string; out AErr: string): Boolean;
+
 implementation
 
 uses
-  LazIDEIntf, ProjectIntf;
+  LazIDEIntf, ProjectIntf, PackageIntf, MacroIntf, McpUtils;
+
+procedure AddRoot(ARoots: TStrings; const ADir: string);
+var
+  R : string;
+begin
+  if ADir = '' then Exit;
+  if ARoots.IndexOf(ADir) < 0 then ARoots.Add(ADir);
+  R := McpRepoRoot(ADir);
+  if (R <> '') and (ARoots.IndexOf(R) < 0) then ARoots.Add(R);
+end;
+
+function LazarusDirectory: string;
+begin
+  Result := '$(LazarusDir)';
+  if not Assigned(IDEMacros) or not IDEMacros.SubstituteMacros(Result) then
+    Result := '';
+end;
+
+procedure McpWritableRoots(ARoots: TStrings);
+var
+  I        : Integer;
+  Proj     : string = '';
+  LazDir   : string;
+  Dir      : string;
+begin
+  if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+     (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
+  begin
+    Proj := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile);
+    AddRoot(ARoots, Proj);
+  end;
+  { The packages that come with Lazarus (LCL, IDEIntf, ...) are not the user's to change, unless
+    the open project is itself inside the Lazarus folder: then it is the anchor. }
+  LazDir := LazarusDirectory;
+  if (LazDir <> '') and (Proj <> '') and McpPathIsUnder(Proj, LazDir) then LazDir := '';
+  for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+  begin
+    Dir := PackageEditingInterface.GetPackages(I).DirectoryExpanded;
+    if (LazDir <> '') and McpPathIsUnder(Dir, LazDir) then Continue;
+    AddRoot(ARoots, Dir);
+  end;
+  ARoots.Add(GetTempDir(False));
+end;
+
+function McpCheckWritable(const AFileName: string; out AErr: string): Boolean;
+var
+  Roots : TStringList;
+  I     : Integer;
+begin
+  AErr := '';
+  if not FilenameIsAbsolute(AFileName) then
+  begin
+    AErr := 'Give an absolute path: ' + AFileName;
+    Exit(False);
+  end;
+  if McpPathHasSegment(AFileName, '.git') then
+  begin
+    AErr := 'Refused: nothing is written inside a .git folder (hooks run code)';
+    Exit(False);
+  end;
+  Roots := TStringList.Create;
+  try
+    McpWritableRoots(Roots);
+    for I := 0 to Roots.Count - 1 do
+      if McpPathIsUnder(AFileName, Roots[I]) then Exit(True);
+    AErr := 'Refused: ' + AFileName + ' is outside the folders files may be changed in (the project ' +
+      'directory, the folder of a loaded package that is not part of Lazarus, the git working tree holding either, the temp folder):';
+    for I := 0 to Roots.Count - 1 do
+      AErr := AErr + ' ' + Roots[I];
+  finally
+    Roots.Free;
+  end;
+  Result := False;
+end;
+
+function McpCheckPackageWritable(const AName, ALpk: string; out AErr: string): Boolean;
+var
+  F   : string;
+  Pkg : TIDEPackage;
+begin
+  AErr := '';
+  F := ALpk;
+  if F = '' then
+  begin
+    Pkg := PackageEditingInterface.FindPackageWithName(AName);
+    if Pkg <> nil then F := Pkg.Filename;
+  end;
+  if F = '' then Exit(True);
+  Result := McpCheckWritable(F, AErr);
+end;
 
 function McpCheckFileToOpen(const AFileName: string; out AErr: string): Boolean;
 begin
