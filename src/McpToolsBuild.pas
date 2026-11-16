@@ -209,7 +209,10 @@ type
     Closed     : TStringList;     { editors DoRebuild closed, to open again if the build fails }
     RebuildOk  : Boolean;
     RebuildFailure : string;
+    RaisedText : string;      { class and message of an exception DoRebuild caught }
+    HasProject : Boolean;
     constructor Create;
+    procedure ReadHasProject;
     destructor Destroy; override;
     procedure CheckUnsaved;
     procedure PreCompile;
@@ -227,6 +230,11 @@ type
 var
   GBuildHelper   : TBuildSyncHelper = nil;
   GRebuildActive : LongInt = 0;   { InterlockedCompareExchange guard }
+
+procedure TBuildSyncHelper.ReadHasProject;
+begin
+  HasProject := Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject);
+end;
 
 procedure TBuildSyncHelper.DismissExceptionDialog;
 var
@@ -328,15 +336,23 @@ type
 var
   GServerRestarter : TServerRestarter = nil;
 
+var
+  GRestartNotice : string = '';
+
 procedure TServerRestarter.Tick(Sender: TObject);
 begin
   GRestartTimer.Enabled := False;
+  { the IDE is on its way out (a restart that is under way): nothing to bring back }
+  if Application.Terminated then Exit;
+  if GRestartNotice <> '' then McpAddMessage(mluImportant, GRestartNotice);
   if Assigned(GMcpRestartServer) then GMcpRestartServer();
 end;
 
-{ Main thread: bring the server back a moment from now (the answer of the call that
-  failed is still being sent on the old one). }
-procedure ScheduleServerRestart;
+{ Main thread: bring the server back AMs from now, with ANotice in the Messages window
+  when it is not empty.  A failed build: a moment from now (the answer of the call that
+  failed is still being sent on the old server).  A build that went through: later, as a
+  watchdog (see DoRebuild). }
+procedure ScheduleServerRestart(AMs: Integer; const ANotice: string);
 begin
   if GRestartTimer = nil then
   begin
@@ -345,7 +361,9 @@ begin
     GRestartTimer.Enabled := False;
     GRestartTimer.OnTimer := @GServerRestarter.Tick;
   end;
-  GRestartTimer.Interval := 2500;
+  GRestartNotice := ANotice;
+  GRestartTimer.Enabled := False;
+  GRestartTimer.Interval := AMs;
   GRestartTimer.Enabled := True;
 end;
 
@@ -494,9 +512,19 @@ begin
   try
     McpCompilerMessages(Errors, Warnings);
     Obj.Add('status', 'rebuild_failed');
-    Obj.Add('message', 'The IDE build failed, so the IDE was NOT restarted. The MCP server ' +
-      'is back in a few seconds on the same port and token; the editors that were open are ' +
-      'open again. Fix the errors, then run ' + ToolName + ' again.');
+    if RaisedText <> '' then
+    begin
+      Obj.Add('message', 'The IDE raised an exception while starting the build, so the IDE ' +
+        'was NOT restarted (' + RaisedText + '). The MCP server is back in a few seconds on ' +
+        'the same port and token; the editors that were open are open again. If no project ' +
+        'is open (the IDE shows its Project Wizard), open one with project_open and run ' +
+        ToolName + ' again.');
+      Obj.Add('exception', RaisedText);
+    end
+    else
+      Obj.Add('message', 'The IDE build failed, so the IDE was NOT restarted. The MCP server ' +
+        'is back in a few seconds on the same port and token; the editors that were open are ' +
+        'open again. Fix the errors, then run ' + ToolName + ' again.');
     Obj.Add('errors', Errors); Errors := nil;
     Obj.Add('warning_count', Warnings.Count);
     RebuildFailure := Obj.AsJSON;
@@ -536,8 +564,17 @@ begin
   end;
   RebuildOk := True;
   if Assigned(StopServer) then StopServer();
+  { The server is down from here.  If the build or the restart then waits for an answer in
+    a dialog nobody gives, the call below never returns: this brings the server back after
+    10 minutes (a build here takes about one) and says why.  The call returning replaces it
+    with a shorter watchdog, see below. }
+  ScheduleServerRestart(600000,
+    'MCP Assistant: ' + ToolName + ' did not finish within 10 minutes (a dialog waiting ' +
+    'for an answer?). The server is back in this IDE; the rebuild is not done.');
+  RaisedText := '';
   PkgList := TObjectList.Create(True);
   try
+   try
     if UninstallName <> '' then
     begin
       IDEPkg := PackageEditingInterface.FindPackageWithName(UninstallName);
@@ -562,6 +599,17 @@ begin
       with anything but ok, the build failed and this IDE is still the one running. }
     RebuildOk := PackageEditingInterface.InstallPackages(
       PkgList, [piiifRebuildIDE, piiifSkipChecks, piiifQuiet]) = mrOk;
+   except
+    { the server is already stopped: an exception that left here would leave the IDE
+      without one and the caller with a reply nobody can read (2026-11-16, asked from the
+      Project Wizard) }
+    on E: Exception do
+    begin
+      RebuildOk  := False;
+      RaisedText := E.ClassName + ': ' + E.Message;
+      McpAddMessage(mluImportant, 'MCP Assistant: ' + ToolName + ' raised ' + RaisedText);
+    end;
+   end;
   finally
     PkgList.Free;
   end;
@@ -570,8 +618,17 @@ begin
     { no restart is coming: this IDE stays, so put it back as it was }
     ReopenClosed;
     CollectFailure;
-    ScheduleServerRestart;
-  end;
+    ScheduleServerRestart(2500, '');
+  end
+  else
+    { The IDE restarts itself on success, but only when it is set to restart after a build
+      and the restart is not cancelled (a dialog, a project it wants to save): else the
+      build is done, this IDE stays and the server is already stopped, for good.  If this
+      process is still here 30 s after the call returned, no restart is coming. }
+    ScheduleServerRestart(30000,
+      'MCP Assistant: ' + ToolName + ' built the IDE but it did not restart (Tools > ' +
+      'Configure "Build Lazarus" > "Restart after build" off, or the restart was cancelled). ' +
+      'The server is back in this IDE; the rebuilt code is not running yet.');
 end;
 
 function DispatchBuildBlockingTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -630,6 +687,18 @@ begin
   GBuildHelper.StopServer := Ctx.StopServer;
   GBuildHelper.SaveUnsaved := Assigned(Ctx.Params) and Ctx.Params.Get('save_unsaved', False);
   GBuildHelper.SkipCompile := Assigned(Ctx.Params) and Ctx.Params.Get('skip_compile', False);
+
+  { With no project open (the IDE shows its Project Wizard) the IDE's own build raises an
+    access violation, after this server has been stopped. }
+  TThread.Synchronize(nil, @GBuildHelper.ReadHasProject);
+  if not GBuildHelper.HasProject then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := Name + ' needs an open project: the IDE shows its Project Wizard, and its ' +
+                  'build fails without a project. Open one with project_open, then call ' +
+                  Name + ' again. Nothing was changed.';
+    Exit;
+  end;
 
   if UninstallName <> '' then
   begin
