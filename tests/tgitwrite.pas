@@ -32,6 +32,7 @@ type
     procedure TestResetMixedUnstages;
     procedure TestResetSoftKeepsStaged;
     procedure TestStashAndPop;
+    procedure TestStashPaths;
     procedure TestLog;
     procedure TestInitCreatesRepository;
     procedure TestInitKeepsExistingGitignore;
@@ -206,6 +207,37 @@ begin
   CheckFalse(IsError(T), T);
   CheckEquals('dirty', ReadA, 'and back');
   CheckEquals('', Trim(Git(['stash', 'list'])), 'the stash is used up');
+end;
+
+procedure TTestGitWrite.TestStashPaths;
+var
+  T  : string;
+  SL : TStringList;
+  B  : string;
+begin
+  B := FDir + 'b.txt';
+  SL := TStringList.Create;
+  try
+    SL.Text := 'b1';
+    SL.SaveToFile(B);
+    Git(['add', 'b.txt']);
+    Git(['commit', '-q', '-m', 'add b']);
+    SL.Text := 'b2';
+    SL.SaveToFile(B);
+    WriteA('dirty');
+    T := Tool('git_stash', '"paths":["a.txt"]');
+    CheckFalse(IsError(T), T);
+    CheckEquals('two', ReadA, 'a.txt is stashed away');
+    SL.LoadFromFile(B);
+    CheckEquals('b2', Trim(SL.Text), 'b.txt keeps its change');
+    Git(['stash', 'pop', '-q']);
+    CheckEquals('dirty', ReadA, 'the stash holds a.txt only');
+    { a path that starts with - is a path, never an option }
+    T := Tool('git_stash', '"paths":["--all"]');
+    CheckTrue(IsError(T) or (Pos('pathspec', T) > 0) or (Pos('error', LowerCase(T)) > 0), T);
+  finally
+    SL.Free;
+  end;
 end;
 
 procedure TTestGitWrite.TestLog;

@@ -273,8 +273,9 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 ### Git — `git_*`
 
 `git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`,
-`git_checkout`, `git_stash`, `git_stash_pop`, `git_reset` (soft/mixed only —
-no hard reset). `work_dir` defaults to the project directory.
+`git_checkout` (`create=true` makes a new branch), `git_stash` (all changes, or
+only `paths`), `git_stash_pop`, `git_reset` (soft/mixed only — no hard reset).
+`work_dir` defaults to the project directory.
 
 `git_init` makes a repository of an existing directory and keeps its files
 (`initial_branch`, default `main`; `gitignore=true` adds a Lazarus

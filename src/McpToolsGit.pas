@@ -46,7 +46,7 @@ const
 
   SCHEMA_GIT_LOG =
     '{"type":"object","properties":{' +
-    '"max_count":{"type":"integer","description":"Maximum number of commits to show (default 20)"},' +
+    '"max_count":{"type":"integer","description":"Maximum number of commits to show (default 20; 0 shows none)"},' +
     '"branch":{"type":"string","description":"Branch or ref to log; defaults to HEAD"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
@@ -79,6 +79,7 @@ const
   SCHEMA_GIT_STASH =
     '{"type":"object","properties":{' +
     '"message":{"type":"string","description":"Optional stash description"},' +
+    '"paths":{"type":"array","items":{"type":"string"},"description":"Stash only the changes in these files or directories (relative to the repository root or absolute); the rest stays in the working tree. Default: everything tracked"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
@@ -965,6 +966,17 @@ begin
         GitArgs.Add('-m');
         GitArgs.Add(Message);
       end;
+      { only these paths: everything after -- is a path, never an option }
+      if Assigned(Ctx.Params) then
+      begin
+        PathsJSON := Ctx.Params.Find('paths');
+        if (PathsJSON is TJSONArray) and (TJSONArray(PathsJSON).Count > 0) then
+        begin
+          GitArgs.Add('--');
+          for I := 0 to TJSONArray(PathsJSON).Count - 1 do
+            GitArgs.Add(TJSONArray(PathsJSON).Strings[I]);
+        end;
+      end;
       Ok := RunGit(GitArgs.ToStringArray, WorkDir, Output);
     finally
       GitArgs.Free;
@@ -1127,7 +1139,8 @@ begin
     'List all local and remote branches. The current branch is prefixed with *.',
     SCHEMA_GIT_BRANCHES, MCP_ANN_RO));
   Tools.Add(MakeTool('git_stash',
-    'Stash uncommitted changes (staged and unstaged) with an optional message. ' +
+    'Stash uncommitted changes (staged and unstaged) with an optional message, all of ' +
+    'them or only those of the given paths. ' +
     'Use git_stash_pop to restore them.',
     SCHEMA_GIT_STASH, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_stash_pop',
