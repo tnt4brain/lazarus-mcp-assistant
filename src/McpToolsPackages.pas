@@ -138,7 +138,7 @@ const
       'description, category or .lpk names/descriptions, e.g. \"chart\", \"rich memo\", \"zip\". Empty lists everything."},' +
     '"category":{"type":"string","description":"Only packages whose category contains this text, e.g. Graphics, ' +
       'Networking, DataControls, LazIDEPlugins"},' +
-    '"max_results":{"type":"integer","description":"Default 20"}}}';
+    '"max_results":{"type":"integer","description":"Most packages to return (default 20; less than 1 also means 20)"}}}';
 
   OPM_REPOSITORY_URL = 'https://packages.lazarus-ide.org/';
 
@@ -1835,7 +1835,8 @@ begin
     'Remove a file from a package (.lpk); the file stays on disk.',
     SCHEMA_PKG_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_add_dependency',
-    'Make a package require another one, optionally with version limits. Refused for ' +
+    'Make a PACKAGE (.lpk) require another one, optionally with version limits; for the ' +
+    'open project use project_add_package. Refused for ' +
     'cycles, unknown packages, and when it would bring a new package into the IDE.',
     SCHEMA_PKG_ADD_DEP, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_remove_dependency',
@@ -1854,7 +1855,8 @@ begin
     'new values. Saves the .lpk when nothing else is unsaved.',
     SCHEMA_PKG_SET_INFO, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('project_add_package',
-    'Add a package as a dependency to the active project (.lpi). ' +
+    'Add a package as a dependency to the active PROJECT (.lpi); to make a package ' +
+    'require another one use package_add_dependency. ' +
     'The package must already be loaded in the IDE. No rebuild required. ' +
     'Returns the updated list of project package dependencies.',
     SCHEMA_ADD_PACKAGE_TO_PROJECT, MCP_ANN_WRITE_IDEM));

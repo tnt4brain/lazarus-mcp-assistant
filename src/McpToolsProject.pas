@@ -95,7 +95,7 @@ const
 
   SCHEMA_CREATE_FORM =
     '{"type":"object","properties":{' +
-    '"unit_name":{"type":"string","description":"Pascal unit name for the new form (e.g. UnitSettings)"},' +
+    '"unit_name":{"type":"string","description":"Name of the NEW unit to create for the form (e.g. UnitSettings)"},' +
     '"kind":{"type":"string","enum":["form","datamodule","frame"],"description":"What to create (default form)"},' +
     '"directory":{"type":"string","description":"Directory for the new files; defaults to the active project directory, or the package directory with package_name/lpk_path"},' +
     '"package_name":{"type":"string","description":"Add the new unit to this loaded package instead of the active project"},' +

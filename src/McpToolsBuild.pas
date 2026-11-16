@@ -39,8 +39,8 @@ const
     'start. Without keep_stdin_open, stdin is closed after it"},' +
     '"keep_stdin_open":{"type":"boolean","description":"Leave stdin open, to be fed with ' +
     'project_run_input"},' +
-    '"wait_seconds":{"type":"integer","description":"Wait up to this long (0..300, default 10) ' +
-    'for the program to end before answering"}}}';
+    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 10; 0 = answer at once, ' +
+    'the program keeps running) for the program to end before answering"}}}';
 
   SCHEMA_COMPILE_PLUGIN =
     '{"type":"object","properties":{"lpk_path":{"type":"string",' +

@@ -78,7 +78,7 @@ const
 
   SCHEMA_FORM_ADD_COMPONENT =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
-    '"class_name":{"type":"string","description":"Component class (e.g. TButton); must be on the IDE palette, or be an action class (TAction, ...)"},' +
+    '"class_name":{"type":"string","description":"Component class to create (e.g. TButton; a component class, not a Pascal class of your code); must be on the IDE palette, or be an action class (TAction, ...)"},' +
     '"parent_name":{"type":"string","description":"Container to put it in; defaults to the form. For an action: the TActionList that gets it"},' +
     '"name":{"type":"string","description":"Component name; default is the IDE''s (Button1, ...)"},' +
     '"left":{"type":"integer","description":"Default 8"},' +

@@ -28,7 +28,7 @@ const
   SCOPE_PROPS =
     '"also":{"type":"array","items":{"type":"string"},"description":"Also search other sources: same_folder, lcl, components, rtl, fcl, packages (as in code_find_references)"},' +
     '"search_dir":{"type":"string","description":"Also search this folder and its subfolders"},' +
-    '"max_files":{"type":"integer","description":"At most this many extra files that mention the name are searched (default 300)"},' +
+    '"max_files":{"type":"integer","description":"At most this many extra files that mention the name are searched (default 300; 0 searches none)"},' +
     PKG_SCOPE;
 
   SCHEMA_DESCENDANTS =
@@ -37,7 +37,7 @@ const
     '"line":{"type":"integer","description":"Line (1-based) of the class name: its declaration or any use"},' +
     '"col":{"type":"integer","description":"Column (1-based) of the class name"},' +
     '"direct_only":{"type":"boolean","description":"Only the classes that name it in their heritage list (default false: the whole tree below it)"},' +
-    '"max_results":{"type":"integer","description":"Stop after this many classes (default 500)"},' +
+    '"max_results":{"type":"integer","description":"Stop after this many classes (default 500; 0 finds none)"},' +
     SCOPE_PROPS + '},"required":["file","line","col"]}';
 
   SCHEMA_OVERRIDES =
@@ -45,7 +45,7 @@ const
     '"file":{"type":"string","description":"Absolute path of the file with the method"},' +
     '"line":{"type":"integer","description":"Line (1-based) of the method name in its class declaration, its implementation or a call"},' +
     '"col":{"type":"integer","description":"Column (1-based) of the method name"},' +
-    '"max_results":{"type":"integer","description":"Stop after this many classes (default 500)"},' +
+    '"max_results":{"type":"integer","description":"Stop after this many classes (default 500; 0 finds none)"},' +
     SCOPE_PROPS + '},"required":["file","line","col"]}';
 
   SCHEMA_DEPENDENCIES =

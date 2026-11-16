@@ -696,7 +696,7 @@ end;
 const
   SCHEMA_RUN_OUTPUT =
     '{"type":"object","properties":{' +
-    '"wait_seconds":{"type":"integer","description":"Wait up to this long (0..300, default 0) ' +
+    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 0 = do not wait) ' +
     'for the program to end or write something"},' +
     '"stop":{"type":"boolean","description":"Terminate the program first"}}}';
 
@@ -707,7 +707,7 @@ const
     'end a line with \n"},' +
     '"close":{"type":"boolean","description":"Close stdin after the text: the program ' +
     'then reads end of file"},' +
-    '"wait_seconds":{"type":"integer","description":"Wait up to this long (0..300, default 0) ' +
+    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 0 = do not wait) ' +
     'for the program to end or answer"}}}';
 
 function DispatchRunOutputTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
