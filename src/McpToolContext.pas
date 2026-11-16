@@ -10,7 +10,7 @@ unit McpToolContext;
 interface
 
 uses
-  SysUtils, SyncObjs, fpjson, jsonparser;
+  Classes, SysUtils, SyncObjs, fpjson, jsonparser;
 
 type
   { Context record passed into every tool dispatch function.
@@ -99,6 +99,11 @@ procedure McpRegisterSchemas(Tools: TJSONArray);
   lists the accepted names.  Unknown tools pass (the dispatcher reports them). }
 function McpValidateArgs(const ToolName: string; Args: TJSONObject;
   out Msg: string): Boolean;
+
+{ The accepted name closest to AWanted (case-insensitive edit distance, at most a
+  third of its length and never more than 3), '' if none is near.  For the
+  "did you mean" of the unknown-parameter error. }
+function McpClosestName(const AWanted: string; ANames: TStrings): string;
 
 { Blocking group registry — dispatchers run on the MCP worker thread. }
 procedure RegisterMcpBlockingGroup(Fn: TMcpGroupDispatch);
@@ -283,10 +288,62 @@ var
   GSchemaLock  : TCriticalSection;
   GSchemaCache : TJSONArray;
 
+function EditDistance(const A, B: string): Integer;
+var
+  Prev, Cur : array of Integer;
+  I, J, Cost : Integer;
+begin
+  SetLength(Prev, Length(B) + 1);
+  SetLength(Cur, Length(B) + 1);
+  for J := 0 to Length(B) do Prev[J] := J;
+  for I := 1 to Length(A) do
+  begin
+    Cur[0] := I;
+    for J := 1 to Length(B) do
+    begin
+      if A[I] = B[J] then Cost := 0 else Cost := 1;
+      Cur[J] := Prev[J] + 1;
+      if Cur[J - 1] + 1 < Cur[J] then Cur[J] := Cur[J - 1] + 1;
+      if Prev[J - 1] + Cost < Cur[J] then Cur[J] := Prev[J - 1] + Cost;
+    end;
+    Prev := Copy(Cur);
+  end;
+  Result := Prev[Length(B)];
+end;
+
+function McpClosestName(const AWanted: string; ANames: TStrings): string;
+var
+  I, D, Best, Limit : Integer;
+  W, N : string;
+begin
+  Result := '';
+  W := LowerCase(AWanted);
+  Limit := Length(W) div 3;
+  if Limit > 3 then Limit := 3;
+  if Limit < 1 then Limit := 1;
+  Best := MaxInt;
+  for I := 0 to ANames.Count - 1 do
+  begin
+    N := LowerCase(ANames[I]);
+    D := EditDistance(W, N);
+    { "file" for "form_file", "max_results" for "results": one name inside the other }
+    if (D > Limit) and (Length(W) >= 4) and (Length(N) >= 4) and
+       ((Pos(W, N) > 0) or (Pos(N, W) > 0)) then
+      D := Limit;
+    if (D <= Limit) and (D < Best) then
+    begin
+      Best := D;
+      Result := ANames[I];
+    end;
+  end;
+end;
+
 function McpValidateArgs(const ToolName: string; Args: TJSONObject;
   out Msg: string): Boolean;
 var
   I, J     : Integer;
+  Names    : TStringList;
+  Hint     : string;
   Schema   : TJSONObject;
   Props    : TJSONObject;
   Req      : TJSONArray;
@@ -323,13 +380,24 @@ begin
           Missing := Missing + Req.Strings[J];
         end;
     Unknown := '';
-    if Assigned(Args) then
-      for J := 0 to Args.Count - 1 do
-        if (Props = nil) or (Props.IndexOfName(Args.Names[J]) < 0) then
-        begin
-          if Unknown <> '' then Unknown := Unknown + ', ';
-          Unknown := Unknown + Args.Names[J];
-        end;
+    Names := TStringList.Create;
+    try
+      if Assigned(Props) then
+        for J := 0 to Props.Count - 1 do
+          Names.Add(Props.Names[J]);
+      if Assigned(Args) then
+        for J := 0 to Args.Count - 1 do
+          if (Props = nil) or (Props.IndexOfName(Args.Names[J]) < 0) then
+          begin
+            if Unknown <> '' then Unknown := Unknown + ', ';
+            Unknown := Unknown + Args.Names[J];
+            Hint := McpClosestName(Args.Names[J], Names);
+            if Hint <> '' then
+              Unknown := Unknown + ' (did you mean ' + Hint + '?)';
+          end;
+    finally
+      Names.Free;
+    end;
     if (Missing = '') and (Unknown = '') then Exit;
     Accepted := '';
     if Assigned(Props) then

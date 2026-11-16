@@ -789,6 +789,14 @@ begin
   T := Call('editor_replace_range', '{"file":"x.pas","text":"y"}');
   CheckTrue(Pos('Unknown parameter(s): text', T) > 0, 'unknown: ' + T);
   CheckTrue(Pos('Accepted by editor_replace_range', T) > 0, 'accepted listed: ' + T);
+  CheckTrue(Pos('did you mean new_text', T) > 0, 'a near name is suggested: ' + T);
+  T := Call('editor_open', '{"form_file":"x.pas"}');
+  CheckTrue(Pos('did you mean file', T) > 0, 'one name inside the other: ' + T);
+  T := Call('git_log', '{"max_cnt":3}');
+  CheckTrue(Pos('did you mean max_count', T) > 0, 'a typo is suggested: ' + T);
+  T := Call('git_log', '{"zzzzzz":3}');
+  CheckTrue((Pos('Unknown parameter(s): zzzzzz.', T) > 0) and (Pos('did you mean', T) = 0),
+    'nothing near, no guess: ' + T);
 end;
 
 procedure TTestToolSmoke.TestProjectListPackages;
