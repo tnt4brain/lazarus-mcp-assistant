@@ -23,6 +23,7 @@ type
     procedure TestAddAndRemoveFile;
     procedure TestAddAndRemoveDependency;
     procedure TestSetInfo;
+    procedure TestSave;
     procedure TestRefusals;
     procedure TestNameOfAnUnloadedPackage;
     procedure TestConsentGuard;
@@ -147,6 +148,27 @@ begin
   end;
   CheckSaved(Self, T);
   CheckEquals(Before, LpkText, 'the .lpk is as before');
+end;
+
+procedure TTestPackageEdit.TestSave;
+var
+  T, Before : string;
+begin
+  { nothing unsaved in the fixture: answered as saved, nothing written }
+  Before := LpkText;
+  T := Call('package_save', '{' + Lpk + '}');
+  if Pos('would save', T) > 0 then
+    Ignore('the IDE has other unsaved packages: ' + T);
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"saved":true', T) > 0, 'saved: ' + T);
+  CheckEquals(Before, LpkText, 'the .lpk is untouched');
+
+  T := Call('package_save', '{"package_name":"NoSuchPackageXyz"}');
+  CheckTrue(IsError(T), 'unknown package is an error: ' + T);
+  CheckTrue(Pos('NoSuchPackageXyz', T) > 0, 'names it: ' + T);
+
+  T := Call('package_save', '{"lpk_path":' + JsonStr(FixtureLpk) + ',"bogus":1}');
+  CheckTrue(IsError(T), 'unknown parameter refused: ' + T);
 end;
 
 procedure TTestPackageEdit.TestRefusals;

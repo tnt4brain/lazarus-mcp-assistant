@@ -628,7 +628,7 @@ begin
       'packages have unsaved changes; the rebuild closes every editor without asking, and an ' +
       'unsaved package stops it on a question: ' +
       StringReplace(Trim(GBuildHelper.Unsaved.Text), LineEnding, '; ', [rfReplaceAll]) +
-      '. Save them (editor_save, or the package editor), or pass save_unsaved=true to have ' +
+      '. Save them (editor_save, package_save), or pass save_unsaved=true to have ' +
       'them saved first."}';
     Exit;
   end;

@@ -166,10 +166,10 @@ end;
 const
   { Tools that change the file their `file` argument names (a dry run only reads) }
   { these change an existing package's .lpk (package_move_unit two of them) }
-  PACKAGE_WRITERS : array[0..6] of string = (
+  PACKAGE_WRITERS : array[0..7] of string = (
     'package_add_file', 'package_remove_file', 'package_add_dependency',
     'package_remove_dependency', 'package_set_info', 'package_set_settings',
-    'package_move_unit');
+    'package_move_unit', 'package_save');
 
   FILE_WRITERS : array[0..8] of string = (
     'code_add_uses', 'code_add_to_class', 'code_insert_in_procedure',

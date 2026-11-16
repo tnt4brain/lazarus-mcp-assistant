@@ -25,6 +25,9 @@ function TargetPackage(AParams: TJSONObject; out APkg: TLazPackage;
   tells which. }
 function EditResult(APkg: TLazPackage; AWasModified: Boolean; AObj: TJSONObject): string;
 
+{ package_save: the named package or every modified one; AErr = '' on success. }
+function PackageSave(AParams: TJSONObject; out AErr: string): string;
+
 { package_add_file: AParams carries file plus package_name or lpk_path.  AErr =
   '' on success; the result is the JSON. }
 function PackageAddFile(AParams: TJSONObject; out AErr: string): string;
@@ -80,6 +83,12 @@ const
     '"min_version":{"type":"string","description":"e.g. 1.2"},' +
     '"max_version":{"type":"string","description":"Highest accepted version, same format as min_version"}},' +
     '"required":["required_package"]}';
+
+  SCHEMA_PKG_SAVE =
+    '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
+    '"save_all":{"type":"boolean","description":"Save every modified package, not only the ' +
+    'named one (the IDE writes them all at once); without a package_name or lpk_path this ' +
+    'is always so (default false)"}}}';
 
   SCHEMA_PKG_SET_INFO =
     '{"type":"object","properties":{' + PKG_TARGET_PROPS + ',' +
@@ -1148,6 +1157,119 @@ begin
   Result := '';
 end;
 
+{ package_save: write the .lpk of the named package (or, without a name, of every
+  modified package) to disk.  The IDE writes every modified package at once, so a
+  named package is refused while another one is modified, unless save_all is true.
+  Anything that would make the IDE ask a question (a package never saved, read-only,
+  a file missing on disk, an editor of its files with unsaved text) is refused and
+  named.  AErr = '' on success; the result is the JSON. }
+function PackageSave(AParams: TJSONObject; out AErr: string): string;
+var
+  Target, Pkg : TLazPackage;
+  Mods        : TStringList;
+  I, J        : Integer;
+  Other       : TIDEPackage;
+  F           : TLazPackageFile;
+  FN, Why     : string;
+  Ed          : TSourceEditorInterface;
+  SaveAll     : Boolean;
+  Obj         : TJSONObject;
+  Arr         : TJSONArray;
+begin
+  AErr := '';
+  Result := '';
+  Target := nil;
+  SaveAll := Assigned(AParams) and AParams.Get('save_all', False);
+  if Assigned(AParams) and (AParams.Get('package_name', '') + AParams.Get('lpk_path', '') <> '') then
+  begin
+    if not TargetPackage(AParams, Target, AErr, False) then Exit;
+  end
+  else
+    SaveAll := True;
+  Obj := TJSONObject.Create;
+  Mods := TStringList.Create;
+  try
+    for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+    begin
+      Other := PackageEditingInterface.GetPackages(I);
+      if Other.Modified then Mods.AddObject(Other.Name, Other);
+    end;
+    if (Target <> nil) and (Mods.IndexOfObject(Target) < 0) then
+    begin
+      Obj.Add('package', Target.Name);
+      Obj.Add('saved', True);
+      Obj.Add('nothing_to_save', True);
+      Result := Obj.AsJSON;
+      Exit;
+    end;
+    if Mods.Count = 0 then
+    begin
+      Obj.Add('saved', True);
+      Obj.Add('nothing_to_save', True);
+      Result := Obj.AsJSON;
+      Exit;
+    end;
+    if not SaveAll then
+      for I := 0 to Mods.Count - 1 do
+        if Mods.Objects[I] <> Target then
+        begin
+          AErr := 'Saving ' + Target.Name + ' would save ' + Mods[I] + ' too (the IDE writes ' +
+            'every modified package at once). Pass save_all=true to save them all, or save ' +
+            'that one first.';
+          Exit;
+        end;
+    for I := 0 to Mods.Count - 1 do
+    begin
+      Pkg := TLazPackage(Mods.Objects[I]);
+      Why := '';
+      if Pkg.IsVirtual then Why := 'has never been saved: use the package editor''s Save as'
+      else if Pkg.ReadOnly then Why := 'is read-only (' + Pkg.Filename + ')'
+      else if Assigned(GMcpPackageCheck) and not GMcpPackageCheck(Pkg.Name, '', Why) then
+        Why := 'is outside the folders the write tools may change: ' + Why
+      else
+        for J := 0 to Pkg.FileCount - 1 do
+        begin
+          F  := Pkg.Files[J];
+          FN := F.GetFullFilename;
+          if (F.FileType = pftVirtualUnit) or (Pos('$(', FN) > 0) then Continue;
+          if not FileExists(FN) then begin Why := 'file ' + FN + ' is missing on disk'; Break; end;
+          Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FN);
+          if Assigned(Ed) and Ed.Modified then
+          begin
+            Why := 'file ' + FN + ' has unsaved editor changes (editor_save it first; saving the ' +
+              'package would write them too)';
+            Break;
+          end;
+        end;
+      if Why <> '' then
+      begin
+        AErr := 'Not saved: package ' + Pkg.Name + ' ' + Why + '. Nothing was written.';
+        Exit;
+      end;
+    end;
+    PackageEditingInterface.DoSaveAllPackages([]);
+    Arr := TJSONArray.Create;
+    Obj.Add('saved', True);
+    for I := 0 to Mods.Count - 1 do
+    begin
+      Pkg := TLazPackage(Mods.Objects[I]);
+      if Pkg.Modified then
+      begin
+        Obj.Delete('saved');
+        Obj.Add('saved', False);
+        Obj.Add('still_unsaved', Pkg.Name);
+        Break;
+      end;
+      Arr.Add(Pkg.Name);
+    end;
+    Obj.Add('packages', Arr);
+    Result := Obj.AsJSON;
+  finally
+    Mods.Free;
+    Obj.Free;
+  end;
+end;
+
 { Result of a package edit: saved, or why not and what that means. }
 function EditResult(APkg: TLazPackage; AWasModified: Boolean; AObj: TJSONObject): string;
 var
@@ -1161,7 +1283,7 @@ begin
   begin
     AObj.Add('not_saved_because', Why);
     AObj.Add('note', 'The change is in the IDE only: the .lpk on disk is unchanged, so ' +
-      'package_compile does not see it until the package is saved in the package editor.');
+      'package_compile does not see it until the package is saved (package_save).');
   end;
   Result := AObj.AsJSON;
 end;
@@ -1484,14 +1606,16 @@ begin
 
   if (Name = 'package_add_file') or (Name = 'package_remove_file') or
      (Name = 'package_add_dependency') or (Name = 'package_remove_dependency') or
-     (Name = 'package_set_info') then
+     (Name = 'package_set_info') or (Name = 'package_save') then
   begin
     Result := True;
-    if not Assigned(Ctx.Params) then
+    if not Assigned(Ctx.Params) and (Name <> 'package_save') then
     begin
       Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
     end;
-    if Name = 'package_add_file' then
+    if Name = 'package_save' then
+      Ctx.Result := PackageSave(Ctx.Params, PkgName)
+    else if Name = 'package_add_file' then
       Ctx.Result := PackageAddFile(Ctx.Params, PkgName)
     else if Name = 'package_remove_file' then
       Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
@@ -1662,6 +1786,13 @@ begin
   Tools.Add(MakeTool('package_remove_dependency',
     'Remove a requirement from a package (.lpk).',
     SCHEMA_PKG_REMOVE_DEP, MCP_ANN_WRITE_IDEM));
+  Tools.Add(MakeTool('package_save',
+    'Write unsaved packages (.lpk) to disk: the named one, or every modified one. The ' +
+    'package tools save their own change when nothing else is unsaved; use this when they ' +
+    'answered saved:false, or before ide_rebuild. Refused, naming the cause and writing ' +
+    'nothing, when the IDE would have to ask: a package never saved, read-only, a file ' +
+    'missing on disk, an editor of its files with unsaved text.',
+    SCHEMA_PKG_SAVE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_set_info',
     'Set a package''s version, description, author and/or license, as on the ' +
     'package options'' Package page; only the given fields change. Returns old and ' +
