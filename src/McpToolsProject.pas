@@ -676,16 +676,16 @@ end;
   Called before anything changes. }
 function CheckSwitches(AParams: TJSONObject): string;
 var
-  I : Integer;
-  D : TJSONData;
+  SwitchName : string;
+  D          : TJSONData;
 begin
   Result := '';
   if AParams = nil then Exit;
-  for I := Low(SWITCH_NAMES) to High(SWITCH_NAMES) do
+  for SwitchName in SWITCH_NAMES do
   begin
-    D := AParams.Find(SWITCH_NAMES[I]);
+    D := AParams.Find(SwitchName);
     if (D <> nil) and (D.JSONType <> jtBoolean) then
-      Exit(SWITCH_NAMES[I] + ' must be true or false');
+      Exit(SwitchName + ' must be true or false');
   end;
   D := AParams.Find('optimization');
   if D <> nil then

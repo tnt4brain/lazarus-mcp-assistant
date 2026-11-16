@@ -58,8 +58,8 @@ function ParseHeapReport(const AText: string; out AReport: TJSONObject;
   MaxLeaks: Integer): Boolean;
 var
   Lines   : TStringList;
-  I, P    : Integer;
-  L       : string;
+  P       : Integer;
+  L, Line : string;
   N, B    : Int64;
   AllocN, AllocB, FreeN, FreeB, LeakN, LeakB : Int64;
   Leaks   : TJSONArray;
@@ -78,9 +78,9 @@ begin
   try
     Lines.Text := AText;
     Found := False;
-    for I := 0 to Lines.Count - 1 do
+    for Line in Lines do
     begin
-      L := Trim(Lines[I]);
+      L := Trim(Line);
       if not Found then
       begin
         Found := Pos(MARKER, L) > 0;

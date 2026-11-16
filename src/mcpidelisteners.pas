@@ -292,8 +292,9 @@ end;
   of "Some files have changed on disk"), a few dozen lines at most. }
 procedure CollectFormText(AParent: TWinControl; var AText: string; var ALines: Integer);
 var
-  I, J : Integer;
+  I    : Integer;
   C    : TControl;
+  Item : string;
 
   procedure AddLine(const S: string);
   begin
@@ -312,12 +313,12 @@ begin
     else if C is TCustomCheckBox then
       AddLine('[option] ' + NormalizeButtonCaption(TCustomCheckBox(C).Caption))
     else if C is TCustomListBox then
-      for J := 0 to TCustomListBox(C).Items.Count - 1 do
-        AddLine(TCustomListBox(C).Items[J])
+      for Item in TCustomListBox(C).Items do
+        AddLine(Item)
     else if C is TCustomMemo then
       { what a consent dialog asks about is in a read-only memo }
-      for J := 0 to TCustomMemo(C).Lines.Count - 1 do
-        AddLine(Trim(TCustomMemo(C).Lines[J]));
+      for Item in TCustomMemo(C).Lines do
+        AddLine(Trim(Item));
     if C is TWinControl then
       CollectFormText(TWinControl(C), AText, ALines);
   end;
@@ -327,7 +328,8 @@ end;
 procedure TrackModalForm(AForm: TCustomForm);
 var
   Txt, Btns : string;
-  Lines, I  : Integer;
+  Lines     : Integer;
+  Cap       : string;
   Found     : TCustomButton;
   Avail     : TStringList;
 begin
@@ -340,10 +342,10 @@ begin
   try
     Found := nil;
     FindButtonByCaption(AForm, '', Found, Avail);
-    for I := 0 to Avail.Count - 1 do
+    for Cap in Avail do
     begin
       if Btns <> '' then Btns := Btns + ', ';
-      Btns := Btns + Avail[I];
+      Btns := Btns + Cap;
     end;
   finally
     Avail.Free;
