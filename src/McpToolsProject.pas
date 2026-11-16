@@ -490,6 +490,36 @@ begin
   AObj.Add('build_modes', Arr);
 end;
 
+{ Forward: the switches helper is declared further down. }
+procedure AddSwitches(AObj: TJSONObject; AOpts: TLazCompilerOptions); forward;
+
+{ mode_options of project_get_settings: every build mode with its own custom options and
+  switches, so two modes can be compared without switching the active one back and forth.
+  Read only: project_set_settings still writes the active mode. }
+procedure AddModeOptions(AObj: TJSONObject; Proj: TProject);
+var
+  Arr : TJSONArray;
+  M   : TJSONObject;
+  I   : Integer;
+  Mode: TProjectBuildMode;
+begin
+  Arr := TJSONArray.Create;
+  for I := 0 to Proj.BuildModes.Count - 1 do
+  begin
+    Mode := Proj.BuildModes[I];
+    M := TJSONObject.Create;
+    M.Add('name',   Mode.Identifier);
+    M.Add('active', Mode = Proj.ActiveBuildMode);
+    if Assigned(Mode.LazCompilerOptions) then
+    begin
+      M.Add('custom_options', Mode.LazCompilerOptions.CustomOptions);
+      AddSwitches(M, Mode.LazCompilerOptions);
+    end;
+    Arr.Add(M);
+  end;
+  AObj.Add('mode_options', Arr);
+end;
+
 { ── Application icon and manifest ────────────────────────────────────────── }
 
 const
@@ -1284,6 +1314,7 @@ begin
           AddSwitches(Obj, Proj.LazCompilerOptions);
         end;
         AddBuildModes(Obj, TProject(Proj));
+        AddModeOptions(Obj, TProject(Proj));
         AddResources(Obj, TProject(Proj));
       end
       else
@@ -1763,7 +1794,9 @@ begin
   Tools.Add(MakeTool('project_get_settings',
     'Return active project compiler options: target OS/CPU, output directory, ' +
     'custom options, the widgetset the next build uses (widgetset_override: the ' +
-    'active build mode''s own choice, "" = the default), and project file path.',
+    'active build mode''s own choice, "" = the default), and project file path. ' +
+    'The other settings describe the active build mode; mode_options lists every mode ' +
+    'with its own custom_options and switches (read only).',
     SCHEMA_GET_PROJECT_SETTINGS, MCP_ANN_RO));
   Tools.Add(MakeTool('project_set_settings',
     'Write compiler options to the active project. All parameters are optional; ' +

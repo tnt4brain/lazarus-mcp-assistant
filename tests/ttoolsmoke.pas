@@ -584,6 +584,8 @@ begin
   CheckTrue(Pos('"optimization":', T) > 0, 'optimization is reported: ' + T);
   CheckTrue(Pos('"build_mode":', T) > 0, 'the active build mode is reported: ' + T);
   CheckTrue(Pos('"build_modes":[', T) > 0, 'the build modes are listed: ' + T);
+  CheckTrue(Pos('"mode_options":[{"name":', T) > 0, 'each mode with its options: ' + T);
+  CheckTrue(Pos('"active":true', T) > 0, 'the active mode is marked: ' + T);
   CheckTrue(Pos('"icon_bytes":', T) > 0, 'the icon is reported: ' + T);
   CheckTrue(Pos('"use_manifest":', T) > 0, 'use_manifest is reported: ' + T);
 end;
