@@ -87,94 +87,96 @@ var
 begin
   Result := False;
 
-  if Name = 'project_get_compiler_errors' then
-  begin
-    Result := True;
-    if Assigned(McpHookManager) then
-      Errors := McpHookManager.CurrentCompilerErrors
-    else
-      Errors := nil;
-    if Assigned(Errors) then
-      Ctx.Result := Errors.AsJSON
-    else
-      Ctx.Result := '[]';
-  end
-
-  else if Name = 'project_build' then
-  begin
-    Result := True;
-    if not Assigned(LazarusIDE) then
+  case Name of
+    'project_get_compiler_errors':
     begin
-      Ctx.Error := True; Ctx.Result := 'No IDE available'; Exit;
+      Result := True;
+      if Assigned(McpHookManager) then
+        Errors := McpHookManager.CurrentCompilerErrors
+      else
+        Errors := nil;
+      if Assigned(Errors) then
+        Ctx.Result := Errors.AsJSON
+      else
+        Ctx.Result := '[]';
     end;
-    BuildRes := LazarusIDE.DoBuildProject(crCompile, []);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('success', BuildRes = mrOK);
-      { every error line of the build, from the Messages window; the one the
-        user had selected is all the compiler hook knows }
-      Errors := TJSONArray.Create;
-      Warns  := TJSONArray.Create;
-      try
-        McpCompilerMessages(Errors, Warns);
-        if (Errors.Count = 0) and (BuildRes <> mrOK) and
-           Assigned(McpHookManager) and Assigned(McpHookManager.CurrentCompilerErrors) then
-          Obj.Add('errors', McpHookManager.CurrentCompilerErrors.Clone as TJSONArray)
-        else
-          Obj.Add('errors', Errors.Clone as TJSONArray);
-        Obj.Add('warning_count', Warns.Count);
-      finally
-        Errors.Free;
-        Warns.Free;
+
+    'project_build':
+    begin
+      Result := True;
+      if not Assigned(LazarusIDE) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No IDE available'; Exit;
       end;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_run' then
-  begin
-    Result := True;
-    { starts the program and answers at once; the server then waits for its end
-      off the main thread (McpRunFinish, ADR-016) }
-    Ctx.Result := McpRunLaunch(Ctx.Params, Ctx.Error);
-  end
-
-  else if Name = 'ide_get_messages' then
-  begin
-    Result := True;
-    MsgArr := TJSONArray.Create;
-    try
-      if Assigned(IDEMessagesWindow) then
-        for I := 0 to IDEMessagesWindow.ViewCount - 1 do
-        begin
-          MsgView := IDEMessagesWindow.Views[I];
-          for J := 0 to MsgView.Lines.Count - 1 do
-          begin
-            MsgLine := MsgView.Lines.Items[J];
-            MsgOwn  := McpIsOwnLine(MsgLine);
-            if MsgOwn and Ctx.Params.Get('skip_own', False) then Continue;
-            MsgObj  := TJSONObject.Create;
-            MsgObj.Add('urgency', MessageLineUrgencyNames[MsgLine.Urgency]);
-            MsgObj.Add('msg',     MsgLine.Msg);
-            MsgObj.Add('file',    MsgLine.Filename);
-            MsgObj.Add('line',    MsgLine.Line);
-            MsgArr.Add(MsgObj);
-          end;
-        end;
+      BuildRes := LazarusIDE.DoBuildProject(crCompile, []);
       Obj := TJSONObject.Create;
       try
-        Obj.Add('messages',   MsgArr.Clone as TJSONArray);
-        Obj.Add('line_count', MsgArr.Count);
+        Obj.Add('success', BuildRes = mrOK);
+        { every error line of the build, from the Messages window; the one the
+          user had selected is all the compiler hook knows }
+        Errors := TJSONArray.Create;
+        Warns  := TJSONArray.Create;
+        try
+          McpCompilerMessages(Errors, Warns);
+          if (Errors.Count = 0) and (BuildRes <> mrOK) and
+             Assigned(McpHookManager) and Assigned(McpHookManager.CurrentCompilerErrors) then
+            Obj.Add('errors', McpHookManager.CurrentCompilerErrors.Clone as TJSONArray)
+          else
+            Obj.Add('errors', Errors.Clone as TJSONArray);
+          Obj.Add('warning_count', Warns.Count);
+        finally
+          Errors.Free;
+          Warns.Free;
+        end;
         Ctx.Result := Obj.AsJSON;
       finally
         Obj.Free;
       end;
-    finally
-      MsgArr.Free;
     end;
-  end
+
+    'project_run':
+    begin
+      Result := True;
+      { starts the program and answers at once; the server then waits for its end
+        off the main thread (McpRunFinish, ADR-016) }
+      Ctx.Result := McpRunLaunch(Ctx.Params, Ctx.Error);
+    end;
+
+    'ide_get_messages':
+    begin
+      Result := True;
+      MsgArr := TJSONArray.Create;
+      try
+        if Assigned(IDEMessagesWindow) then
+          for I := 0 to IDEMessagesWindow.ViewCount - 1 do
+          begin
+            MsgView := IDEMessagesWindow.Views[I];
+            for J := 0 to MsgView.Lines.Count - 1 do
+            begin
+              MsgLine := MsgView.Lines.Items[J];
+              MsgOwn  := McpIsOwnLine(MsgLine);
+              if MsgOwn and Ctx.Params.Get('skip_own', False) then Continue;
+              MsgObj  := TJSONObject.Create;
+              MsgObj.Add('urgency', MessageLineUrgencyNames[MsgLine.Urgency]);
+              MsgObj.Add('msg',     MsgLine.Msg);
+              MsgObj.Add('file',    MsgLine.Filename);
+              MsgObj.Add('line',    MsgLine.Line);
+              MsgArr.Add(MsgObj);
+            end;
+          end;
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('messages',   MsgArr.Clone as TJSONArray);
+          Obj.Add('line_count', MsgArr.Count);
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+      finally
+        MsgArr.Free;
+      end;
+    end;
+  end;
 
 end;
 

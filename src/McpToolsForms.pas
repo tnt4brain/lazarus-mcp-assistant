@@ -1990,465 +1990,468 @@ begin
   else if Pos('menu', Name) > 0 then
     DoMenuTool(Name, Designer, Comp, Ctx)
 
-  else if Name = 'form_list_components' then
-  begin
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('root_name',  Root.Name);
-      Obj.Add('root_class', Root.ClassName);
-      if Root is TControl then
+  else
+    case Name of
+      'form_list_components':
       begin
-        Obj.Add('width',         TControl(Root).Width);
-        Obj.Add('height',        TControl(Root).Height);
-        Obj.Add('client_width',  TControl(Root).ClientWidth);
-        Obj.Add('client_height', TControl(Root).ClientHeight);
-      end;
-      Arr := TJSONArray.Create;
-      for I := 0 to Root.ComponentCount - 1 do
-        Arr.Add(ControlInfo(Root.Components[I], Root));
-      Obj.Add('components', Arr);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'form_get_properties' then
-  begin
-    if Comp = nil then
-    begin
-      Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
-    end;
-    Filter := TStringList.Create;
-    Pool   := TEditorPool.Create;
-    Obj    := TJSONObject.Create;
-    try
-      NamesArr := Ctx.Params.Get('names', TJSONArray(nil));
-      if Assigned(NamesArr) then
-        for I := 0 to NamesArr.Count - 1 do
-          Filter.Add(NamesArr.Strings[I]);
-      if Ctx.Params.Get('include_events', False) or (Filter.Count > 0) then
-        Kinds := tkAny
-      else
-        Kinds := tkProperties;
-      Obj.Add('component_name',  Comp.Name);
-      Obj.Add('component_class', Comp.ClassName);
-      Arr := TJSONArray.Create;
-      Obj.Add('properties', Arr);
-      Pool.CollectTop(Comp, Kinds);
-      ListLevel(Pool, '', 0, Filter, Arr);
-      ListAnchorSides(Pool, Comp, Kinds, Filter, Arr);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-      Pool.Free;
-      Filter.Free;
-    end;
-  end
-
-  else if Name = 'form_set_properties' then
-  begin
-    if Comp = nil then
-    begin
-      Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
-    end;
-    Props := Ctx.Params.Get('properties', TJSONObject(nil));
-    if (Props = nil) or (Props.Count = 0) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'properties object required'; Exit;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Arr := TJSONArray.Create;
-      Obj.Add('component_name', Comp.Name);  { before a rename }
-      if not AllNativeUndoable(Comp, Props) and SnapBegin(Snap, Designer, [Comp]) then
-      begin
-        { Name is changed after the replacement, as an entry of its own: undo
-          renames back first (event handlers too), so each stream it inserts
-          matches the names in the source. }
-        Others := TJSONObject(Props.Clone);
-        NameProps := TJSONObject.Create;
+        Obj := TJSONObject.Create;
         try
-          I := Others.IndexOfName('Name', True);
-          if I >= 0 then
+          Obj.Add('root_name',  Root.Name);
+          Obj.Add('root_class', Root.ClassName);
+          if Root is TControl then
           begin
-            NameProps.Add('Name', Others.Items[I].Clone);
-            Others.Delete(I);
+            Obj.Add('width',         TControl(Root).Width);
+            Obj.Add('height',        TControl(Root).Height);
+            Obj.Add('client_width',  TControl(Root).ClientWidth);
+            Obj.Add('client_height', TControl(Root).ClientHeight);
           end;
-          Failed := ApplyProperties(Designer, Comp, Others, Arr, nil);
-          SnapEnd(Snap);
-          if NameProps.Count > 0 then
-            Inc(Failed, ApplyProperties(Designer, Comp, NameProps, Arr, @Snap.Group));
+          Arr := TJSONArray.Create;
+          for I := 0 to Root.ComponentCount - 1 do
+            Arr.Add(ControlInfo(Root.Components[I], Root));
+          Obj.Add('components', Arr);
+          Ctx.Result := Obj.AsJSON;
         finally
-          NameProps.Free;
-          Others.Free;
+          Obj.Free;
         end;
-        Obj.Add('undoable', True);
-      end
-      else
-      begin
-        Group := NewUndoGroup(Designer);
-        Failed := ApplyProperties(Designer, Comp, Props, Arr, @Group);
-        Ok := True;
-        for I := 0 to Arr.Count - 1 do
-          Ok := Ok and TJSONObject(Arr[I]).Get('undoable', True);
-        Obj.Add('undoable', Ok);
       end;
-      Obj.Add('results', Arr);
-      Obj.Add('component_name_now', Comp.Name);
-      Ctx.Error  := Failed = Props.Count;  { error only if nothing applied }
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'form_add_component' then
-  begin
-    NewCompClass := Ctx.Params.Get('class_name', '');
-    if NewCompClass = '' then
-    begin
-      Ctx.Error := True; Ctx.Result := 'class_name required'; Exit;
-    end;
-    RegComp := nil;
-    if Assigned(IDEComponentPalette) then
-      for I := 0 to IDEComponentPalette.Comps.Count - 1 do
-        if SameText(IDEComponentPalette.Comps[I].ComponentClass.ClassName, NewCompClass) then
+      'form_get_properties':
+      begin
+        if Comp = nil then
         begin
-          RegComp := IDEComponentPalette.Comps[I];
-          Break;
+          Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
         end;
-    ActionCls := nil;
-    if RegComp = nil then
-    begin
-      { actions are not on the palette }
-      ActionCls := FindActionClass(NewCompClass);
-      if ActionCls = nil then
-      begin
-        Ctx.Error  := True;
-        Ctx.Result := 'Component class not in IDE palette: ' + NewCompClass +
-                      ' (use form_search_palette)';
-        Exit;
-      end;
-    end;
-    ParentComp := Root;
-    if Ctx.Params.Get('parent_name', '') <> '' then
-    begin
-      ParentComp := FindComp(Designer, Ctx.Params.Get('parent_name', ''));
-      if ParentComp = nil then
-      begin
-        Ctx.Error := True;
-        Ctx.Result := 'Parent not found: ' + Ctx.Params.Get('parent_name', '');
-        Exit;
-      end;
-    end;
-    ALeft   := Ctx.Params.Get('left',   8);
-    ATop    := Ctx.Params.Get('top',    8);
-    AWidth  := Ctx.Params.Get('width',  0);   { 0 = class default }
-    AHeight := Ctx.Params.Get('height', 0);
-    ActList := nil;
-    if Assigned(RegComp) then
-    begin
-      NewClass := RegComp.ComponentClass;
-      NewUnit  := RegComp.GetUnitName;
-    end
-    else
-    begin
-      NewClass := ActionCls;
-      NewUnit  := GetTypeData(PTypeInfo(ActionCls.ClassInfo))^.UnitName;
-    end;
-    if NewClass.InheritsFrom(TContainedAction) then
-    begin
-      { an action goes into an action list; the form owns it }
-      if ParentComp is TCustomActionList then
-        ActList := TCustomActionList(ParentComp)
-      else if ParentComp <> Root then
-      begin
-        Ctx.Error  := True;
-        Ctx.Result := 'parent_name must be a TActionList for an action: ' +
-                      Ctx.Params.Get('parent_name', '');
-        Exit;
-      end;
-      ParentComp := Root;
-    end;
-    NewComp := FormEditingHook.CreateComponent(ParentComp, NewClass,
-      NewUnit, ALeft, ATop, AWidth, AHeight, False);
-    if NewComp = nil then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'CreateComponent returned nil for: ' + NewCompClass;
-      Exit;
-    end;
-    if Assigned(ActList) and (NewComp is TContainedAction) then
-      TContainedAction(NewComp).ActionList := ActList;
-    { What the designer does after a palette drop: the IDE adds the class
-      field, the unit to the uses clause and the package dependency. }
-    GlobalDesignHook.PersistentAdded(NewComp, False);
-    Designer.Modified;
-    Obj := TJSONObject.Create;
-    NameProps := TJSONObject.Create;
-    try
-      Arr := TJSONArray.Create;
-      { name last, after the requested properties }
-      Props := Ctx.Params.Get('properties', TJSONObject(nil));
-      if Assigned(Props) then
-        for I := 0 to Props.Count - 1 do
-          if not SameText(Props.Names[I], 'Name') then
-            NameProps.Add(Props.Names[I], Props.Items[I].Clone);
-      if Ctx.Params.Get('name', '') <> '' then
-        NameProps.Add('Name', Ctx.Params.Get('name', ''));
-      Failed := 0;
-      if NameProps.Count > 0 then
-        Failed := ApplyProperties(Designer, NewComp, NameProps, Arr, nil);
-      { One undo step for the whole call, recorded with the final name and
-        properties, as TDesigner.AddComponent does after a palette drop:
-        undo deletes the component, redo inserts it again. }
-      Group := NewUndoGroup(Designer);
-      AddUndo(Group, NewComp, uopAdd, 'Name', '', NewComp.Name);
-      Obj.Add('status', 'ok');
-      Obj.Add('component', ControlInfo(NewComp, Root));
-      if Arr.Count > 0 then
-        Obj.Add('results', Arr)
-      else
-        Arr.Free;
-      if Failed > 0 then
-        Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
-      Ctx.Result := Obj.AsJSON;
-    finally
-      NameProps.Free;
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'form_delete_component' then
-  begin
-    if Comp = nil then
-    begin
-      Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
-    end;
-    if Comp = Root then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Cannot delete the form itself'; Exit;
-    end;
-    if Comp is TMenuItem then
-    begin
-      { the designer's DeleteSelection would leave the submenu's fields behind }
-      Obj := TJSONObject.Create;
-      try
-        Obj.Add('menu_editor_hidden', HideMenuEditor);
-        Obj.Add('component', Comp.Name);
-        SelectOnly(Root);
-        Ok := SnapBegin(Snap, Designer, [Comp]);   { the item's whole menu }
-        DeleteMenuItem(TMenuItem(Comp));
-        if Ok then
-          SnapEnd(Snap);
-        Designer.Modified;
-        Obj.Add('status', 'deleted');
-        Obj.Add('undoable', Ok);
-        Ctx.Result := Obj.AsJSON;
-      finally
-        Obj.Free;
-      end;
-      Exit;
-    end;
-    if not (Designer is TComponentEditorDesigner) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Designer does not support deletion'; Exit;
-    end;
-    Err := Comp.Name;
-    { Select through the property hook, as the Object Inspector does; the
-      designer's control selection follows it. }
-    Sel := TPersistentSelectionList.Create;
-    try
-      Sel.Add(Comp);
-      GlobalDesignHook.SetSelection(Sel);
-    finally
-      Sel.Free;
-    end;
-    Designer.SelectOnlyThisComponent(Comp);
-    TComponentEditorDesigner(Designer).DeleteSelection;
-    Obj := TJSONObject.Create;
-    try
-      if FindComp(Designer, Err) = nil then
-        Obj.Add('status', 'deleted')
-      else
-      begin
-        Ctx.Error := True;
-        Obj.Add('status', 'not deleted');
-        Sel := TPersistentSelectionList.Create;
+        Filter := TStringList.Create;
+        Pool   := TEditorPool.Create;
+        Obj    := TJSONObject.Create;
         try
-          GlobalDesignHook.GetSelection(Sel);
-          Obj.Add('selection_count', Sel.Count);
-          if (Sel.Count > 0) and (Sel[0] is TComponent) then
-            Obj.Add('selected', TComponent(Sel[0]).Name);
+          NamesArr := Ctx.Params.Get('names', TJSONArray(nil));
+          if Assigned(NamesArr) then
+            for I := 0 to NamesArr.Count - 1 do
+              Filter.Add(NamesArr.Strings[I]);
+          if Ctx.Params.Get('include_events', False) or (Filter.Count > 0) then
+            Kinds := tkAny
+          else
+            Kinds := tkProperties;
+          Obj.Add('component_name',  Comp.Name);
+          Obj.Add('component_class', Comp.ClassName);
+          Arr := TJSONArray.Create;
+          Obj.Add('properties', Arr);
+          Pool.CollectTop(Comp, Kinds);
+          ListLevel(Pool, '', 0, Filter, Arr);
+          ListAnchorSides(Pool, Comp, Kinds, Filter, Arr);
+          Ctx.Result := Obj.AsJSON;
         finally
-          Sel.Free;
+          Obj.Free;
+          Pool.Free;
+          Filter.Free;
         end;
       end;
-      Obj.Add('component', Err);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'form_arrange' then
-  begin
-    Arr := ArrangeControls(Designer, Ctx.Params, Err);
-    if Arr = nil then
-    begin
-      Ctx.Error := True; Ctx.Result := Err; Exit;
-    end;
-    try
-      Ctx.Result := Arr.AsJSON;
-    finally
-      Arr.Free;
-    end;
-  end
-
-  else if (Name = 'form_undo') or (Name = 'form_redo') then
-  begin
-    { What Edit > Undo / Redo does while the designer is active. }
-    if not (Designer is TComponentEditorDesigner) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Designer does not support undo'; Exit;
-    end;
-    CEDesigner := TComponentEditorDesigner(Designer);
-    Obj := TJSONObject.Create;
-    try
-      try
-        if Name = 'form_undo' then
+      'form_set_properties':
+      begin
+        if Comp = nil then
         begin
-          Ok := CEDesigner.CanUndo and CEDesigner.Undo;
-          if Ok then Obj.Add('status', 'undone') else Obj.Add('status', 'nothing to undo');
+          Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
+        end;
+        Props := Ctx.Params.Get('properties', TJSONObject(nil));
+        if (Props = nil) or (Props.Count = 0) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'properties object required'; Exit;
+        end;
+        Obj := TJSONObject.Create;
+        try
+          Arr := TJSONArray.Create;
+          Obj.Add('component_name', Comp.Name);  { before a rename }
+          if not AllNativeUndoable(Comp, Props) and SnapBegin(Snap, Designer, [Comp]) then
+          begin
+            { Name is changed after the replacement, as an entry of its own: undo
+              renames back first (event handlers too), so each stream it inserts
+              matches the names in the source. }
+            Others := TJSONObject(Props.Clone);
+            NameProps := TJSONObject.Create;
+            try
+              I := Others.IndexOfName('Name', True);
+              if I >= 0 then
+              begin
+                NameProps.Add('Name', Others.Items[I].Clone);
+                Others.Delete(I);
+              end;
+              Failed := ApplyProperties(Designer, Comp, Others, Arr, nil);
+              SnapEnd(Snap);
+              if NameProps.Count > 0 then
+                Inc(Failed, ApplyProperties(Designer, Comp, NameProps, Arr, @Snap.Group));
+            finally
+              NameProps.Free;
+              Others.Free;
+            end;
+            Obj.Add('undoable', True);
+          end
+          else
+          begin
+            Group := NewUndoGroup(Designer);
+            Failed := ApplyProperties(Designer, Comp, Props, Arr, @Group);
+            Ok := True;
+            for I := 0 to Arr.Count - 1 do
+              Ok := Ok and TJSONObject(Arr[I]).Get('undoable', True);
+            Obj.Add('undoable', Ok);
+          end;
+          Obj.Add('results', Arr);
+          Obj.Add('component_name_now', Comp.Name);
+          Ctx.Error  := Failed = Props.Count;  { error only if nothing applied }
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+      end;
+
+      'form_add_component':
+      begin
+        NewCompClass := Ctx.Params.Get('class_name', '');
+        if NewCompClass = '' then
+        begin
+          Ctx.Error := True; Ctx.Result := 'class_name required'; Exit;
+        end;
+        RegComp := nil;
+        if Assigned(IDEComponentPalette) then
+          for I := 0 to IDEComponentPalette.Comps.Count - 1 do
+            if SameText(IDEComponentPalette.Comps[I].ComponentClass.ClassName, NewCompClass) then
+            begin
+              RegComp := IDEComponentPalette.Comps[I];
+              Break;
+            end;
+        ActionCls := nil;
+        if RegComp = nil then
+        begin
+          { actions are not on the palette }
+          ActionCls := FindActionClass(NewCompClass);
+          if ActionCls = nil then
+          begin
+            Ctx.Error  := True;
+            Ctx.Result := 'Component class not in IDE palette: ' + NewCompClass +
+                          ' (use form_search_palette)';
+            Exit;
+          end;
+        end;
+        ParentComp := Root;
+        if Ctx.Params.Get('parent_name', '') <> '' then
+        begin
+          ParentComp := FindComp(Designer, Ctx.Params.Get('parent_name', ''));
+          if ParentComp = nil then
+          begin
+            Ctx.Error := True;
+            Ctx.Result := 'Parent not found: ' + Ctx.Params.Get('parent_name', '');
+            Exit;
+          end;
+        end;
+        ALeft   := Ctx.Params.Get('left',   8);
+        ATop    := Ctx.Params.Get('top',    8);
+        AWidth  := Ctx.Params.Get('width',  0);   { 0 = class default }
+        AHeight := Ctx.Params.Get('height', 0);
+        ActList := nil;
+        if Assigned(RegComp) then
+        begin
+          NewClass := RegComp.ComponentClass;
+          NewUnit  := RegComp.GetUnitName;
         end
         else
         begin
-          Ok := CEDesigner.CanRedo and CEDesigner.Redo;
-          if Ok then Obj.Add('status', 'redone') else Obj.Add('status', 'nothing to redo');
+          NewClass := ActionCls;
+          NewUnit  := GetTypeData(PTypeInfo(ActionCls.ClassInfo))^.UnitName;
         end;
-      except
-        { an entry whose component is gone (renamed or deleted without an
-          undo entry of its own) }
-        on E: Exception do
+        if NewClass.InheritsFrom(TContainedAction) then
         begin
-          Ok := False;
-          Obj.Add('status', 'failed');
-          Obj.Add('error', E.Message);
+          { an action goes into an action list; the form owns it }
+          if ParentComp is TCustomActionList then
+            ActList := TCustomActionList(ParentComp)
+          else if ParentComp <> Root then
+          begin
+            Ctx.Error  := True;
+            Ctx.Result := 'parent_name must be a TActionList for an action: ' +
+                          Ctx.Params.Get('parent_name', '');
+            Exit;
+          end;
+          ParentComp := Root;
+        end;
+        NewComp := FormEditingHook.CreateComponent(ParentComp, NewClass,
+          NewUnit, ALeft, ATop, AWidth, AHeight, False);
+        if NewComp = nil then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'CreateComponent returned nil for: ' + NewCompClass;
+          Exit;
+        end;
+        if Assigned(ActList) and (NewComp is TContainedAction) then
+          TContainedAction(NewComp).ActionList := ActList;
+        { What the designer does after a palette drop: the IDE adds the class
+          field, the unit to the uses clause and the package dependency. }
+        GlobalDesignHook.PersistentAdded(NewComp, False);
+        Designer.Modified;
+        Obj := TJSONObject.Create;
+        NameProps := TJSONObject.Create;
+        try
+          Arr := TJSONArray.Create;
+          { name last, after the requested properties }
+          Props := Ctx.Params.Get('properties', TJSONObject(nil));
+          if Assigned(Props) then
+            for I := 0 to Props.Count - 1 do
+              if not SameText(Props.Names[I], 'Name') then
+                NameProps.Add(Props.Names[I], Props.Items[I].Clone);
+          if Ctx.Params.Get('name', '') <> '' then
+            NameProps.Add('Name', Ctx.Params.Get('name', ''));
+          Failed := 0;
+          if NameProps.Count > 0 then
+            Failed := ApplyProperties(Designer, NewComp, NameProps, Arr, nil);
+          { One undo step for the whole call, recorded with the final name and
+            properties, as TDesigner.AddComponent does after a palette drop:
+            undo deletes the component, redo inserts it again. }
+          Group := NewUndoGroup(Designer);
+          AddUndo(Group, NewComp, uopAdd, 'Name', '', NewComp.Name);
+          Obj.Add('status', 'ok');
+          Obj.Add('component', ControlInfo(NewComp, Root));
+          if Arr.Count > 0 then
+            Obj.Add('results', Arr)
+          else
+            Arr.Free;
+          if Failed > 0 then
+            Obj.Add('warning', IntToStr(Failed) + ' property assignment(s) failed; see results');
+          Ctx.Result := Obj.AsJSON;
+        finally
+          NameProps.Free;
+          Obj.Free;
         end;
       end;
-      Ctx.Error := not Ok;
-      Obj.Add('can_undo', CEDesigner.CanUndo);
-      Obj.Add('can_redo', CEDesigner.CanRedo);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'form_get_lfm' then
-  begin
-    try
-      Lfm := DesignerLfm(Designer);
-    except
-      on E: Exception do
+      'form_delete_component':
       begin
-        Ctx.Error := True; Ctx.Result := 'Could not stream the form: ' + E.Message; Exit;
+        if Comp = nil then
+        begin
+          Ctx.Error := True; Ctx.Result := 'component_name required'; Exit;
+        end;
+        if Comp = Root then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Cannot delete the form itself'; Exit;
+        end;
+        if Comp is TMenuItem then
+        begin
+          { the designer's DeleteSelection would leave the submenu's fields behind }
+          Obj := TJSONObject.Create;
+          try
+            Obj.Add('menu_editor_hidden', HideMenuEditor);
+            Obj.Add('component', Comp.Name);
+            SelectOnly(Root);
+            Ok := SnapBegin(Snap, Designer, [Comp]);   { the item's whole menu }
+            DeleteMenuItem(TMenuItem(Comp));
+            if Ok then
+              SnapEnd(Snap);
+            Designer.Modified;
+            Obj.Add('status', 'deleted');
+            Obj.Add('undoable', Ok);
+            Ctx.Result := Obj.AsJSON;
+          finally
+            Obj.Free;
+          end;
+          Exit;
+        end;
+        if not (Designer is TComponentEditorDesigner) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Designer does not support deletion'; Exit;
+        end;
+        Err := Comp.Name;
+        { Select through the property hook, as the Object Inspector does; the
+          designer's control selection follows it. }
+        Sel := TPersistentSelectionList.Create;
+        try
+          Sel.Add(Comp);
+          GlobalDesignHook.SetSelection(Sel);
+        finally
+          Sel.Free;
+        end;
+        Designer.SelectOnlyThisComponent(Comp);
+        TComponentEditorDesigner(Designer).DeleteSelection;
+        Obj := TJSONObject.Create;
+        try
+          if FindComp(Designer, Err) = nil then
+            Obj.Add('status', 'deleted')
+          else
+          begin
+            Ctx.Error := True;
+            Obj.Add('status', 'not deleted');
+            Sel := TPersistentSelectionList.Create;
+            try
+              GlobalDesignHook.GetSelection(Sel);
+              Obj.Add('selection_count', Sel.Count);
+              if (Sel.Count > 0) and (Sel[0] is TComponent) then
+                Obj.Add('selected', TComponent(Sel[0]).Name);
+            finally
+              Sel.Free;
+            end;
+          end;
+          Obj.Add('component', Err);
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+      end;
+
+      'form_arrange':
+      begin
+        Arr := ArrangeControls(Designer, Ctx.Params, Err);
+        if Arr = nil then
+        begin
+          Ctx.Error := True; Ctx.Result := Err; Exit;
+        end;
+        try
+          Ctx.Result := Arr.AsJSON;
+        finally
+          Arr.Free;
+        end;
+      end;
+
+      'form_undo', 'form_redo':
+      begin
+        { What Edit > Undo / Redo does while the designer is active. }
+        if not (Designer is TComponentEditorDesigner) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Designer does not support undo'; Exit;
+        end;
+        CEDesigner := TComponentEditorDesigner(Designer);
+        Obj := TJSONObject.Create;
+        try
+          try
+            if Name = 'form_undo' then
+            begin
+              Ok := CEDesigner.CanUndo and CEDesigner.Undo;
+              if Ok then Obj.Add('status', 'undone') else Obj.Add('status', 'nothing to undo');
+            end
+            else
+            begin
+              Ok := CEDesigner.CanRedo and CEDesigner.Redo;
+              if Ok then Obj.Add('status', 'redone') else Obj.Add('status', 'nothing to redo');
+            end;
+          except
+            { an entry whose component is gone (renamed or deleted without an
+              undo entry of its own) }
+            on E: Exception do
+            begin
+              Ok := False;
+              Obj.Add('status', 'failed');
+              Obj.Add('error', E.Message);
+            end;
+          end;
+          Ctx.Error := not Ok;
+          Obj.Add('can_undo', CEDesigner.CanUndo);
+          Obj.Add('can_redo', CEDesigner.CanRedo);
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+      end;
+
+      'form_get_lfm':
+      begin
+        try
+          Lfm := DesignerLfm(Designer);
+        except
+          on E: Exception do
+          begin
+            Ctx.Error := True; Ctx.Result := 'Could not stream the form: ' + E.Message; Exit;
+          end;
+        end;
+        if Assigned(Comp) and (Comp <> Root) then
+          Lfm := ExtractObjectBlock(Lfm, Comp.Name);
+        Ctx.Result := Lfm;
+      end;
+
+      'form_create_event_handler':
+      begin
+        EventName := Ctx.Params.Get('event_name', '');
+        if (Comp = nil) or (EventName = '') then
+        begin
+          Ctx.Error := True; Ctx.Result := 'component_name and event_name required'; Exit;
+        end;
+        PropInfo := GetPropInfo(Comp.ClassInfo, EventName);
+        if PropInfo = nil then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Event property not found: ' + EventName; Exit;
+        end;
+        if PropInfo^.PropType^.Kind <> tkMethod then
+        begin
+          Ctx.Error := True; Ctx.Result := EventName + ' is not an event property'; Exit;
+        end;
+
+        { If already assigned, navigate to existing handler.  The designer's
+          methods are JIT methods: Code can be nil with only Data set, so ask the
+          design hook for the name. }
+        ExistingName := EventHandlerName(Comp, PropInfo);
+        if ExistingName <> '' then
+        begin
+          GlobalDesignHook.ShowMethod(ExistingName);
+          Obj := TJSONObject.Create;
+          try
+            Obj.Add('status',       'existing');
+            Obj.Add('handler_name', ExistingName);
+            Ctx.Result := Obj.AsJSON;
+          finally
+            Obj.Free;
+          end;
+          Exit;
+        end;
+
+        { Generate default handler name if not supplied }
+        HandlerName := Ctx.Params.Get('handler_name', '');
+        if HandlerName = '' then
+        begin
+          EventSuffix := EventName;
+          if (Length(EventSuffix) > 2) and
+             (LowerCase(Copy(EventSuffix, 1, 2)) = 'on') then
+            EventSuffix := Copy(EventSuffix, 3, MaxInt);
+          if Comp = Root then
+            HandlerName := Root.Name + EventSuffix
+          else
+            HandlerName := Comp.Name + EventSuffix;
+        end;
+
+        { Through the event's property editor, as the Object Inspector does: it
+          reuses a method of that name or creates the stub in the source. }
+        Err := '';
+        Ok := SnapBegin(Snap, Designer, [Comp]);   { undo unassigns the event; the method stays }
+        Pool := TEditorPool.Create;
+        try
+          try
+            Ed := ResolvePath(Pool, Comp, EventName, Err);
+            if Assigned(Ed) then
+              Ed.SetValue(HandlerName);
+          except
+            on E: Exception do Err := E.Message;
+          end;
+        finally
+          Pool.Free;
+          if Ok then
+            SnapEnd(Snap);
+        end;
+        if not SameText(EventHandlerName(Comp, PropInfo), HandlerName) then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'Failed to create handler: ' + HandlerName;
+          if Err <> '' then
+            Ctx.Result := Ctx.Result + ': ' + Err;
+          Exit;
+        end;
+        Designer.Modified;
+        GlobalDesignHook.ShowMethod(HandlerName);
+
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('status',       'created');
+          Obj.Add('handler_name', HandlerName);
+          Obj.Add('undoable',     Ok);
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
       end;
     end;
-    if Assigned(Comp) and (Comp <> Root) then
-      Lfm := ExtractObjectBlock(Lfm, Comp.Name);
-    Ctx.Result := Lfm;
-  end
-
-  else if Name = 'form_create_event_handler' then
-  begin
-    EventName := Ctx.Params.Get('event_name', '');
-    if (Comp = nil) or (EventName = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'component_name and event_name required'; Exit;
-    end;
-    PropInfo := GetPropInfo(Comp.ClassInfo, EventName);
-    if PropInfo = nil then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Event property not found: ' + EventName; Exit;
-    end;
-    if PropInfo^.PropType^.Kind <> tkMethod then
-    begin
-      Ctx.Error := True; Ctx.Result := EventName + ' is not an event property'; Exit;
-    end;
-
-    { If already assigned, navigate to existing handler.  The designer's
-      methods are JIT methods: Code can be nil with only Data set, so ask the
-      design hook for the name. }
-    ExistingName := EventHandlerName(Comp, PropInfo);
-    if ExistingName <> '' then
-    begin
-      GlobalDesignHook.ShowMethod(ExistingName);
-      Obj := TJSONObject.Create;
-      try
-        Obj.Add('status',       'existing');
-        Obj.Add('handler_name', ExistingName);
-        Ctx.Result := Obj.AsJSON;
-      finally
-        Obj.Free;
-      end;
-      Exit;
-    end;
-
-    { Generate default handler name if not supplied }
-    HandlerName := Ctx.Params.Get('handler_name', '');
-    if HandlerName = '' then
-    begin
-      EventSuffix := EventName;
-      if (Length(EventSuffix) > 2) and
-         (LowerCase(Copy(EventSuffix, 1, 2)) = 'on') then
-        EventSuffix := Copy(EventSuffix, 3, MaxInt);
-      if Comp = Root then
-        HandlerName := Root.Name + EventSuffix
-      else
-        HandlerName := Comp.Name + EventSuffix;
-    end;
-
-    { Through the event's property editor, as the Object Inspector does: it
-      reuses a method of that name or creates the stub in the source. }
-    Err := '';
-    Ok := SnapBegin(Snap, Designer, [Comp]);   { undo unassigns the event; the method stays }
-    Pool := TEditorPool.Create;
-    try
-      try
-        Ed := ResolvePath(Pool, Comp, EventName, Err);
-        if Assigned(Ed) then
-          Ed.SetValue(HandlerName);
-      except
-        on E: Exception do Err := E.Message;
-      end;
-    finally
-      Pool.Free;
-      if Ok then
-        SnapEnd(Snap);
-    end;
-    if not SameText(EventHandlerName(Comp, PropInfo), HandlerName) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'Failed to create handler: ' + HandlerName;
-      if Err <> '' then
-        Ctx.Result := Ctx.Result + ': ' + Err;
-      Exit;
-    end;
-    Designer.Modified;
-    GlobalDesignHook.ShowMethod(HandlerName);
-
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('status',       'created');
-      Obj.Add('handler_name', HandlerName);
-      Obj.Add('undoable',     Ok);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end;
 end;
 
 { The tools that change a form; with auto_save the unit is saved afterwards. }

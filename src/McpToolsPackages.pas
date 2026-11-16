@@ -1657,145 +1657,145 @@ var
 begin
   Result := False;
 
-  if (Name = 'package_add_file') or (Name = 'package_remove_file') or
-     (Name = 'package_add_dependency') or (Name = 'package_remove_dependency') or
-     (Name = 'package_set_info') or (Name = 'package_save') then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) and (Name <> 'package_save') then
+  case Name of
+    'package_add_file', 'package_remove_file', 'package_add_dependency', 'package_remove_dependency', 'package_set_info', 'package_save':
     begin
-      Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
-    end;
-    if Name = 'package_save' then
-      Ctx.Result := PackageSave(Ctx.Params, PkgName)
-    else if Name = 'package_add_file' then
-      Ctx.Result := PackageAddFile(Ctx.Params, PkgName)
-    else if Name = 'package_remove_file' then
-      Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
-    else if Name = 'package_add_dependency' then
-      Ctx.Result := PackageAddDependency(Ctx.Params, PkgName)
-    else if Name = 'package_set_info' then
-      Ctx.Result := PackageSetInfo(Ctx.Params, PkgName)
-    else
-      Ctx.Result := PackageRemoveDependency(Ctx.Params, PkgName);
-    if PkgName <> '' then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgName;
-    end;
-    Exit;
-  end;
-
-  if Name = 'package_search_online' then
-  begin
-    Result := True;
-    Ctx.Result := SearchOnlineCatalog(Ctx.Params, PkgName);
-    if PkgName <> '' then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgName;
-    end;
-    Exit;
-  end;
-
-  if Name = 'project_list_packages' then
-  begin
-    Result := True;
-    if not (LazarusIDE.ActiveProject is TProject) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    Ctx.Result := ProjectPackagesJSON(TProject(LazarusIDE.ActiveProject),
-                    Assigned(Ctx.Params) and Ctx.Params.Get('recursive', False));
-  end
-
-  else if Name = 'package_find_unit' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('unit_name', '')) = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'unit_name required'; Exit;
-    end;
-    Ctx.Result := FindUnitJSON(Trim(Ctx.Params.Get('unit_name', '')));
-  end
-
-  else if Name = 'project_add_package' then
-  begin
-    Result := True;
-    if not SelectedPackageName(Ctx.Params, True, PkgName, PkgErr) then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    { a name the IDE can't resolve leaves a "Broken dependency" dialog that fails
-      every later build silently }
-    if (PackageGraph.FindPackageWithName(PkgName, nil) = nil) and
-       (LazPackageLinks.FindLinkWithPkgName(PkgName) = nil) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'Package not found: ' + PkgName + '. It is neither loaded nor known ' +
-        'to the IDE''s package links (package_download and open its .lpk first)';
+      Result := True;
+      if not Assigned(Ctx.Params) and (Name <> 'package_save') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
+      end;
+      if Name = 'package_save' then
+        Ctx.Result := PackageSave(Ctx.Params, PkgName)
+      else if Name = 'package_add_file' then
+        Ctx.Result := PackageAddFile(Ctx.Params, PkgName)
+      else if Name = 'package_remove_file' then
+        Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
+      else if Name = 'package_add_dependency' then
+        Ctx.Result := PackageAddDependency(Ctx.Params, PkgName)
+      else if Name = 'package_set_info' then
+        Ctx.Result := PackageSetInfo(Ctx.Params, PkgName)
+      else
+        Ctx.Result := PackageRemoveDependency(Ctx.Params, PkgName);
+      if PkgName <> '' then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgName;
+      end;
       Exit;
     end;
-    Proj.AddPackageDependency(PkgName);
-    LazarusIDE.DoSaveProject([]);
-    PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
-    Obj := TJSONObject.Create;
-    try
-      RefArr := TJSONArray.Create;
-      if Assigned(FPList) then
-      begin
-        for I := 0 to FPList.Count - 1 do
-          RefArr.Add(TIDEPackage(FPList[I]).Name);
-        FreeAndNil(FPList);
-      end;
-      Obj.Add('package_name',        PkgName);
-      Obj.Add('project_dependencies', RefArr);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'project_remove_package' then
-  begin
-    Result := True;
-    if not SelectedPackageName(Ctx.Params, False, PkgName, PkgErr) then
+    'package_search_online':
     begin
-      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    if not Proj.RemovePackageDependency(PkgName) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'Package not found in project: ' + PkgName;
+      Result := True;
+      Ctx.Result := SearchOnlineCatalog(Ctx.Params, PkgName);
+      if PkgName <> '' then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgName;
+      end;
       Exit;
     end;
-    LazarusIDE.DoSaveProject([]);
-    PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
-    Obj := TJSONObject.Create;
-    try
-      RefArr := TJSONArray.Create;
-      if Assigned(FPList) then
+
+    'project_list_packages':
+    begin
+      Result := True;
+      if not (LazarusIDE.ActiveProject is TProject) then
       begin
-        for I := 0 to FPList.Count - 1 do
-          RefArr.Add(TIDEPackage(FPList[I]).Name);
-        FreeAndNil(FPList);
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
       end;
-      Obj.Add('package_name',        PkgName);
-      Obj.Add('project_dependencies', RefArr);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
+      Ctx.Result := ProjectPackagesJSON(TProject(LazarusIDE.ActiveProject),
+                      Assigned(Ctx.Params) and Ctx.Params.Get('recursive', False));
     end;
-  end
+
+    'package_find_unit':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('unit_name', '')) = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'unit_name required'; Exit;
+      end;
+      Ctx.Result := FindUnitJSON(Trim(Ctx.Params.Get('unit_name', '')));
+    end;
+
+    'project_add_package':
+    begin
+      Result := True;
+      if not SelectedPackageName(Ctx.Params, True, PkgName, PkgErr) then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+      end;
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      { a name the IDE can't resolve leaves a "Broken dependency" dialog that fails
+        every later build silently }
+      if (PackageGraph.FindPackageWithName(PkgName, nil) = nil) and
+         (LazPackageLinks.FindLinkWithPkgName(PkgName) = nil) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Package not found: ' + PkgName + '. It is neither loaded nor known ' +
+          'to the IDE''s package links (package_download and open its .lpk first)';
+        Exit;
+      end;
+      Proj.AddPackageDependency(PkgName);
+      LazarusIDE.DoSaveProject([]);
+      PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
+      Obj := TJSONObject.Create;
+      try
+        RefArr := TJSONArray.Create;
+        if Assigned(FPList) then
+        begin
+          for I := 0 to FPList.Count - 1 do
+            RefArr.Add(TIDEPackage(FPList[I]).Name);
+          FreeAndNil(FPList);
+        end;
+        Obj.Add('package_name',        PkgName);
+        Obj.Add('project_dependencies', RefArr);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'project_remove_package':
+    begin
+      Result := True;
+      if not SelectedPackageName(Ctx.Params, False, PkgName, PkgErr) then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+      end;
+      Proj := LazarusIDE.ActiveProject;
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      if not Proj.RemovePackageDependency(PkgName) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Package not found in project: ' + PkgName;
+        Exit;
+      end;
+      LazarusIDE.DoSaveProject([]);
+      PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
+      Obj := TJSONObject.Create;
+      try
+        RefArr := TJSONArray.Create;
+        if Assigned(FPList) then
+        begin
+          for I := 0 to FPList.Count - 1 do
+            RefArr.Add(TIDEPackage(FPList[I]).Name);
+          FreeAndNil(FPList);
+        end;
+        Obj.Add('package_name',        PkgName);
+        Obj.Add('project_dependencies', RefArr);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+  end;
 
   { package_install, package_uninstall: the rebuild in McpToolsBuild }
 end;

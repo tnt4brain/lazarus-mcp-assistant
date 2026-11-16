@@ -1205,710 +1205,712 @@ var
 begin
   Result := False;
 
-  if Name = 'project_open' then
-  begin
-    { Opening closes the current project.  The IDE would ask about a running
-      debugger or build and about unsaved changes, so those cases are refused
-      here instead; ofRevert skips the last question, which then concerns
-      session data only (cursor positions, open tabs), and discards it. }
-    Result := True;
-    FilePath := '';
-    if Assigned(Ctx.Params) then
-      FilePath := Ctx.Params.Get('file', '');
-    if FilePath = '' then
+  case Name of
+    'project_open':
     begin
-      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
+      { Opening closes the current project.  The IDE would ask about a running
+        debugger or build and about unsaved changes, so those cases are refused
+        here instead; ofRevert skips the last question, which then concerns
+        session data only (cursor positions, open tabs), and discards it. }
+      Result := True;
+      FilePath := '';
+      if Assigned(Ctx.Params) then
+        FilePath := Ctx.Params.Get('file', '');
+      if FilePath = '' then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file required'; Exit;
+      end;
+      FilePath := CleanAndExpandFilename(FilePath);
+      LprPath := '';
+      if SameText(ExtractFileExt(FilePath), '.lpr') then
+      begin
+        { a program without a project: the .lpi is written next to it, as the
+          IDE does when it is asked to open one }
+        if not FileExists(FilePath) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
+        end;
+        LprPath  := FilePath;
+        FilePath := ChangeFileExt(LprPath, '.lpi');
+      end
+      else if not SameText(ExtractFileExt(FilePath), '.lpi') then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'project_open takes a project .lpi (or a program .lpr, for which it ' +
+          'writes the .lpi); parameter file; got: ' + FilePath;
+        Exit;
+      end;
+      if (LprPath = '') and not FileExists(FilePath) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
+      end;
+      Proj := LazarusIDE.ActiveProject;
+      NewName := '';
+      if Assigned(Proj) then
+      begin
+        NewName := Proj.ProjectInfoFile;
+        if CompareFilenames(NewName, FilePath) = 0 then
+        begin
+          DismissProjectWizard(FilePath);  { a wizard left over from before }
+          Ctx.Result :='{"project_file":"' + StringToJSONString(FilePath) +
+                        '","already_open":true}';
+          Exit;
+        end;
+      end;
+      Ctx.Result := ProjectCloseRefusal('opening another project');
+      if Ctx.Result <> '' then
+      begin
+        Ctx.Error := True; Exit;
+      end;
+      CreatedLpi := False;
+      if (LprPath <> '') and not FileExists(FilePath) then
+      begin
+        WriteProgramProject(LprPath, Ctx.Params.Get('unit_paths', ''));
+        CreatedLpi := True;
+      end;
+      if LazarusIDE.DoOpenProjectFile(FilePath, [ofAddToRecent, ofRevert]) <> mrOK then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not open ' + FilePath; Exit;
+      end;
+      { the Project Wizard (shown after Close Project) stays up otherwise }
+      if Assigned(LazarusIDE.ActiveProject) then
+        DismissProjectWizard(LazarusIDE.ActiveProject.ProjectInfoFile);
+      Obj := TJSONObject.Create;
+      try
+        if Assigned(LazarusIDE.ActiveProject) then
+          Obj.Add('project_file', LazarusIDE.ActiveProject.ProjectInfoFile)
+        else
+          Obj.Add('project_file', FilePath);
+        Obj.Add('previous_project', NewName);
+        if CreatedLpi then Obj.Add('created_project_file', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
-    FilePath := CleanAndExpandFilename(FilePath);
-    LprPath := '';
-    if SameText(ExtractFileExt(FilePath), '.lpr') then
+
+    'project_close':
     begin
-      { a program without a project: the .lpi is written next to it, as the
-        IDE does when it is asked to open one }
+      Result := True;
+      Proj := LazarusIDE.ActiveProject;
+      if Proj = nil then
+      begin
+        { unreachable through the server (no project: refused up front), but a
+          direct caller should not dereference nil }
+        Ctx.Error  := True;
+        Ctx.Result := 'No project is open.';
+        Exit;
+      end;
+      { the IDE would ask about a running debugger or build and about unsaved
+        changes in a dialog; refuse those cases as project_open does }
+      Ctx.Result := ProjectCloseRefusal('closing the project');
+      if Ctx.Result <> '' then
+      begin
+        Ctx.Error := True; Exit;
+      end;
+      if GCloseProjectClick = nil then
+        GCloseProjectClick := TMcpCloseProjectClick.Create;
+      GCloseProjectClick.Item := FindMenuItemByName(mnuMain, 'itmProjectClose');
+      if GCloseProjectClick.Item = nil then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'The IDE''s Close Project menu item was not found.';
+        Exit;
+      end;
+      GCloseProjectClick.Arm;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('closing', True);
+        Obj.Add('previous_project', Proj.ProjectInfoFile);
+        Obj.Add('note', 'The IDE shows its Project Wizard now, as for File > Close ' +
+                        'Project; project_create or project_open dismisses it.');
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'ide_ping':
+    begin
+      Result := True;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('status', 'ok');
+        IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
+        if Assigned(IDEPkg) then
+          Obj.Add('version', IDEPkg.Version.AsString);
+        { who the server thinks is calling: the session id the client sent
+          back, or 'anonymous' (ADR-012) }
+        if Ctx.ClientId <> '' then
+          Obj.Add('client', Ctx.ClientId);
+        { and which token it came with (ADR-021) }
+        if McpSessionTokenName(Ctx.ClientId) <> '' then
+          Obj.Add('token', McpSessionTokenName(Ctx.ClientId));
+        { where to read when the IDE stops answering (ADR-022): known before it does }
+        Logs := TJSONObject.Create;
+        Logs.Add('sessions', McpSessionLogPath);
+        Logs.Add('exceptions', ExtractFilePath(McpSessionLogPath) + 'mcp-exceptions.log');
+        Logs.Add('tools', McpToolLogPath);
+        Logs.Add('tools_enabled', McpToolLogEnabled);
+        Obj.Add('logs', Logs);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'ide_report':
+    begin
+      Result := True;
+      if not Assigned(McpReportWriter) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'The report writer is not ready.';
+      end
+      else
+      begin
+        ReportOk := McpReportWriter(ReportPath, ReportErr);
+        if not ReportOk then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'Could not write the report: ' + ReportErr;
+        end
+        else
+        begin
+          Obj := TJSONObject.Create;
+          try
+            Obj.Add('path', ReportPath);
+            Obj.Add('note', 'Markdown; read it before posting it anywhere: paths and error ' +
+                            'texts can hold names (your home folder is shown as ~).');
+            Ctx.Result := Obj.AsJSON;
+          finally
+            Obj.Free;
+          end;
+        end;
+      end;
+    end;
+
+    'ide_get_open_dialogs':
+    begin
+      Result := True;
+      Arr := McpOpenDialogs(True);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('count', Arr.Count);
+        if Arr.Count > 0 then
+          Obj.Add('summary', McpDescribeDialogs(Arr));
+        Obj.Add('dialogs', Arr);  { ownership moves to Obj }
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'project_get_directory':
+    begin
+      Result := True;
+      Obj := TJSONObject.Create;
+      try
+        if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+           (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
+        begin
+          Obj.Add('project_open', True);
+          Obj.Add('directory', ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile));
+        end
+        else if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
+        begin
+          Obj.Add('project_open', True);
+          Obj.Add('error', 'The open project is not saved yet, so it has no directory; ' +
+            'save it in the IDE first (File > Save All)');
+        end
+        else
+        begin
+          Obj.Add('project_open', False);
+          Obj.Add('error', 'No active project; project_open a .lpi first');
+        end;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'project_get_settings':
+    begin
+      Result := True;
+      Obj := TJSONObject.Create;
+      try
+        if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
+        begin
+          Proj := LazarusIDE.ActiveProject;
+          Obj.Add('project_file',  Proj.ProjectInfoFile);
+          Obj.Add('target_os_cpu', LazarusIDE.GetFPCFrontEndOptions);
+          if Assigned(Proj.LazCompilerOptions) then
+          begin
+            Obj.Add('custom_options', Proj.LazCompilerOptions.CustomOptions);
+            Obj.Add('output_dir',     Proj.LazCompilerOptions.UnitOutputDirectory);
+            Obj.Add('target_os',      Proj.LazCompilerOptions.TargetOS);
+          end;
+          Obj.Add('widgetset',          EffectiveWidgetset);
+          Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
+          if Assigned(Proj.LazCompilerOptions) then
+          begin
+            Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
+            AddSwitches(Obj, Proj.LazCompilerOptions);
+          end;
+          AddBuildModes(Obj, TProject(Proj));
+          AddModeOptions(Obj, TProject(Proj));
+          AddResources(Obj, TProject(Proj));
+        end
+        else
+          Obj.Add('error', 'No active project');
+        { the compiler the IDE builds with, whether or not a project is saved }
+        for MacroIdx := 0 to 3 do
+        begin
+          MacroText := '$(' + MacroNames[MacroIdx] + ')';
+          if IDEMacros.SubstituteMacros(MacroText) then
+            Obj.Add(MacroKeys[MacroIdx], MacroText);
+        end;
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'project_set_settings':
+    begin
+      Result := True;
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) or not Assigned(Proj.LazCompilerOptions) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      if Assigned(Ctx.Params) and (Ctx.Params.Find('debug_info') <> nil) and
+         not ParseDebugInfo(Ctx.Params.Get('debug_info', ''), DbgGen, DbgType) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'debug_info must be none, dwarf3, dwarf2, dwarf2set, stabs or auto';
+        Exit;
+      end;
+      Ctx.Result := CheckSwitches(Ctx.Params);
+      if Ctx.Result <> '' then
+      begin
+        Ctx.Error := True; Exit;
+      end;
+      if Assigned(Ctx.Params) and (Ctx.Params.Find('use_manifest') <> nil) and
+         (Ctx.Params.Find('use_manifest').JSONType <> jtBoolean) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'use_manifest must be true or false'; Exit;
+      end;
+      if Assigned(Ctx.Params) and (Ctx.Params.Find('icon') <> nil) then
+      begin
+        Ctx.Result := CheckIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
+        if Ctx.Result <> '' then
+        begin
+          Ctx.Error := True; Exit;
+        end;
+      end;
+      { the build mode first: every other setting here applies to the active mode }
+      if Assigned(Ctx.Params) and (Ctx.Params.Find('build_mode') <> nil) then
+      begin
+        Mode := FindBuildMode(TProject(Proj), Ctx.Params.Get('build_mode', ''), ModeList);
+        if Mode = nil then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'Unknown build mode "' + Ctx.Params.Get('build_mode', '') +
+                        '"; one of: ' + ModeList;
+          Exit;
+        end;
+        if Mode <> TProject(Proj).ActiveBuildMode then
+        begin
+          TProject(Proj).ActiveBuildMode := Mode;
+          Proj.Modified := True;
+          LazarusIDE.PrepareBuildTarget(True);
+        end;
+      end;
+      { first, so that an unknown widgetset changes nothing }
+      if Assigned(Ctx.Params) and (Ctx.Params.Find('widgetset') <> nil) then
+      begin
+        Ctx.Result := SetWidgetset(TProject(Proj), Ctx.Params.Get('widgetset', ''));
+        if Ctx.Result <> '' then
+        begin
+          Ctx.Error := True; Exit;
+        end;
+      end;
+      if Assigned(Ctx.Params) then
+      begin
+        if Ctx.Params.Find('target_os')      <> nil then
+          Proj.LazCompilerOptions.TargetOS            := Ctx.Params.Get('target_os',      '');
+        if Ctx.Params.Find('target_cpu')     <> nil then
+          Proj.LazCompilerOptions.TargetCPU           := Ctx.Params.Get('target_cpu',     '');
+        if Ctx.Params.Find('output_dir')     <> nil then
+          Proj.LazCompilerOptions.UnitOutputDirectory := Ctx.Params.Get('output_dir',     '');
+        if Ctx.Params.Find('custom_options') <> nil then
+          Proj.LazCompilerOptions.CustomOptions       := Ctx.Params.Get('custom_options', '');
+        if Ctx.Params.Find('debug_info') <> nil then
+        begin
+          Proj.LazCompilerOptions.GenerateDebugInfo := DbgGen;
+          if DbgGen then Proj.LazCompilerOptions.DebugInfoType := DbgType;
+        end;
+        ApplySwitches(Ctx.Params, Proj.LazCompilerOptions);
+        if Ctx.Params.Find('use_manifest') <> nil then
+          TProject(Proj).UseManifest := Ctx.Params.Get('use_manifest', False);
+        if Ctx.Params.Find('icon') <> nil then
+          ApplyIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
+      end;
+      LazarusIDE.DoSaveProject([]);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('project_file',   Proj.ProjectInfoFile);
+        Obj.Add('target_os',      Proj.LazCompilerOptions.TargetOS);
+        Obj.Add('target_cpu',     Proj.LazCompilerOptions.TargetCPU);
+        Obj.Add('output_dir',     Proj.LazCompilerOptions.UnitOutputDirectory);
+        Obj.Add('custom_options', Proj.LazCompilerOptions.CustomOptions);
+        Obj.Add('widgetset',          EffectiveWidgetset);
+        Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
+        Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
+        AddSwitches(Obj, Proj.LazCompilerOptions);
+        AddBuildModes(Obj, TProject(Proj));
+        AddResources(Obj, TProject(Proj));
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'project_add_file':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file required'; Exit;
+      end;
+      FilePath := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
       if not FileExists(FilePath) then
       begin
         Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
       end;
-      LprPath  := FilePath;
-      FilePath := ChangeFileExt(LprPath, '.lpi');
-    end
-    else if not SameText(ExtractFileExt(FilePath), '.lpi') then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'project_open takes a project .lpi (or a program .lpr, for which it ' +
-        'writes the .lpi); parameter file; got: ' + FilePath;
-      Exit;
-    end;
-    if (LprPath = '') and not FileExists(FilePath) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    NewName := '';
-    if Assigned(Proj) then
-    begin
-      NewName := Proj.ProjectInfoFile;
-      if CompareFilenames(NewName, FilePath) = 0 then
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
       begin
-        DismissProjectWizard(FilePath);  { a wizard left over from before }
-        Ctx.Result :='{"project_file":"' + StringToJSONString(FilePath) +
-                      '","already_open":true}';
-        Exit;
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      { The project also lists files only open in an editor.  TProject.AddFile
+        only warns about a file listed already and adds it a second time, so a
+        listed one is marked as part of the project instead, as the IDE's
+        "Add editor file to project" does. }
+      PF := nil;
+      for I := 0 to Proj.FileCount - 1 do
+        if SameFileName(Proj.Files[I].Filename, FilePath) then
+        begin
+          PF := Proj.Files[I]; Break;
+        end;
+      AlreadyIn := Assigned(PF) and PF.IsPartOfProject;
+      if not AlreadyIn then
+      begin
+        if Assigned(PF) then
+          PF.IsPartOfProject := True
+        else
+        begin
+          PF := Proj.CreateProjectFile(FilePath);
+          Proj.AddFile(PF, False);
+          PF.IsPartOfProject := True;   { else it is listed but not part of the project }
+        end;
+        LazarusIDE.DoSaveProject([]);
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',    FilePath);
+        Obj.Add('project', Proj.ProjectInfoFile);
+        if AlreadyIn then Obj.Add('already_in_project', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
       end;
     end;
-    Ctx.Result := ProjectCloseRefusal('opening another project');
-    if Ctx.Result <> '' then
-    begin
-      Ctx.Error := True; Exit;
-    end;
-    CreatedLpi := False;
-    if (LprPath <> '') and not FileExists(FilePath) then
-    begin
-      WriteProgramProject(LprPath, Ctx.Params.Get('unit_paths', ''));
-      CreatedLpi := True;
-    end;
-    if LazarusIDE.DoOpenProjectFile(FilePath, [ofAddToRecent, ofRevert]) <> mrOK then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not open ' + FilePath; Exit;
-    end;
-    { the Project Wizard (shown after Close Project) stays up otherwise }
-    if Assigned(LazarusIDE.ActiveProject) then
-      DismissProjectWizard(LazarusIDE.ActiveProject.ProjectInfoFile);
-    Obj := TJSONObject.Create;
-    try
-      if Assigned(LazarusIDE.ActiveProject) then
-        Obj.Add('project_file', LazarusIDE.ActiveProject.ProjectInfoFile)
-      else
-        Obj.Add('project_file', FilePath);
-      Obj.Add('previous_project', NewName);
-      if CreatedLpi then Obj.Add('created_project_file', True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'project_close' then
-  begin
-    Result := True;
-    Proj := LazarusIDE.ActiveProject;
-    if Proj = nil then
+    'project_remove_file':
     begin
-      { unreachable through the server (no project: refused up front), but a
-        direct caller should not dereference nil }
-      Ctx.Error  := True;
-      Ctx.Result := 'No project is open.';
-      Exit;
-    end;
-    { the IDE would ask about a running debugger or build and about unsaved
-      changes in a dialog; refuse those cases as project_open does }
-    Ctx.Result := ProjectCloseRefusal('closing the project');
-    if Ctx.Result <> '' then
-    begin
-      Ctx.Error := True; Exit;
-    end;
-    if GCloseProjectClick = nil then
-      GCloseProjectClick := TMcpCloseProjectClick.Create;
-    GCloseProjectClick.Item := FindMenuItemByName(mnuMain, 'itmProjectClose');
-    if GCloseProjectClick.Item = nil then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'The IDE''s Close Project menu item was not found.';
-      Exit;
-    end;
-    GCloseProjectClick.Arm;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('closing', True);
-      Obj.Add('previous_project', Proj.ProjectInfoFile);
-      Obj.Add('note', 'The IDE shows its Project Wizard now, as for File > Close ' +
-                      'Project; project_create or project_open dismisses it.');
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'ide_ping' then
-  begin
-    Result := True;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('status', 'ok');
-      IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
-      if Assigned(IDEPkg) then
-        Obj.Add('version', IDEPkg.Version.AsString);
-      { who the server thinks is calling: the session id the client sent
-        back, or 'anonymous' (ADR-012) }
-      if Ctx.ClientId <> '' then
-        Obj.Add('client', Ctx.ClientId);
-      { and which token it came with (ADR-021) }
-      if McpSessionTokenName(Ctx.ClientId) <> '' then
-        Obj.Add('token', McpSessionTokenName(Ctx.ClientId));
-      { where to read when the IDE stops answering (ADR-022): known before it does }
-      Logs := TJSONObject.Create;
-      Logs.Add('sessions', McpSessionLogPath);
-      Logs.Add('exceptions', ExtractFilePath(McpSessionLogPath) + 'mcp-exceptions.log');
-      Logs.Add('tools', McpToolLogPath);
-      Logs.Add('tools_enabled', McpToolLogEnabled);
-      Obj.Add('logs', Logs);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'ide_report' then
-  begin
-    Result := True;
-    if not Assigned(McpReportWriter) then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'The report writer is not ready.';
-    end
-    else
-    begin
-      ReportOk := McpReportWriter(ReportPath, ReportErr);
-      if not ReportOk then
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file required'; Exit;
+      end;
+      FilePath := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      J := -1;
+      for I := 0 to Proj.FileCount - 1 do
+        if SameFileName(Proj.Files[I].Filename, FilePath) then
+        begin
+          J := I;
+          Break;
+        end;
+      { the list also has files only open in an editor }
+      if (J < 0) or not Proj.Files[J].IsPartOfProject then
+      begin
+        Ctx.Error := True; Ctx.Result := 'File not in project: ' + FilePath; Exit;
+      end;
+      { RemoveUnit frees the file's unit info, which an open editor still uses }
+      if Assigned(SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath)) then
       begin
         Ctx.Error  := True;
-        Ctx.Result := 'Could not write the report: ' + ReportErr;
-      end
-      else
-      begin
-        Obj := TJSONObject.Create;
-        try
-          Obj.Add('path', ReportPath);
-          Obj.Add('note', 'Markdown; read it before posting it anywhere: paths and error ' +
-                          'texts can hold names (your home folder is shown as ~).');
-          Ctx.Result := Obj.AsJSON;
-        finally
-          Obj.Free;
-        end;
-      end;
-    end;
-  end
-
-  else if Name = 'ide_get_open_dialogs' then
-  begin
-    Result := True;
-    Arr := McpOpenDialogs(True);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('count', Arr.Count);
-      if Arr.Count > 0 then
-        Obj.Add('summary', McpDescribeDialogs(Arr));
-      Obj.Add('dialogs', Arr);  { ownership moves to Obj }
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_get_directory' then
-  begin
-    Result := True;
-    Obj := TJSONObject.Create;
-    try
-      if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
-         (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
-      begin
-        Obj.Add('project_open', True);
-        Obj.Add('directory', ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile));
-      end
-      else if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
-      begin
-        Obj.Add('project_open', True);
-        Obj.Add('error', 'The open project is not saved yet, so it has no directory; ' +
-          'save it in the IDE first (File > Save All)');
-      end
-      else
-      begin
-        Obj.Add('project_open', False);
-        Obj.Add('error', 'No active project; project_open a .lpi first');
-      end;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_get_settings' then
-  begin
-    Result := True;
-    Obj := TJSONObject.Create;
-    try
-      if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) then
-      begin
-        Proj := LazarusIDE.ActiveProject;
-        Obj.Add('project_file',  Proj.ProjectInfoFile);
-        Obj.Add('target_os_cpu', LazarusIDE.GetFPCFrontEndOptions);
-        if Assigned(Proj.LazCompilerOptions) then
-        begin
-          Obj.Add('custom_options', Proj.LazCompilerOptions.CustomOptions);
-          Obj.Add('output_dir',     Proj.LazCompilerOptions.UnitOutputDirectory);
-          Obj.Add('target_os',      Proj.LazCompilerOptions.TargetOS);
-        end;
-        Obj.Add('widgetset',          EffectiveWidgetset);
-        Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
-        if Assigned(Proj.LazCompilerOptions) then
-        begin
-          Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
-          AddSwitches(Obj, Proj.LazCompilerOptions);
-        end;
-        AddBuildModes(Obj, TProject(Proj));
-        AddModeOptions(Obj, TProject(Proj));
-        AddResources(Obj, TProject(Proj));
-      end
-      else
-        Obj.Add('error', 'No active project');
-      { the compiler the IDE builds with, whether or not a project is saved }
-      for MacroIdx := 0 to 3 do
-      begin
-        MacroText := '$(' + MacroNames[MacroIdx] + ')';
-        if IDEMacros.SubstituteMacros(MacroText) then
-          Obj.Add(MacroKeys[MacroIdx], MacroText);
-      end;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_set_settings' then
-  begin
-    Result := True;
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) or not Assigned(Proj.LazCompilerOptions) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    if Assigned(Ctx.Params) and (Ctx.Params.Find('debug_info') <> nil) and
-       not ParseDebugInfo(Ctx.Params.Get('debug_info', ''), DbgGen, DbgType) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'debug_info must be none, dwarf3, dwarf2, dwarf2set, stabs or auto';
-      Exit;
-    end;
-    Ctx.Result := CheckSwitches(Ctx.Params);
-    if Ctx.Result <> '' then
-    begin
-      Ctx.Error := True; Exit;
-    end;
-    if Assigned(Ctx.Params) and (Ctx.Params.Find('use_manifest') <> nil) and
-       (Ctx.Params.Find('use_manifest').JSONType <> jtBoolean) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'use_manifest must be true or false'; Exit;
-    end;
-    if Assigned(Ctx.Params) and (Ctx.Params.Find('icon') <> nil) then
-    begin
-      Ctx.Result := CheckIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
-      if Ctx.Result <> '' then
-      begin
-        Ctx.Error := True; Exit;
-      end;
-    end;
-    { the build mode first: every other setting here applies to the active mode }
-    if Assigned(Ctx.Params) and (Ctx.Params.Find('build_mode') <> nil) then
-    begin
-      Mode := FindBuildMode(TProject(Proj), Ctx.Params.Get('build_mode', ''), ModeList);
-      if Mode = nil then
-      begin
-        Ctx.Error := True;
-        Ctx.Result := 'Unknown build mode "' + Ctx.Params.Get('build_mode', '') +
-                      '"; one of: ' + ModeList;
+        Ctx.Result := FilePath + ' is open in the editor: save or revert it, close it ' +
+                      'with editor_close, then remove it.';
         Exit;
       end;
-      if Mode <> TProject(Proj).ActiveBuildMode then
-      begin
-        TProject(Proj).ActiveBuildMode := Mode;
-        Proj.Modified := True;
-        LazarusIDE.PrepareBuildTarget(True);
-      end;
-    end;
-    { first, so that an unknown widgetset changes nothing }
-    if Assigned(Ctx.Params) and (Ctx.Params.Find('widgetset') <> nil) then
-    begin
-      Ctx.Result := SetWidgetset(TProject(Proj), Ctx.Params.Get('widgetset', ''));
-      if Ctx.Result <> '' then
-      begin
-        Ctx.Error := True; Exit;
-      end;
-    end;
-    if Assigned(Ctx.Params) then
-    begin
-      if Ctx.Params.Find('target_os')      <> nil then
-        Proj.LazCompilerOptions.TargetOS            := Ctx.Params.Get('target_os',      '');
-      if Ctx.Params.Find('target_cpu')     <> nil then
-        Proj.LazCompilerOptions.TargetCPU           := Ctx.Params.Get('target_cpu',     '');
-      if Ctx.Params.Find('output_dir')     <> nil then
-        Proj.LazCompilerOptions.UnitOutputDirectory := Ctx.Params.Get('output_dir',     '');
-      if Ctx.Params.Find('custom_options') <> nil then
-        Proj.LazCompilerOptions.CustomOptions       := Ctx.Params.Get('custom_options', '');
-      if Ctx.Params.Find('debug_info') <> nil then
-      begin
-        Proj.LazCompilerOptions.GenerateDebugInfo := DbgGen;
-        if DbgGen then Proj.LazCompilerOptions.DebugInfoType := DbgType;
-      end;
-      ApplySwitches(Ctx.Params, Proj.LazCompilerOptions);
-      if Ctx.Params.Find('use_manifest') <> nil then
-        TProject(Proj).UseManifest := Ctx.Params.Get('use_manifest', False);
-      if Ctx.Params.Find('icon') <> nil then
-        ApplyIconParam(TProject(Proj), Ctx.Params.Get('icon', ''));
-    end;
-    LazarusIDE.DoSaveProject([]);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('project_file',   Proj.ProjectInfoFile);
-      Obj.Add('target_os',      Proj.LazCompilerOptions.TargetOS);
-      Obj.Add('target_cpu',     Proj.LazCompilerOptions.TargetCPU);
-      Obj.Add('output_dir',     Proj.LazCompilerOptions.UnitOutputDirectory);
-      Obj.Add('custom_options', Proj.LazCompilerOptions.CustomOptions);
-      Obj.Add('widgetset',          EffectiveWidgetset);
-      Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
-      Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
-      AddSwitches(Obj, Proj.LazCompilerOptions);
-      AddBuildModes(Obj, TProject(Proj));
-      AddResources(Obj, TProject(Proj));
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_add_file' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
-    end;
-    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
-    if not FileExists(FilePath) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'File not found: ' + FilePath; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    { The project also lists files only open in an editor.  TProject.AddFile
-      only warns about a file listed already and adds it a second time, so a
-      listed one is marked as part of the project instead, as the IDE's
-      "Add editor file to project" does. }
-    PF := nil;
-    for I := 0 to Proj.FileCount - 1 do
-      if SameFileName(Proj.Files[I].Filename, FilePath) then
-      begin
-        PF := Proj.Files[I]; Break;
-      end;
-    AlreadyIn := Assigned(PF) and PF.IsPartOfProject;
-    if not AlreadyIn then
-    begin
-      if Assigned(PF) then
-        PF.IsPartOfProject := True
-      else
-      begin
-        PF := Proj.CreateProjectFile(FilePath);
-        Proj.AddFile(PF, False);
-        PF.IsPartOfProject := True;   { else it is listed but not part of the project }
-      end;
+      Proj.RemoveUnit(J);
       LazarusIDE.DoSaveProject([]);
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('file',    FilePath);
-      Obj.Add('project', Proj.ProjectInfoFile);
-      if AlreadyIn then Obj.Add('already_in_project', True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_remove_file' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
-    end;
-    FilePath := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    J := -1;
-    for I := 0 to Proj.FileCount - 1 do
-      if SameFileName(Proj.Files[I].Filename, FilePath) then
-      begin
-        J := I;
-        Break;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('removed', True);
+        Obj.Add('file',    FilePath);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
       end;
-    { the list also has files only open in an editor }
-    if (J < 0) or not Proj.Files[J].IsPartOfProject then
-    begin
-      Ctx.Error := True; Ctx.Result := 'File not in project: ' + FilePath; Exit;
     end;
-    { RemoveUnit frees the file's unit info, which an open editor still uses }
-    if Assigned(SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath)) then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := FilePath + ' is open in the editor: save or revert it, close it ' +
-                    'with editor_close, then remove it.';
-      Exit;
-    end;
-    Proj.RemoveUnit(J);
-    LazarusIDE.DoSaveProject([]);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('removed', True);
-      Obj.Add('file',    FilePath);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'form_create' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('unit_name', '') = '') then
+    'form_create':
     begin
-      Ctx.Error := True; Ctx.Result := 'unit_name required'; Exit;
-    end;
-    NewName  := Ctx.Params.Get('unit_name', '');
-    FilePath := Ctx.Params.Get('directory', '');
-    InPkg := (Trim(Ctx.Params.Get('package_name', '')) <> '') or
-             (Trim(Ctx.Params.Get('lpk_path', '')) <> '');
-    if InPkg then
-    begin
-      if not TargetPackage(Ctx.Params, TargetPkg, PkgErr) then
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('unit_name', '') = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'unit_name required'; Exit;
+      end;
+      NewName  := Ctx.Params.Get('unit_name', '');
+      FilePath := Ctx.Params.Get('directory', '');
+      InPkg := (Trim(Ctx.Params.Get('package_name', '')) <> '') or
+               (Trim(Ctx.Params.Get('lpk_path', '')) <> '');
+      if InPkg then
+      begin
+        if not TargetPackage(Ctx.Params, TargetPkg, PkgErr) then
+        begin
+          Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+        end;
+        if FilePath = '' then FilePath := TargetPkg.Directory;
+      end;
+      if FilePath = '' then
+      begin
+        Proj := LazarusIDE.ActiveProject;
+        if Assigned(Proj) then
+          FilePath := ExtractFilePath(Proj.ProjectInfoFile)
+        else
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'directory required when no project is open';
+          Exit;
+        end;
+      end;
+      FilePath := IncludeTrailingPathDelimiter(FilePath) + NewName + '.pas';
+      if not McpCheckWritable(FilePath, PkgErr) then
       begin
         Ctx.Error := True; Ctx.Result := PkgErr; Exit;
       end;
-      if FilePath = '' then FilePath := TargetPkg.Directory;
-    end;
-    if FilePath = '' then
-    begin
-      Proj := LazarusIDE.ActiveProject;
-      if Assigned(Proj) then
-        FilePath := ExtractFilePath(Proj.ProjectInfoFile)
+      Kind := LowerCase(Ctx.Params.Get('kind', 'form'));
+      if Kind = 'form' then
+        Desc := FileDescriptorForm
+      else if Kind = 'datamodule' then
+        Desc := FileDescriptorDatamodule
+      else if Kind = 'frame' then
+        Desc := ProjectFileDescriptors.FindByName(FileDescNameFrame)
       else
+        Desc := nil;
+      if Desc = nil then
       begin
         Ctx.Error  := True;
-        Ctx.Result := 'directory required when no project is open';
+        Ctx.Result := 'kind must be form, datamodule or frame';
         Exit;
       end;
-    end;
-    FilePath := IncludeTrailingPathDelimiter(FilePath) + NewName + '.pas';
-    if not McpCheckWritable(FilePath, PkgErr) then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
-    end;
-    Kind := LowerCase(Ctx.Params.Get('kind', 'form'));
-    if Kind = 'form' then
-      Desc := FileDescriptorForm
-    else if Kind = 'datamodule' then
-      Desc := FileDescriptorDatamodule
-    else if Kind = 'frame' then
-      Desc := ProjectFileDescriptors.FindByName(FileDescNameFrame)
-    else
-      Desc := nil;
-    if Desc = nil then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'kind must be form, datamodule or frame';
-      Exit;
-    end;
-    { nfCreateDefaultSrc: without it NewFile leaves the unit empty and the
-      designer root nameless (class "T") }
-    if InPkg then NewFlags := [nfCreateDefaultSrc, nfOpenInEditor, nfSave]
-    else NewFlags := [nfCreateDefaultSrc, nfIsPartOfProject, nfOpenInEditor, nfSave];
-    if LazarusIDE.DoNewEditorFile(Desc, FilePath, '', NewFlags) <> mrOK then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'Could not create ' + FilePath;
-      Exit;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('kind',      Kind);
-      Obj.Add('unit_file', FilePath);
-      Obj.Add('form_file', ChangeFileExt(FilePath, '.lfm'));
-      if InPkg then
+      { nfCreateDefaultSrc: without it NewFile leaves the unit empty and the
+        designer root nameless (class "T") }
+      if InPkg then NewFlags := [nfCreateDefaultSrc, nfOpenInEditor, nfSave]
+      else NewFlags := [nfCreateDefaultSrc, nfIsPartOfProject, nfOpenInEditor, nfSave];
+      if LazarusIDE.DoNewEditorFile(Desc, FilePath, '', NewFlags) <> mrOK then
       begin
-        { the unit is not part of the active project; register it in the package }
-        AddParams := TJSONObject.Create;
-        try
-          AddParams.Add('file', FilePath);
-          if Ctx.Params.Get('lpk_path', '') <> '' then
-            AddParams.Add('lpk_path', Ctx.Params.Get('lpk_path', ''))
-          else
-            AddParams.Add('package_name', Ctx.Params.Get('package_name', ''));
-          PkgRes := PackageAddFile(AddParams, PkgErr);
-        finally
-          AddParams.Free;
-        end;
-        if PkgErr <> '' then
-          Obj.Add('package_error', PkgErr)
-        else
-          Obj.Add('package', GetJSON(PkgRes));
+        Ctx.Error  := True;
+        Ctx.Result := 'Could not create ' + FilePath;
+        Exit;
       end;
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_list_templates' then
-  begin
-    Result := True;
-    VisibleOnly := True;
-    if Assigned(Ctx.Params) then
-      VisibleOnly := Ctx.Params.Get('visible_only', True);
-    Arr := TJSONArray.Create;
-    try
-      for I := 0 to ProjectDescriptors.Count - 1 do
-      begin
-        Descriptor := ProjectDescriptors.Items[I];
-        if VisibleOnly and not Descriptor.VisibleInNewDialog then
-          Continue;
-        DescObj := TJSONObject.Create;
-        DescObj.Add('name',           Descriptor.Name);
-        DescObj.Add('localized_name', Descriptor.GetLocalizedName);
-        DescObj.Add('description',    Descriptor.GetLocalizedDescription);
-        DescObj.Add('interactive',    IsDescriptorInteractive(Descriptor));
-        Arr.Add(DescObj);
-      end;
-      Ctx.Result := Arr.AsJSON;
-    finally
-      Arr.Free;
-    end;
-  end
-
-  else if Name = 'project_create' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('project_dir', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'project_dir required'; Exit;
-    end;
-    if Ctx.Params.Get('project_name', '') = '' then
-    begin
-      Ctx.Error := True; Ctx.Result := 'project_name required'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('project_dir',  '');
-    NewName  := Ctx.Params.Get('project_name', '');
-    ProjType := Ctx.Params.Get('project_type', 'Application');
-    Descriptor := ProjectDescriptors.FindByName(ProjType);
-    if not Assigned(Descriptor) then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'Unknown project_type "' + ProjType +
-        '". Call project_list_templates to see valid names.';
-      Exit;
-    end;
-    if IsDescriptorInteractive(Descriptor) then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'Template "' + Descriptor.Name + '" requires user input ' +
-        'before the project is created (its DoInitDescriptor shows a dialog). ' +
-        'Use a template where interactive=false in project_list_templates.';
-      Exit;
-    end;
-    if not IsValidIdent(NewName) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'project_name must be a Pascal identifier: ' + NewName; Exit;
-    end;
-    { new files only: the IDE would ask before overwriting }
-    FilePath := IncludeTrailingPathDelimiter(CleanAndExpandDirectory(FilePath));
-    if DirectoryExists(FilePath) then
-    begin
-      Existing := FindAllFiles(FilePath, AllFilesMask, False);
+      Obj := TJSONObject.Create;
       try
-        if Existing.Count > 0 then
+        Obj.Add('kind',      Kind);
+        Obj.Add('unit_file', FilePath);
+        Obj.Add('form_file', ChangeFileExt(FilePath, '.lfm'));
+        if InPkg then
         begin
-          Ctx.Error := True;
-          Ctx.Result := 'project_dir is not empty: ' + FilePath; Exit;
+          { the unit is not part of the active project; register it in the package }
+          AddParams := TJSONObject.Create;
+          try
+            AddParams.Add('file', FilePath);
+            if Ctx.Params.Get('lpk_path', '') <> '' then
+              AddParams.Add('lpk_path', Ctx.Params.Get('lpk_path', ''))
+            else
+              AddParams.Add('package_name', Ctx.Params.Get('package_name', ''));
+            PkgRes := PackageAddFile(AddParams, PkgErr);
+          finally
+            AddParams.Free;
+          end;
+          if PkgErr <> '' then
+            Obj.Add('package_error', PkgErr)
+          else
+            Obj.Add('package', GetJSON(PkgRes));
         end;
+        Ctx.Result := Obj.AsJSON;
       finally
-        Existing.Free;
+        Obj.Free;
       end;
     end;
-    { DoNewProject closes the current project first, asking about unsaved
-      changes in a dialog that would block this call }
-    Ctx.Result := ProjectCloseRefusal('creating a project');
-    if Ctx.Result <> '' then
-    begin
-      Ctx.Error := True; Exit;
-    end;
-    ForceDirectories(FilePath);
-    if LazarusIDE.DoNewProject(Descriptor) <> mrOK then
-    begin
-      Ctx.Error := True; Ctx.Result := 'DoNewProject failed or was cancelled'; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    { A new project is unsaved (virtual).  If closing the old one was answered
-      otherwise, it can still be active here, and saving it would save the
-      user's project under the new name. }
-    if (Proj = nil) or not Proj.IsVirtual then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'No new project was created; the current project is unchanged.';
-      Exit;
-    end;
-    Proj.Title := NewName;
-    { A new project's files are unsaved: saving asks for each name in a Save
-      As dialog.  Answered here, through the IDE's dialog class, with
-      project_dir and the names the IDE suggests (project_name for the .lpi). }
-    GMcpSaveDir         := FilePath;
-    GMcpSaveProjectName := NewName;
-    OldSaveDialogClass  := IDESaveDialogClass;
-    IDESaveDialogClass  := TMcpSaveDialog;
-    try
-      SaveRes := LazarusIDE.DoSaveProject([]);
-    finally
-      IDESaveDialogClass := OldSaveDialogClass;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    if (SaveRes <> mrOK) or (Proj = nil) or Proj.IsVirtual then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'The project was created but not saved; it is open in the IDE as an ' +
-                    'unsaved project.';
-      Exit;
-    end;
-    DismissProjectWizard(Proj.ProjectInfoFile);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('project_file', Proj.ProjectInfoFile);
-      Obj.Add('project_type', Descriptor.Name);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'project_clean' then
-  begin
-    Result := True;
-    DoProjectClean(Ctx);
-  end
+    'project_list_templates':
+    begin
+      Result := True;
+      VisibleOnly := True;
+      if Assigned(Ctx.Params) then
+        VisibleOnly := Ctx.Params.Get('visible_only', True);
+      Arr := TJSONArray.Create;
+      try
+        for I := 0 to ProjectDescriptors.Count - 1 do
+        begin
+          Descriptor := ProjectDescriptors.Items[I];
+          if VisibleOnly and not Descriptor.VisibleInNewDialog then
+            Continue;
+          DescObj := TJSONObject.Create;
+          DescObj.Add('name',           Descriptor.Name);
+          DescObj.Add('localized_name', Descriptor.GetLocalizedName);
+          DescObj.Add('description',    Descriptor.GetLocalizedDescription);
+          DescObj.Add('interactive',    IsDescriptorInteractive(Descriptor));
+          Arr.Add(DescObj);
+        end;
+        Ctx.Result := Arr.AsJSON;
+      finally
+        Arr.Free;
+      end;
+    end;
 
-  else if Name = 'project_list_directory' then
-  begin
-    Result := True;
-    DoListDirectory(Ctx);
-  end
+    'project_create':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('project_dir', '') = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'project_dir required'; Exit;
+      end;
+      if Ctx.Params.Get('project_name', '') = '' then
+      begin
+        Ctx.Error := True; Ctx.Result := 'project_name required'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('project_dir',  '');
+      NewName  := Ctx.Params.Get('project_name', '');
+      ProjType := Ctx.Params.Get('project_type', 'Application');
+      Descriptor := ProjectDescriptors.FindByName(ProjType);
+      if not Assigned(Descriptor) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Unknown project_type "' + ProjType +
+          '". Call project_list_templates to see valid names.';
+        Exit;
+      end;
+      if IsDescriptorInteractive(Descriptor) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Template "' + Descriptor.Name + '" requires user input ' +
+          'before the project is created (its DoInitDescriptor shows a dialog). ' +
+          'Use a template where interactive=false in project_list_templates.';
+        Exit;
+      end;
+      if not IsValidIdent(NewName) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'project_name must be a Pascal identifier: ' + NewName; Exit;
+      end;
+      { new files only: the IDE would ask before overwriting }
+      FilePath := IncludeTrailingPathDelimiter(CleanAndExpandDirectory(FilePath));
+      if DirectoryExists(FilePath) then
+      begin
+        Existing := FindAllFiles(FilePath, AllFilesMask, False);
+        try
+          if Existing.Count > 0 then
+          begin
+            Ctx.Error := True;
+            Ctx.Result := 'project_dir is not empty: ' + FilePath; Exit;
+          end;
+        finally
+          Existing.Free;
+        end;
+      end;
+      { DoNewProject closes the current project first, asking about unsaved
+        changes in a dialog that would block this call }
+      Ctx.Result := ProjectCloseRefusal('creating a project');
+      if Ctx.Result <> '' then
+      begin
+        Ctx.Error := True; Exit;
+      end;
+      ForceDirectories(FilePath);
+      if LazarusIDE.DoNewProject(Descriptor) <> mrOK then
+      begin
+        Ctx.Error := True; Ctx.Result := 'DoNewProject failed or was cancelled'; Exit;
+      end;
+      Proj := LazarusIDE.ActiveProject;
+      { A new project is unsaved (virtual).  If closing the old one was answered
+        otherwise, it can still be active here, and saving it would save the
+        user's project under the new name. }
+      if (Proj = nil) or not Proj.IsVirtual then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'No new project was created; the current project is unchanged.';
+        Exit;
+      end;
+      Proj.Title := NewName;
+      { A new project's files are unsaved: saving asks for each name in a Save
+        As dialog.  Answered here, through the IDE's dialog class, with
+        project_dir and the names the IDE suggests (project_name for the .lpi). }
+      GMcpSaveDir         := FilePath;
+      GMcpSaveProjectName := NewName;
+      OldSaveDialogClass  := IDESaveDialogClass;
+      IDESaveDialogClass  := TMcpSaveDialog;
+      try
+        SaveRes := LazarusIDE.DoSaveProject([]);
+      finally
+        IDESaveDialogClass := OldSaveDialogClass;
+      end;
+      Proj := LazarusIDE.ActiveProject;
+      if (SaveRes <> mrOK) or (Proj = nil) or Proj.IsVirtual then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'The project was created but not saved; it is open in the IDE as an ' +
+                      'unsaved project.';
+        Exit;
+      end;
+      DismissProjectWizard(Proj.ProjectInfoFile);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('project_file', Proj.ProjectInfoFile);
+        Obj.Add('project_type', Descriptor.Name);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
 
-  else if Name = 'ide_answer_dialog' then
-  begin
-    Result := True;
-    DoAnswerDialog(Ctx);
+    'project_clean':
+    begin
+      Result := True;
+      DoProjectClean(Ctx);
+    end;
+
+    'project_list_directory':
+    begin
+      Result := True;
+      DoListDirectory(Ctx);
+    end;
+
+    'ide_answer_dialog':
+    begin
+      Result := True;
+      DoAnswerDialog(Ctx);
+    end;
   end;
 end;
 
