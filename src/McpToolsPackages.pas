@@ -40,7 +40,7 @@ function PackageInfoJSON(const PkgName: string; WithFiles: Boolean;
 implementation
 
 uses
-  Classes, Contnrs,
+  Classes,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, PackageIntf,
   LazFileUtils, FileUtil,
   PackageDependencyIntf,
@@ -1649,10 +1649,7 @@ function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolea
 var
   PkgName  : string;
   PkgErr   : string;
-  IDEPkg   : TIDEPackage;
   FPList   : TFPList;
-  PkgList  : TObjectList;
-  PollCmd  : string;
   RefArr   : TJSONArray;
   Obj      : TJSONObject;
   Proj     : TLazProject;

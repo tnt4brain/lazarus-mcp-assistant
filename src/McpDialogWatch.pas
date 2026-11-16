@@ -29,7 +29,7 @@ uses
 procedure McpEnsureDialogWatch;
 procedure McpRemoveDialogWatch;
 
-{ The open dialogs as [{caption, text, buttons, source}]; any thread.  The
+{ The open dialogs as an array of objects (caption, text, buttons, source); any thread.  The
   caller frees the array.
 
   AWithForms adds the ordinary LCL forms that are modal right now ("Some files have
@@ -196,9 +196,9 @@ begin
       S := '';
       case AButtons[I].VType of
         vtAnsiString    : S := string(AButtons[I].VAnsiString);
-        vtUnicodeString : S := UnicodeString(AButtons[I].VUnicodeString);
+        vtUnicodeString : S := UTF8Encode(UnicodeString(AButtons[I].VUnicodeString));
         vtString        : S := string(AButtons[I].VString^);
-        vtWideString    : S := WideString(AButtons[I].VWideString);
+        vtWideString    : S := UTF8Encode(WideString(AButtons[I].VWideString));
         vtPChar         : S := string(AButtons[I].VPChar);
         vtChar          : S := AButtons[I].VChar;
       end;

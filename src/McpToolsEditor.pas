@@ -212,7 +212,6 @@ var
   PasName      : string;
   SyncNewX     : Integer;
   SyncNewY     : Integer;
-  SyncTopLine  : Integer;
   SyncDeclPt   : TPoint;
   SyncOldStr   : string;
   SyncNewName  : string;

@@ -55,7 +55,7 @@ implementation
 
 uses
   Controls, ComCtrls, ExtCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
-  LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEMsgIntf, IDEExternToolIntf,
+  LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEExternToolIntf,
   McpMarkdown, McpImageInfo, McpMessages;
 
 const

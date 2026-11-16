@@ -510,8 +510,8 @@ begin
   end;
 end;
 
-{ "{width=50% height=20}" right after an image: ' width="50%" height="20"'.  Classes (".float-left")
-  are taken and ignored.  Anything else leaves NextP = P: the braces stay text. }
+(* "{width=50% height=20}" right after an image: ' width="50%" height="20"'.  Classes (".float-left")
+  are taken and ignored.  Anything else leaves NextP = P: the braces stay text. *)
 function ParseImageSize(const S: string; P: Integer; out NextP: Integer): string;
 var
   E, I, V, Digits : Integer;
@@ -1262,7 +1262,7 @@ var
       if Result[X] in ['A'..'Z'] then Result[X] := Chr(Ord(Result[X]) + 32);
   end;
 
-  { GitLab's inline diff: {+ added +}, [+ added +], {- removed -}, [- removed -] }
+  (* GitLab's inline diff: {+ added +}, [+ added +], {- removed -}, [- removed -] *)
   function TryDiff: Boolean;
   var
     Sign, Close : Char;
@@ -1292,6 +1292,8 @@ begin
   if FDepth >= MD_MAX_DEPTH then
     Exit(StringReplace(MdEscape(S), HardBreak, '<br>', [rfReplaceAll]));
   Inc(FDepth);
+  Lo := '';
+  Failed := '';
   B := TStringBuilder.Create;
   try
     N := Length(S);
@@ -1373,7 +1375,7 @@ begin
               RefLinkAt(S, I + 1, Text, Url, Title, NextP)) then
           begin
             Tag := ImageHtml(Text, Url);
-            { {width=50%}: only on a real img, not on a placeholder }
+            (* {width=50%}: only on a real img, not on a placeholder *)
             Inner := ParseImageSize(S, NextP, K);
             if (Inner <> '') and (Copy(Tag, 1, 5) = '<img ') then
               Tag := Copy(Tag, 1, Length(Tag) - 1) + Inner + '>';

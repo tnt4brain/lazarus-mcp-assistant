@@ -15,8 +15,8 @@ interface
 uses
   fpjson;
 
-{ The Messages window's last compile as {errors, warnings} arrays of
-  {file, line, column, message}; warnings are capped. }
+{ The Messages window's last compile as an errors and a warnings array of
+  objects (file, line, column, message); warnings are capped. }
 procedure McpCompilerMessages(AErrors, AWarnings: TJSONArray);
 
 { The IDE-side compile of package_compile as its JSON answer (success, errors and so on; or use_lazbuild when the package is not loaded); AErr is set when it cannot be
@@ -27,7 +27,7 @@ implementation
 
 uses
   Classes, SysUtils,
-  LazIDEIntf, PackageIntf, MacroIntf, IDEMsgIntf, IDEExternToolIntf, SrcEditorIntf,
+  LazIDEIntf, PackageIntf, MacroIntf, IDEExternToolIntf, SrcEditorIntf,
   LazFileUtils, FileUtil, Controls, Forms,
   PackageDependencyIntf, PackageDefs, PackageSystem, PackageLinks,
   McpToolContext, McpToolsPackages, McpMessages;
@@ -503,7 +503,7 @@ end;
 { ── package_compile, IDE side ────────────────────────────────────────────── }
 
 { The IDE's own compile of a loaded package.  A package that is not loaded
-  gives {"use_lazbuild":true}: the caller then compiles the .lpk with
+  gives use_lazbuild=true: the caller then compiles the .lpk with
   lazbuild, which loads nothing into the IDE.  Editor files with unsaved
   changes are not saved (the IDE would write the user's buffers), so they are
   compiled as on disk and listed. }

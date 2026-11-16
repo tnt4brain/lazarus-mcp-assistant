@@ -27,7 +27,6 @@ uses
   Classes, SysUtils, Math, Forms, Controls, LazLogger,
   LazIDEIntf, LazFileUtils, SrcEditorIntf, ProjectIntf, CompOptsIntf,
   BaseDebugManager,
-  LazDebuggerIntfBaseTypes,  { TDBGState }
   LazDebuggerIntf,           { TDebuggerDataState (ddsValid, ddsRequested, …) }
   DbgIntfDebuggerBase,       { TDBGType, TDBGEvaluateResultCallback }
   Debugger,                  { TIDEBreakPoint, TIDEBreakPoints }
@@ -35,6 +34,7 @@ uses
   IdeDebuggerWatchResult,    { TWatchResultData }
   IdeDebuggerWatchValueIntf, { DefaultWatchDisplayFormat }
   IdeDebuggerWatchResPrinter,{ TWatchResultPrinter }
+  LazDebuggerIntfBaseTypes,  { TDBGState; last, so that it wins over the deprecated copies above }
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
   TypInfo,
   fpjson,

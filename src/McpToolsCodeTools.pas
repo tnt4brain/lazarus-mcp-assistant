@@ -1320,7 +1320,6 @@ var
   FilePath   : string;
   Symbol     : string;
   NewName    : string;
-  Col        : Integer;
   Line       : Integer;
   CodeBuf    : TCodeBuffer;
   NewCode    : TCodeBuffer;

@@ -14,7 +14,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, StrUtils, fpjson, jsonparser, contnrs,
+  Classes, SysUtils, StrUtils, fpjson, jsonparser,
   LazIDEIntf, SrcEditorIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeCache, CodeTree, AVL_Tree, BasicCodeTools,
   CustomCodeTool, ExtractProcTool, PascalReaderTool,
@@ -599,7 +599,6 @@ var
   Code    : TCodeBuffer;
   MainU, ImplU : TStrings;
   AdjAll, AdjIntf : TFPList;
-  E       : TFPList;
   Obj, O  : TJSONObject;
   Arr, Arr2 : TJSONArray;
   FileArg, Ext : string;
