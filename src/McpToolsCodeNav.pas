@@ -1384,12 +1384,15 @@ begin
     if not LazarusIDE.BeginCodeTools then
       Exit(Fail(Ctx, 'The IDE is busy (building, debugging or another code tool); try again'));
   CodeToolBoss.ClearError;
-  if Name = 'code_find_descendants' then DoDescendants(Ctx)
-  else if Name = 'code_find_overrides' then DoOverrides(Ctx)
-  else if Name = 'code_unit_dependencies' then DoDependencies(Ctx)
-  else if Name = 'code_find_unused' then DoUnused(Ctx)
-  else if Name = 'package_move_unit' then DoMoveUnit(Ctx)
-  else DoExtract(Ctx);
+  case Name of
+    'code_find_descendants':  DoDescendants(Ctx);
+    'code_find_overrides':    DoOverrides(Ctx);
+    'code_unit_dependencies': DoDependencies(Ctx);
+    'code_find_unused':       DoUnused(Ctx);
+    'package_move_unit':      DoMoveUnit(Ctx);
+  else
+    DoExtract(Ctx);
+  end;
 end;
 
 procedure RegisterNavSchemas(Tools: TJSONArray);

@@ -608,46 +608,54 @@ var
 begin
   Result := True;
   Err := '';
-  if Name = 'package_get_info' then
-  begin
-    if not HasTarget(Ctx.Params) then
-      Err := 'package_name or lpk_path required'
-    else if Ctx.Params.Get('lpk_path', '') <> '' then
+  case Name of
+    'package_get_info':
     begin
-      if TargetPackage(Ctx.Params, Pkg, Err, False) then
-        Ctx.Result := PackageInfoJSON(Pkg.Name, Ctx.Params.Get('files', False), Pkg);
-    end
-    else
-      Ctx.Result := PackageInfoJSON(Ctx.Params.Get('package_name', ''),
-                                    Ctx.Params.Get('files', False));
-  end
-  else if Name = 'package_list' then
-    Ctx.Result := PackageList(Ctx.Params)
-  else if Name = 'package_open' then
-  begin
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageOpen(Ctx.Params, Err);
-  end
-  else if Name = 'package_create' then
-    Ctx.Result := PackageCreate(Ctx.Params, Err)
-  else if Name = 'package_get_settings' then
-  begin
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageGetSettings(Ctx.Params, Err);
-  end
-  else if Name = 'package_set_settings' then
-  begin
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageSetSettings(Ctx.Params, Err);
-  end
-  else if Name = 'package_compile_ide' then
-  begin
-    { internal: the main-thread half of package_compile }
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageCompileIde(Ctx.Params, Err);
-  end
+      if not HasTarget(Ctx.Params) then
+        Err := 'package_name or lpk_path required'
+      else if Ctx.Params.Get('lpk_path', '') <> '' then
+      begin
+        if TargetPackage(Ctx.Params, Pkg, Err, False) then
+          Ctx.Result := PackageInfoJSON(Pkg.Name, Ctx.Params.Get('files', False), Pkg);
+      end
+      else
+        Ctx.Result := PackageInfoJSON(Ctx.Params.Get('package_name', ''),
+                                      Ctx.Params.Get('files', False));
+    end;
+
+    'package_list':
+      Ctx.Result := PackageList(Ctx.Params);
+
+    'package_open':
+    begin
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageOpen(Ctx.Params, Err);
+    end;
+
+    'package_create':
+      Ctx.Result := PackageCreate(Ctx.Params, Err);
+
+    'package_get_settings':
+    begin
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageGetSettings(Ctx.Params, Err);
+    end;
+
+    'package_set_settings':
+    begin
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageSetSettings(Ctx.Params, Err);
+    end;
+
+    'package_compile_ide':
+    begin
+      { internal: the main-thread half of package_compile }
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageCompileIde(Ctx.Params, Err);
+    end;
   else
     Result := False;
+  end;
   PName := Err;
   if Result and (PName <> '') then
   begin

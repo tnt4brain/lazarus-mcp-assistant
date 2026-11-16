@@ -1475,211 +1475,213 @@ var
 begin
   Result := False;
 
-  if Name = 'debug_get_state' then
-  begin
-    Result := True;
-    GSyncHelper.ReadState;   { already on main thread }
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('state',  DbgStateStr(GSyncHelper.OutState));
-      Obj.Add('file',   GSyncHelper.OutFileName);
-      Obj.Add('line',   GSyncHelper.OutLine);
-      Obj.Add('reason', '');
-      if FindExceptionDialog <> nil then
-        Obj.Add('waiting_for', 'The IDE shows the exception dialog of a session ' +
-          'the user started; the program is stopped at the exception. ' +
-          'debug_get_exception shows it; debug_pause breaks there and takes ' +
-          'the session over (as clicking Break would).');
-      Lease := McpLeaseJSON;
-      if Assigned(Lease) then
-        Obj.Add('lease', Lease);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'debug_set_breakpoint' then
-  begin
-    Result := True;
-    if not Assigned(DebugBoss) then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
-    if not ReadBreakpointArgs(Ctx.Params, Sym, Err) then
-    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
-    if Sym <> '' then
+  case Name of
+    'debug_get_state':
     begin
-      Ctx.Error := True;
-      Ctx.Result := 'address must be a number ($401000, 0x401000)';
-      Exit;
-    end;
-    GSyncHelper.AddBreakpoint;   { already on main thread }
-    if not Assigned(GSyncHelper.OutBp) then
-    begin Ctx.Error := True; Ctx.Result := 'Failed to add breakpoint'; Exit; end;
-    Obj := BreakpointJSON(GSyncHelper.OutBp);
-    try
-      Obj.Add('created', GSyncHelper.OutBpCreated);
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
-
-  else if Name = 'debug_remove_breakpoint' then
-  begin
-    Result := True;
-    if not ReadBreakpointArgs(Ctx.Params, Sym, Err) then
-    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
-    if Sym <> '' then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'address must be a number; debug_list_breakpoints shows it';
-      Exit;
-    end;
-    GSyncHelper.RemoveBreakpoint;   { already on main thread }
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('removed', GSyncHelper.OutBpFound);
-      if not GSyncHelper.OutBpFound then
-        Obj.Add('reason', 'not found');
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
-
-  else if Name = 'debug_list_breakpoints' then
-  begin
-    Result := True;
-    Arr := TJSONArray.Create;
-    try
-      if Assigned(DebugBoss) and Assigned(DebugBoss.BreakPoints) then
-        for I := 0 to DebugBoss.BreakPoints.Count - 1 do
-          Arr.Add(BreakpointJSON(DebugBoss.BreakPoints.Items[I]));
-      Ctx.Result := Arr.AsJSON;
-    finally Arr.Free; end;
-  end
-
-  else if Name = 'debug_stop' then
-  begin
-    Result := True;
-    if Assigned(DebugBoss) then
-    begin
-      McpMarkDebugDriven;        { no "Execution stopped" dialog }
-      if FindExceptionDialog <> nil then
-      begin
-        { inside the exception dialog: Break first, stop once it has closed }
-        GSyncHelper.BreakAtExceptionDialog;
-        Application.QueueAsyncCall(@GSyncHelper.StopLater, 0);
-      end
-      else
-      begin
-        if Assigned(Ctx.Params) and Ctx.Params.Get('detach', False) then
-          DebugBoss.Detach          { leaves an attached program running }
-        else
-        begin
-          DebugBoss.DoStopProject;  { non-blocking, already on main thread }
-          {$IFDEF UNIX}
-          { FpDebug lets an attached process go on when its session is stopped }
-          if GAttachedPid > 0 then fpkill(GAttachedPid, SIGKILL);
-          {$ENDIF}
-        end;
-        GAttachedPid := 0;
+      Result := True;
+      GSyncHelper.ReadState;   { already on main thread }
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('state',  DbgStateStr(GSyncHelper.OutState));
+        Obj.Add('file',   GSyncHelper.OutFileName);
+        Obj.Add('line',   GSyncHelper.OutLine);
+        Obj.Add('reason', '');
+        if FindExceptionDialog <> nil then
+          Obj.Add('waiting_for', 'The IDE shows the exception dialog of a session ' +
+            'the user started; the program is stopped at the exception. ' +
+            'debug_get_exception shows it; debug_pause breaks there and takes ' +
+            'the session over (as clicking Break would).');
+        Lease := McpLeaseJSON;
+        if Assigned(Lease) then
+          Obj.Add('lease', Lease);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
       end;
     end;
-    Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
-  end
 
-  else if Name = 'debug_set_variable' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('name', '') = '') then
-    begin Ctx.Error := True; Ctx.Result := 'name required'; Exit; end;
-    if not Assigned(DebugBoss) or (DebugBoss.State <> dsPause) then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    McpMarkDebugDriven;  { a failed modify reports via a feedback dialog }
-    Obj := TJSONObject.Create;
-    try
-      if DebugBoss.Modify(Ctx.Params.Get('name', ''),
-                          Ctx.Params.Get('value', '')) then
-      begin
-        Obj.Add('modified', True);
-        Obj.Add('name',  Ctx.Params.Get('name', ''));
-        Obj.Add('value', Ctx.Params.Get('value', ''));
-      end
-      else
+    'debug_set_breakpoint':
+    begin
+      Result := True;
+      if not Assigned(DebugBoss) then
+      begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
+      if not ReadBreakpointArgs(Ctx.Params, Sym, Err) then
+      begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+      if Sym <> '' then
       begin
         Ctx.Error := True;
-        Obj.Add('error',
-          'Modify rejected — dcModify not in Commands or debugger not ready');
+        Ctx.Result := 'address must be a number ($401000, 0x401000)';
+        Exit;
       end;
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
+      GSyncHelper.AddBreakpoint;   { already on main thread }
+      if not Assigned(GSyncHelper.OutBp) then
+      begin Ctx.Error := True; Ctx.Result := 'Failed to add breakpoint'; Exit; end;
+      Obj := BreakpointJSON(GSyncHelper.OutBp);
+      try
+        Obj.Add('created', GSyncHelper.OutBpCreated);
+        Ctx.Result := Obj.AsJSON;
+      finally Obj.Free; end;
+    end;
 
-  else if Name = 'debug_add_watch' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('expression', '')) = '') then
-    begin Ctx.Error := True; Ctx.Result := 'expression required'; Exit; end;
-    if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
-    Watch := DebugBoss.Watches.CurrentWatches.Find(Trim(Ctx.Params.Get('expression', '')));
-    Obj := TJSONObject.Create;
-    try
-      if Assigned(Watch) then
-        Obj.Add('status', 'exists')
+    'debug_remove_breakpoint':
+    begin
+      Result := True;
+      if not ReadBreakpointArgs(Ctx.Params, Sym, Err) then
+      begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+      if Sym <> '' then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'address must be a number; debug_list_breakpoints shows it';
+        Exit;
+      end;
+      GSyncHelper.RemoveBreakpoint;   { already on main thread }
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('removed', GSyncHelper.OutBpFound);
+        if not GSyncHelper.OutBpFound then
+          Obj.Add('reason', 'not found');
+        Ctx.Result := Obj.AsJSON;
+      finally Obj.Free; end;
+    end;
+
+    'debug_list_breakpoints':
+    begin
+      Result := True;
+      Arr := TJSONArray.Create;
+      try
+        if Assigned(DebugBoss) and Assigned(DebugBoss.BreakPoints) then
+          for I := 0 to DebugBoss.BreakPoints.Count - 1 do
+            Arr.Add(BreakpointJSON(DebugBoss.BreakPoints.Items[I]));
+        Ctx.Result := Arr.AsJSON;
+      finally Arr.Free; end;
+    end;
+
+    'debug_stop':
+    begin
+      Result := True;
+      if Assigned(DebugBoss) then
+      begin
+        McpMarkDebugDriven;        { no "Execution stopped" dialog }
+        if FindExceptionDialog <> nil then
+        begin
+          { inside the exception dialog: Break first, stop once it has closed }
+          GSyncHelper.BreakAtExceptionDialog;
+          Application.QueueAsyncCall(@GSyncHelper.StopLater, 0);
+        end
+        else
+        begin
+          if Assigned(Ctx.Params) and Ctx.Params.Get('detach', False) then
+            DebugBoss.Detach          { leaves an attached program running }
+          else
+          begin
+            DebugBoss.DoStopProject;  { non-blocking, already on main thread }
+            {$IFDEF UNIX}
+            { FpDebug lets an attached process go on when its session is stopped }
+            if GAttachedPid > 0 then fpkill(GAttachedPid, SIGKILL);
+            {$ENDIF}
+          end;
+          GAttachedPid := 0;
+        end;
+      end;
+      Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
+    end;
+
+    'debug_set_variable':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('name', '') = '') then
+      begin Ctx.Error := True; Ctx.Result := 'name required'; Exit; end;
+      if not Assigned(DebugBoss) or (DebugBoss.State <> dsPause) then
+      begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+      McpMarkDebugDriven;  { a failed modify reports via a feedback dialog }
+      Obj := TJSONObject.Create;
+      try
+        if DebugBoss.Modify(Ctx.Params.Get('name', ''),
+                            Ctx.Params.Get('value', '')) then
+        begin
+          Obj.Add('modified', True);
+          Obj.Add('name',  Ctx.Params.Get('name', ''));
+          Obj.Add('value', Ctx.Params.Get('value', ''));
+        end
+        else
+        begin
+          Ctx.Error := True;
+          Obj.Add('error',
+            'Modify rejected — dcModify not in Commands or debugger not ready');
+        end;
+        Ctx.Result := Obj.AsJSON;
+      finally Obj.Free; end;
+    end;
+
+    'debug_add_watch':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('expression', '')) = '') then
+      begin Ctx.Error := True; Ctx.Result := 'expression required'; Exit; end;
+      if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
+      begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
+      Watch := DebugBoss.Watches.CurrentWatches.Find(Trim(Ctx.Params.Get('expression', '')));
+      Obj := TJSONObject.Create;
+      try
+        if Assigned(Watch) then
+          Obj.Add('status', 'exists')
+        else
+        begin
+          Watch := DebugBoss.Watches.CurrentWatches.Add(Trim(Ctx.Params.Get('expression', '')));
+          Obj.Add('status', 'added');
+        end;
+        Watch.Enabled := True;
+        Obj.Add('expression', Watch.Expression);
+        Obj.Add('count', DebugBoss.Watches.CurrentWatches.Count);
+        Ctx.Result := Obj.AsJSON;
+      finally Obj.Free; end;
+    end;
+
+    'debug_remove_watch':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('expression', '')) = '') then
+      begin Ctx.Error := True; Ctx.Result := 'expression required (or "*" for all)'; Exit; end;
+      if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
+      begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
+      I := 0;
+      if Trim(Ctx.Params.Get('expression', '')) = '*' then
+      begin
+        I := DebugBoss.Watches.CurrentWatches.Count;
+        DebugBoss.Watches.CurrentWatches.Clear;
+      end
       else
       begin
-        Watch := DebugBoss.Watches.CurrentWatches.Add(Trim(Ctx.Params.Get('expression', '')));
-        Obj.Add('status', 'added');
+        Watch := DebugBoss.Watches.CurrentWatches.Find(Trim(Ctx.Params.Get('expression', '')));
+        if Assigned(Watch) then
+        begin
+          Watch.Free;
+          I := 1;
+        end;
       end;
-      Watch.Enabled := True;
-      Obj.Add('expression', Watch.Expression);
-      Obj.Add('count', DebugBoss.Watches.CurrentWatches.Count);
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
-
-  else if Name = 'debug_remove_watch' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('expression', '')) = '') then
-    begin Ctx.Error := True; Ctx.Result := 'expression required (or "*" for all)'; Exit; end;
-    if not Assigned(DebugBoss) or not Assigned(DebugBoss.Watches) then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger not available'; Exit; end;
-    I := 0;
-    if Trim(Ctx.Params.Get('expression', '')) = '*' then
-    begin
-      I := DebugBoss.Watches.CurrentWatches.Count;
-      DebugBoss.Watches.CurrentWatches.Clear;
-    end
-    else
-    begin
-      Watch := DebugBoss.Watches.CurrentWatches.Find(Trim(Ctx.Params.Get('expression', '')));
-      if Assigned(Watch) then
-      begin
-        Watch.Free;
-        I := 1;
-      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('removed', I);
+        Obj.Add('count', DebugBoss.Watches.CurrentWatches.Count);
+        Ctx.Result := Obj.AsJSON;
+      finally Obj.Free; end;
     end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('removed', I);
-      Obj.Add('count', DebugBoss.Watches.CurrentWatches.Count);
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
 
-  else if Name = 'debug_get_output' then
-  begin
-    Result := True;
-    I := 200;
-    if Assigned(Ctx.Params) then
-      I := Ctx.Params.Get('max_lines', 200);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('console',  McpGetConsoleOutput(I));
-      Obj.Add('debugger', McpGetDebugOutput(I));
-      if Assigned(Ctx.Params) and Ctx.Params.Get('clear', False) then
-        McpClearDebugOutput;
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
+    'debug_get_output':
+    begin
+      Result := True;
+      I := 200;
+      if Assigned(Ctx.Params) then
+        I := Ctx.Params.Get('max_lines', 200);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('console',  McpGetConsoleOutput(I));
+        Obj.Add('debugger', McpGetDebugOutput(I));
+        if Assigned(Ctx.Params) and Ctx.Params.Get('clear', False) then
+          McpClearDebugOutput;
+        Ctx.Result := Obj.AsJSON;
+      finally Obj.Free; end;
+    end;
   end;
 
 end;
@@ -1999,210 +2001,7 @@ begin
   FinalLine := 0;
   Obj       := nil;
 
-  if Name = 'debug_run' then
-  begin
-    Result    := True;
-    TimeoutMs := 30000;
-    if Assigned(Ctx.Params) then
-      TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
-    TThread.Synchronize(nil, @GSyncHelper.Preflight);
-    if GSyncHelper.OutPreflight <> '' then
-    begin
-      Ctx.Error := True; Ctx.Result := GSyncHelper.OutPreflight; Exit;
-    end;
-    EndsBefore := GMcpSessionEnds;
-    DoIssueCmd(0);
-    S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
-    Finish('run');
-  end
-
-  else if Name = 'debug_pause' then
-  begin
-    Result    := True;
-    TimeoutMs := 5000;
-    DoIssueCmd(1);
-    S := PollForPause(TimeoutMs, FinalFile, FinalLine);
-    if S = dsPause then MoveToMainThread;
-    Finish('paused');
-    if S = dsPause then AddThreadNote('Break');
-  end
-
-  else if Name = 'debug_attach' then
-  begin
-    Result    := True;
-    TimeoutMs := 20000;
-    if Assigned(Ctx.Params) then
-      TimeoutMs := Ctx.Params.Get('timeout_s', 20) * 1000;
-    Value := '';
-    if Assigned(Ctx.Params) then
-      Value := IntToStr(Ctx.Params.Get('pid', 0));
-    if (Value = '0') or (StrToIntDef(Value, 0) <= 0) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'pid required: the process id of the program to attach to (project_run answers with it)';
-      Exit;
-    end;
-    GSyncHelper.InAttachPid := Value;
-    TThread.Synchronize(nil, @GSyncHelper.AttachStart);
-    if GSyncHelper.OutAttachErr <> '' then
-    begin
-      Ctx.Error := True; Ctx.Result := GSyncHelper.OutAttachErr; Exit;
-    end;
-    EndsBefore := GMcpSessionEnds;
-    S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
-    if GLaunchFailed and (S = dsStop) and (GMcpSessionEnds = EndsBefore) then
-    begin
-      GLaunchFailed := False;
-      Err := Trim(GSyncHelper.OutFeedback);
-      if Err <> '' then Err := ' (' + StringReplace(Err, #13#10, ' ', [rfReplaceAll]) + ')';
-      TThread.Synchronize(nil, @GSyncHelper.StopNow);   { puts the IDE's tool status back }
-      Ctx.Error  := True;
-      Ctx.Result := 'The debugger did not attach to process ' + Value + ' within 10 s' +
-        Err + ': ' +
-        'check the process id and that it is still running; the program needs debug ' +
-        'information (project_set_settings debug_info=dwarf3, then build). On Linux ' +
-        'ptrace must be allowed for the IDE.';
-      Exit;
-    end;
-    GAttachedPid := StrToIntDef(Value, 0);
-    if S = dsPause then MoveToMainThread;
-    Finish('attached');
-    if S = dsPause then AddThreadNote('Attaching');
-  end
-
-  else if Name = 'debug_step_over' then
-  begin
-    Result    := True;
-    TimeoutMs := 10000;
-    if Assigned(Ctx.Params) then
-      TimeoutMs := Ctx.Params.Get('timeout_s', 10) * 1000;
-    DoIssueCmd(3);
-    S := PollForPause(TimeoutMs, FinalFile, FinalLine);
-    Finish('step');
-  end
-
-  else if Name = 'debug_step_into' then
-  begin
-    Result    := True;
-    TimeoutMs := 10000;
-    if Assigned(Ctx.Params) then
-      TimeoutMs := Ctx.Params.Get('timeout_s', 10) * 1000;
-    DoIssueCmd(4);
-    S := PollForPause(TimeoutMs, FinalFile, FinalLine);
-    Finish('step');
-  end
-
-  else if Name = 'debug_step_out' then
-  begin
-    Result    := True;
-    TimeoutMs := 30000;
-    if Assigned(Ctx.Params) then
-      TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
-    DoIssueCmd(5);
-    S := PollForPause(TimeoutMs, FinalFile, FinalLine);
-    Finish('step');
-  end
-
-  else if Name = 'debug_run_to_line' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
-    begin Ctx.Error := True; Ctx.Result := 'file required'; Exit; end;
-    TimeoutMs := 30000;
-    if Assigned(Ctx.Params) then
-      TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
-    TThread.Synchronize(nil, @GSyncHelper.Preflight);
-    if GSyncHelper.OutPreflight <> '' then
-    begin
-      Ctx.Error := True; Ctx.Result := GSyncHelper.OutPreflight; Exit;
-    end;
-    { Temporary breakpoint, unless the line has one already: that one is the
-      user's, with its condition and pass count, and is left exactly as it is }
-    GSyncHelper.InBpKind       := bpkSource;
-    GSyncHelper.InBpFile       := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
-    GSyncHelper.InBpLine       := Ctx.Params.Get('line', 0);
-    GSyncHelper.InBpSetEnabled := False;
-    GSyncHelper.InBpSetCond    := False;
-    GSyncHelper.InBpSetPass    := False;
-    GSyncHelper.InBpOnlyIfNew  := True;
-    TThread.Synchronize(nil, @GSyncHelper.AddBreakpoint);
-    if not Assigned(GSyncHelper.OutBp) then
-    begin Ctx.Error := True; Ctx.Result := 'Failed to add temp breakpoint'; Exit; end;
-    TempBp := GSyncHelper.OutBpCreated;
-    { Run until pause }
-    DoIssueCmd(0);
-    S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
-    if TempBp then
-      TThread.Synchronize(nil, @GSyncHelper.RemoveBreakpoint);
-    Finish('breakpoint');
-  end
-
-  else if Name = 'debug_evaluate' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('expression', '') = '') then
-    begin Ctx.Error := True; Ctx.Result := 'expression required'; Exit; end;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    if GSyncHelper.OutState <> dsPause then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    { thread/frame: select them for this evaluation only, then restore }
-    Selected := Assigned(Ctx.Params.Find('thread')) or Assigned(Ctx.Params.Find('frame'));
-    if Selected then
-    begin
-      TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
-      OldThread := GSyncHelper.OutSelThread;
-      OldFrame  := GSyncHelper.OutSelFrame;
-      if not SelectThreadFrame(Ctx.Params.Get('thread', 0), Ctx.Params.Get('frame', 0),
-                               FrameJSON, Err) then
-      begin
-        SelectThreadFrame(OldThread, OldFrame, FrameJSON, Typ);
-        Ctx.Error := True; Ctx.Result := Err; Exit;
-      end;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('expression', Ctx.Params.Get('expression', ''));
-      if EvaluateOnWorker(Ctx.Params.Get('expression', ''), Value, Typ, Err) then
-      begin
-        Obj.Add('value', Value);
-        { the backend gives no type for a computed value: unknown, not empty }
-        if Typ <> '' then Obj.Add('type', Typ);
-      end
-      else
-      begin
-        Ctx.Error := True;
-        Obj.Add('error', Err);
-      end;
-      if Selected then
-      begin
-        Obj.Add('frame', GetJSON(FrameJSON));
-        SelectThreadFrame(OldThread, OldFrame, FrameJSON, Err);
-      end;
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
-
-  else if Name = 'debug_select_frame' then
-  begin
-    Result := True;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    if GSyncHelper.OutState <> dsPause then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    if not Assigned(Ctx.Params) or not Assigned(Ctx.Params.Find('frame')) then
-    begin Ctx.Error := True; Ctx.Result := 'frame required (0 = top)'; Exit; end;
-    if not SelectThreadFrame(Ctx.Params.Get('thread', 0), Ctx.Params.Get('frame', 0),
-                             FrameJSON, Err) then
-    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
-    TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('thread', GSyncHelper.OutSelThread);
-      Obj.Add('frame',  GetJSON(FrameJSON));
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
-
-  else if ((Name = 'debug_set_breakpoint') or (Name = 'debug_remove_breakpoint')) and
+  if ((Name = 'debug_set_breakpoint') or (Name = 'debug_remove_breakpoint')) and
           Assigned(Ctx.Params) and (Ctx.Params.Get('address', '') <> '') and
           not ParseAddress(Ctx.Params.Get('address', ''), Addr) then
   begin
@@ -2231,245 +2030,451 @@ begin
     Result := False;   { not handled: dispatch continues on the main thread }
   end
 
-  else if Name = 'debug_get_call_stack' then
-  begin
-    Result := True;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    if GSyncHelper.OutState <> dsPause then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    GSyncHelper.InMaxFrames := 20;
-    if Assigned(Ctx.Params) then
-      GSyncHelper.InMaxFrames := Ctx.Params.Get('max_frames', 20);
-    TThread.Synchronize(nil, @GSyncHelper.InitCallStack);
-    { Poll via Synchronize — each call reads CountValidity on main thread }
-    TimeoutMs := 10000;
-    Elapsed   := 0;
-    while not GSyncHelper.OutCSReady and (Elapsed < TimeoutMs) do
-    begin
-      Sleep(100);
-      Inc(Elapsed, 100);
-      TThread.Synchronize(nil, @GSyncHelper.ReadCallStack);
-    end;
-    if not GSyncHelper.OutCSReady then
-      GSyncHelper.OutCSJSON := '[]';  { timeout fallback }
-    Ctx.Result := GSyncHelper.OutCSJSON;
-  end
-
-  else if Name = 'debug_get_locals' then
-  begin
-    Result := True;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    if GSyncHelper.OutState <> dsPause then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    GSyncHelper.InLocalsFrame  := 0;
-    GSyncHelper.InLocalsThread := 0;
-    if Assigned(Ctx.Params) then
-    begin
-      GSyncHelper.InLocalsFrame  := Ctx.Params.Get('frame', 0);
-      GSyncHelper.InLocalsThread := Ctx.Params.Get('thread', 0);
-    end;
-    TThread.Synchronize(nil, @GSyncHelper.InitLocals);
-    TimeoutMs := 5000;
-    Elapsed   := 0;
-    while not GSyncHelper.OutLocalsReady and (Elapsed < TimeoutMs) do
-    begin
-      Sleep(100);
-      Inc(Elapsed, 100);
-      TThread.Synchronize(nil, @GSyncHelper.ReadLocals);
-    end;
-    if not GSyncHelper.OutLocalsReady then
-      GSyncHelper.OutLocalsJSON := '[]';
-    Ctx.Result := GSyncHelper.OutLocalsJSON;
-  end
-
-  else if Name = 'debug_get_registers' then
-  begin
-    Result := True;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    if GSyncHelper.OutState <> dsPause then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    GSyncHelper.InRegThread := 0;
-    GSyncHelper.InRegFrame  := 0;
-    if Assigned(Ctx.Params) then
-    begin
-      GSyncHelper.InRegThread := Ctx.Params.Get('thread', 0);
-      GSyncHelper.InRegFrame  := Max(Ctx.Params.Get('frame', 0), 0);
-    end;
-    { FpDebug reads a higher frame's registers from the loaded stack }
-    if (GSyncHelper.InRegFrame > 0) and
-       not LoadStackTo(GSyncHelper.InRegThread, GSyncHelper.InRegFrame, FrameJSON, Err) then
-    begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
-    TThread.Synchronize(nil, @GSyncHelper.InitRegisters);
-    Elapsed := 0;
-    while not GSyncHelper.OutRegReady and (Elapsed < 5000) do
-    begin
-      Sleep(100);
-      Inc(Elapsed, 100);
-      TThread.Synchronize(nil, @GSyncHelper.ReadRegisters);
-    end;
-    if not GSyncHelper.OutRegReady then
-      GSyncHelper.OutRegErr := 'Registers did not arrive within 5 s';
-    if GSyncHelper.OutRegErr <> '' then
-    begin Ctx.Error := True; Ctx.Result := GSyncHelper.OutRegErr; Exit; end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('thread', GSyncHelper.OutRegThread);
-      Obj.Add('frame', GSyncHelper.InRegFrame);
-      RegAll := TJSONArray(GetJSON(GSyncHelper.OutRegJSON));
-      try
-        Obj.Add('registers', FilterRegisters(RegAll, Ctx.Params));
-      finally
-        RegAll.Free;
-      end;
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
-
-  else if Name = 'debug_disassemble' then
-  begin
-    Result := True;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    if GSyncHelper.OutState <> dsPause then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    GSyncHelper.InAsmBefore := 5;
-    GSyncHelper.InAsmAfter  := 15;
-    Value := '';
-    if Assigned(Ctx.Params) then
-    begin
-      GSyncHelper.InAsmBefore := EnsureRange(Ctx.Params.Get('lines_before', 5), 0, 100);
-      GSyncHelper.InAsmAfter  := EnsureRange(Ctx.Params.Get('lines_after', 15), 1, 200);
-      Value := Trim(Ctx.Params.Get('address', ''));
-    end;
-    if Value <> '' then
-    begin
-      if not ParseAddress(Value, Addr) and not ResolveSymbol(Value, Addr, Err) then
-      begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
-    end
-    else
-    begin
-      { the frame's address: where it executes (frame 0) or returns to }
-      OldThread := 0;
-      OldFrame  := 0;
-      if Assigned(Ctx.Params) then
+  else
+    case Name of
+      'debug_run':
       begin
-        OldThread := Ctx.Params.Get('thread', 0);
-        OldFrame  := Max(Ctx.Params.Get('frame', 0), 0);
+        Result    := True;
+        TimeoutMs := 30000;
+        if Assigned(Ctx.Params) then
+          TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
+        TThread.Synchronize(nil, @GSyncHelper.Preflight);
+        if GSyncHelper.OutPreflight <> '' then
+        begin
+          Ctx.Error := True; Ctx.Result := GSyncHelper.OutPreflight; Exit;
+        end;
+        EndsBefore := GMcpSessionEnds;
+        DoIssueCmd(0);
+        S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
+        Finish('run');
       end;
-      if not LoadStackTo(OldThread, OldFrame, FrameJSON, Err) then
-      begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
-      Addr := 0;
-      FrameData := GetJSON(FrameJSON);
-      try
-        if FrameData is TJSONObject then
-          ParseAddress(TJSONObject(FrameData).Get('address', ''), Addr);
-      finally
-        FrameData.Free;
-      end;
-      if Addr = 0 then
-      begin Ctx.Error := True; Ctx.Result := 'The frame has no address'; Exit; end;
-    end;
-    GSyncHelper.InAsmAddr   := Addr;
-    GSyncHelper.OutAsmReady := False;
-    GSyncHelper.OutAsmErr   := '';
-    Elapsed := 0;
-    TThread.Synchronize(nil, @GSyncHelper.PrepareDisasm);
-    while not GSyncHelper.OutAsmReady and (Elapsed < 10000) do
-    begin
-      Sleep(100);
-      Inc(Elapsed, 100);
-      TThread.Synchronize(nil, @GSyncHelper.PrepareDisasm);
-    end;
-    if not GSyncHelper.OutAsmReady then
-      GSyncHelper.OutAsmErr := 'The disassembly did not arrive within 10 s';
-    if GSyncHelper.OutAsmErr <> '' then
-    begin Ctx.Error := True; Ctx.Result := GSyncHelper.OutAsmErr; Exit; end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('address', Format('$%x', [Addr]));
-      Obj.Add('instructions', GetJSON(GSyncHelper.OutAsmJSON));
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
 
-  else if Name = 'debug_list_watches' then
-  begin
-    Result := True;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    GSyncHelper.InWatchThread := -1;   { the current selection }
-    if Assigned(Ctx.Params) and
-       (Assigned(Ctx.Params.Find('thread')) or Assigned(Ctx.Params.Find('frame'))) then
-    begin
-      GSyncHelper.InWatchThread := Ctx.Params.Get('thread', 0);
-      GSyncHelper.InWatchFrame  := Ctx.Params.Get('frame', 0);
-    end;
-    TThread.Synchronize(nil, @GSyncHelper.InitWatches);
-    if GSyncHelper.OutState = dsPause then
-    begin
-      TimeoutMs := 5000;
-      Elapsed   := 0;
-      while not GSyncHelper.OutWatchReady and (Elapsed < TimeoutMs) do
+      'debug_pause':
       begin
-        Sleep(100);
-        Inc(Elapsed, 100);
-        TThread.Synchronize(nil, @GSyncHelper.ReadWatches);
+        Result    := True;
+        TimeoutMs := 5000;
+        DoIssueCmd(1);
+        S := PollForPause(TimeoutMs, FinalFile, FinalLine);
+        if S = dsPause then MoveToMainThread;
+        Finish('paused');
+        if S = dsPause then AddThreadNote('Break');
       end;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
-      if GSyncHelper.OutWatchReady then
-        Obj.Add('watches', GetJSON(GSyncHelper.OutWatchJSON))
-      else
+
+      'debug_attach':
       begin
-        TThread.Synchronize(nil, @GSyncHelper.ReadWatchNames);
-        Obj.Add('watches', GetJSON(GSyncHelper.OutWatchJSON));
-        if GSyncHelper.OutState = dsPause then
-          Obj.Add('note', 'Values did not arrive within 5 s')
+        Result    := True;
+        TimeoutMs := 20000;
+        if Assigned(Ctx.Params) then
+          TimeoutMs := Ctx.Params.Get('timeout_s', 20) * 1000;
+        Value := '';
+        if Assigned(Ctx.Params) then
+          Value := IntToStr(Ctx.Params.Get('pid', 0));
+        if (Value = '0') or (StrToIntDef(Value, 0) <= 0) then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'pid required: the process id of the program to attach to (project_run answers with it)';
+          Exit;
+        end;
+        GSyncHelper.InAttachPid := Value;
+        TThread.Synchronize(nil, @GSyncHelper.AttachStart);
+        if GSyncHelper.OutAttachErr <> '' then
+        begin
+          Ctx.Error := True; Ctx.Result := GSyncHelper.OutAttachErr; Exit;
+        end;
+        EndsBefore := GMcpSessionEnds;
+        S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
+        if GLaunchFailed and (S = dsStop) and (GMcpSessionEnds = EndsBefore) then
+        begin
+          GLaunchFailed := False;
+          Err := Trim(GSyncHelper.OutFeedback);
+          if Err <> '' then Err := ' (' + StringReplace(Err, #13#10, ' ', [rfReplaceAll]) + ')';
+          TThread.Synchronize(nil, @GSyncHelper.StopNow);   { puts the IDE's tool status back }
+          Ctx.Error  := True;
+          Ctx.Result := 'The debugger did not attach to process ' + Value + ' within 10 s' +
+            Err + ': ' +
+            'check the process id and that it is still running; the program needs debug ' +
+            'information (project_set_settings debug_info=dwarf3, then build). On Linux ' +
+            'ptrace must be allowed for the IDE.';
+          Exit;
+        end;
+        GAttachedPid := StrToIntDef(Value, 0);
+        if S = dsPause then MoveToMainThread;
+        Finish('attached');
+        if S = dsPause then AddThreadNote('Attaching');
+      end;
+
+      'debug_step_over':
+      begin
+        Result    := True;
+        TimeoutMs := 10000;
+        if Assigned(Ctx.Params) then
+          TimeoutMs := Ctx.Params.Get('timeout_s', 10) * 1000;
+        DoIssueCmd(3);
+        S := PollForPause(TimeoutMs, FinalFile, FinalLine);
+        Finish('step');
+      end;
+
+      'debug_step_into':
+      begin
+        Result    := True;
+        TimeoutMs := 10000;
+        if Assigned(Ctx.Params) then
+          TimeoutMs := Ctx.Params.Get('timeout_s', 10) * 1000;
+        DoIssueCmd(4);
+        S := PollForPause(TimeoutMs, FinalFile, FinalLine);
+        Finish('step');
+      end;
+
+      'debug_step_out':
+      begin
+        Result    := True;
+        TimeoutMs := 30000;
+        if Assigned(Ctx.Params) then
+          TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
+        DoIssueCmd(5);
+        S := PollForPause(TimeoutMs, FinalFile, FinalLine);
+        Finish('step');
+      end;
+
+      'debug_run_to_line':
+      begin
+        Result := True;
+        if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+        begin Ctx.Error := True; Ctx.Result := 'file required'; Exit; end;
+        TimeoutMs := 30000;
+        if Assigned(Ctx.Params) then
+          TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
+        TThread.Synchronize(nil, @GSyncHelper.Preflight);
+        if GSyncHelper.OutPreflight <> '' then
+        begin
+          Ctx.Error := True; Ctx.Result := GSyncHelper.OutPreflight; Exit;
+        end;
+        { Temporary breakpoint, unless the line has one already: that one is the
+          user's, with its condition and pass count, and is left exactly as it is }
+        GSyncHelper.InBpKind       := bpkSource;
+        GSyncHelper.InBpFile       := CleanAndExpandFilename(Ctx.Params.Get('file', ''));
+        GSyncHelper.InBpLine       := Ctx.Params.Get('line', 0);
+        GSyncHelper.InBpSetEnabled := False;
+        GSyncHelper.InBpSetCond    := False;
+        GSyncHelper.InBpSetPass    := False;
+        GSyncHelper.InBpOnlyIfNew  := True;
+        TThread.Synchronize(nil, @GSyncHelper.AddBreakpoint);
+        if not Assigned(GSyncHelper.OutBp) then
+        begin Ctx.Error := True; Ctx.Result := 'Failed to add temp breakpoint'; Exit; end;
+        TempBp := GSyncHelper.OutBpCreated;
+        { Run until pause }
+        DoIssueCmd(0);
+        S := PollForPause(TimeoutMs, FinalFile, FinalLine, True { AWaitLaunch }, 10000);
+        if TempBp then
+          TThread.Synchronize(nil, @GSyncHelper.RemoveBreakpoint);
+        Finish('breakpoint');
+      end;
+
+      'debug_evaluate':
+      begin
+        Result := True;
+        if not Assigned(Ctx.Params) or (Ctx.Params.Get('expression', '') = '') then
+        begin Ctx.Error := True; Ctx.Result := 'expression required'; Exit; end;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        if GSyncHelper.OutState <> dsPause then
+        begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+        { thread/frame: select them for this evaluation only, then restore }
+        Selected := Assigned(Ctx.Params.Find('thread')) or Assigned(Ctx.Params.Find('frame'));
+        if Selected then
+        begin
+          TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
+          OldThread := GSyncHelper.OutSelThread;
+          OldFrame  := GSyncHelper.OutSelFrame;
+          if not SelectThreadFrame(Ctx.Params.Get('thread', 0), Ctx.Params.Get('frame', 0),
+                                   FrameJSON, Err) then
+          begin
+            SelectThreadFrame(OldThread, OldFrame, FrameJSON, Typ);
+            Ctx.Error := True; Ctx.Result := Err; Exit;
+          end;
+        end;
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('expression', Ctx.Params.Get('expression', ''));
+          if EvaluateOnWorker(Ctx.Params.Get('expression', ''), Value, Typ, Err) then
+          begin
+            Obj.Add('value', Value);
+            { the backend gives no type for a computed value: unknown, not empty }
+            if Typ <> '' then Obj.Add('type', Typ);
+          end
+          else
+          begin
+            Ctx.Error := True;
+            Obj.Add('error', Err);
+          end;
+          if Selected then
+          begin
+            Obj.Add('frame', GetJSON(FrameJSON));
+            SelectThreadFrame(OldThread, OldFrame, FrameJSON, Err);
+          end;
+          Ctx.Result := Obj.AsJSON;
+        finally Obj.Free; end;
+      end;
+
+      'debug_select_frame':
+      begin
+        Result := True;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        if GSyncHelper.OutState <> dsPause then
+        begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+        if not Assigned(Ctx.Params) or not Assigned(Ctx.Params.Find('frame')) then
+        begin Ctx.Error := True; Ctx.Result := 'frame required (0 = top)'; Exit; end;
+        if not SelectThreadFrame(Ctx.Params.Get('thread', 0), Ctx.Params.Get('frame', 0),
+                                 FrameJSON, Err) then
+        begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+        TThread.Synchronize(nil, @GSyncHelper.ReadSelection);
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('thread', GSyncHelper.OutSelThread);
+          Obj.Add('frame',  GetJSON(FrameJSON));
+          Ctx.Result := Obj.AsJSON;
+        finally Obj.Free; end;
+      end;
+
+      'debug_get_call_stack':
+      begin
+        Result := True;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        if GSyncHelper.OutState <> dsPause then
+        begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+        GSyncHelper.InMaxFrames := 20;
+        if Assigned(Ctx.Params) then
+          GSyncHelper.InMaxFrames := Ctx.Params.Get('max_frames', 20);
+        TThread.Synchronize(nil, @GSyncHelper.InitCallStack);
+        { Poll via Synchronize — each call reads CountValidity on main thread }
+        TimeoutMs := 10000;
+        Elapsed   := 0;
+        while not GSyncHelper.OutCSReady and (Elapsed < TimeoutMs) do
+        begin
+          Sleep(100);
+          Inc(Elapsed, 100);
+          TThread.Synchronize(nil, @GSyncHelper.ReadCallStack);
+        end;
+        if not GSyncHelper.OutCSReady then
+          GSyncHelper.OutCSJSON := '[]';  { timeout fallback }
+        Ctx.Result := GSyncHelper.OutCSJSON;
+      end;
+
+      'debug_get_locals':
+      begin
+        Result := True;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        if GSyncHelper.OutState <> dsPause then
+        begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+        GSyncHelper.InLocalsFrame  := 0;
+        GSyncHelper.InLocalsThread := 0;
+        if Assigned(Ctx.Params) then
+        begin
+          GSyncHelper.InLocalsFrame  := Ctx.Params.Get('frame', 0);
+          GSyncHelper.InLocalsThread := Ctx.Params.Get('thread', 0);
+        end;
+        TThread.Synchronize(nil, @GSyncHelper.InitLocals);
+        TimeoutMs := 5000;
+        Elapsed   := 0;
+        while not GSyncHelper.OutLocalsReady and (Elapsed < TimeoutMs) do
+        begin
+          Sleep(100);
+          Inc(Elapsed, 100);
+          TThread.Synchronize(nil, @GSyncHelper.ReadLocals);
+        end;
+        if not GSyncHelper.OutLocalsReady then
+          GSyncHelper.OutLocalsJSON := '[]';
+        Ctx.Result := GSyncHelper.OutLocalsJSON;
+      end;
+
+      'debug_get_registers':
+      begin
+        Result := True;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        if GSyncHelper.OutState <> dsPause then
+        begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+        GSyncHelper.InRegThread := 0;
+        GSyncHelper.InRegFrame  := 0;
+        if Assigned(Ctx.Params) then
+        begin
+          GSyncHelper.InRegThread := Ctx.Params.Get('thread', 0);
+          GSyncHelper.InRegFrame  := Max(Ctx.Params.Get('frame', 0), 0);
+        end;
+        { FpDebug reads a higher frame's registers from the loaded stack }
+        if (GSyncHelper.InRegFrame > 0) and
+           not LoadStackTo(GSyncHelper.InRegThread, GSyncHelper.InRegFrame, FrameJSON, Err) then
+        begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+        TThread.Synchronize(nil, @GSyncHelper.InitRegisters);
+        Elapsed := 0;
+        while not GSyncHelper.OutRegReady and (Elapsed < 5000) do
+        begin
+          Sleep(100);
+          Inc(Elapsed, 100);
+          TThread.Synchronize(nil, @GSyncHelper.ReadRegisters);
+        end;
+        if not GSyncHelper.OutRegReady then
+          GSyncHelper.OutRegErr := 'Registers did not arrive within 5 s';
+        if GSyncHelper.OutRegErr <> '' then
+        begin Ctx.Error := True; Ctx.Result := GSyncHelper.OutRegErr; Exit; end;
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('thread', GSyncHelper.OutRegThread);
+          Obj.Add('frame', GSyncHelper.InRegFrame);
+          RegAll := TJSONArray(GetJSON(GSyncHelper.OutRegJSON));
+          try
+            Obj.Add('registers', FilterRegisters(RegAll, Ctx.Params));
+          finally
+            RegAll.Free;
+          end;
+          Ctx.Result := Obj.AsJSON;
+        finally Obj.Free; end;
+      end;
+
+      'debug_disassemble':
+      begin
+        Result := True;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        if GSyncHelper.OutState <> dsPause then
+        begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+        GSyncHelper.InAsmBefore := 5;
+        GSyncHelper.InAsmAfter  := 15;
+        Value := '';
+        if Assigned(Ctx.Params) then
+        begin
+          GSyncHelper.InAsmBefore := EnsureRange(Ctx.Params.Get('lines_before', 5), 0, 100);
+          GSyncHelper.InAsmAfter  := EnsureRange(Ctx.Params.Get('lines_after', 15), 1, 200);
+          Value := Trim(Ctx.Params.Get('address', ''));
+        end;
+        if Value <> '' then
+        begin
+          if not ParseAddress(Value, Addr) and not ResolveSymbol(Value, Addr, Err) then
+          begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+        end
         else
-          Obj.Add('note', 'Values are available only while the debugger is paused');
+        begin
+          { the frame's address: where it executes (frame 0) or returns to }
+          OldThread := 0;
+          OldFrame  := 0;
+          if Assigned(Ctx.Params) then
+          begin
+            OldThread := Ctx.Params.Get('thread', 0);
+            OldFrame  := Max(Ctx.Params.Get('frame', 0), 0);
+          end;
+          if not LoadStackTo(OldThread, OldFrame, FrameJSON, Err) then
+          begin Ctx.Error := True; Ctx.Result := Err; Exit; end;
+          Addr := 0;
+          FrameData := GetJSON(FrameJSON);
+          try
+            if FrameData is TJSONObject then
+              ParseAddress(TJSONObject(FrameData).Get('address', ''), Addr);
+          finally
+            FrameData.Free;
+          end;
+          if Addr = 0 then
+          begin Ctx.Error := True; Ctx.Result := 'The frame has no address'; Exit; end;
+        end;
+        GSyncHelper.InAsmAddr   := Addr;
+        GSyncHelper.OutAsmReady := False;
+        GSyncHelper.OutAsmErr   := '';
+        Elapsed := 0;
+        TThread.Synchronize(nil, @GSyncHelper.PrepareDisasm);
+        while not GSyncHelper.OutAsmReady and (Elapsed < 10000) do
+        begin
+          Sleep(100);
+          Inc(Elapsed, 100);
+          TThread.Synchronize(nil, @GSyncHelper.PrepareDisasm);
+        end;
+        if not GSyncHelper.OutAsmReady then
+          GSyncHelper.OutAsmErr := 'The disassembly did not arrive within 10 s';
+        if GSyncHelper.OutAsmErr <> '' then
+        begin Ctx.Error := True; Ctx.Result := GSyncHelper.OutAsmErr; Exit; end;
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('address', Format('$%x', [Addr]));
+          Obj.Add('instructions', GetJSON(GSyncHelper.OutAsmJSON));
+          Ctx.Result := Obj.AsJSON;
+        finally Obj.Free; end;
       end;
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end
 
-  else if Name = 'debug_list_threads' then
-  begin
-    Result := True;
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    if GSyncHelper.OutState <> dsPause then
-    begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
-    TThread.Synchronize(nil, @GSyncHelper.InitThreads);
-    TimeoutMs := 5000;
-    Elapsed   := 0;
-    while not GSyncHelper.OutThrReady and (Elapsed < TimeoutMs) do
-    begin
-      Sleep(100);
-      Inc(Elapsed, 100);
-      TThread.Synchronize(nil, @GSyncHelper.ReadThreads);
+      'debug_list_watches':
+      begin
+        Result := True;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        GSyncHelper.InWatchThread := -1;   { the current selection }
+        if Assigned(Ctx.Params) and
+           (Assigned(Ctx.Params.Find('thread')) or Assigned(Ctx.Params.Find('frame'))) then
+        begin
+          GSyncHelper.InWatchThread := Ctx.Params.Get('thread', 0);
+          GSyncHelper.InWatchFrame  := Ctx.Params.Get('frame', 0);
+        end;
+        TThread.Synchronize(nil, @GSyncHelper.InitWatches);
+        if GSyncHelper.OutState = dsPause then
+        begin
+          TimeoutMs := 5000;
+          Elapsed   := 0;
+          while not GSyncHelper.OutWatchReady and (Elapsed < TimeoutMs) do
+          begin
+            Sleep(100);
+            Inc(Elapsed, 100);
+            TThread.Synchronize(nil, @GSyncHelper.ReadWatches);
+          end;
+        end;
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
+          if GSyncHelper.OutWatchReady then
+            Obj.Add('watches', GetJSON(GSyncHelper.OutWatchJSON))
+          else
+          begin
+            TThread.Synchronize(nil, @GSyncHelper.ReadWatchNames);
+            Obj.Add('watches', GetJSON(GSyncHelper.OutWatchJSON));
+            if GSyncHelper.OutState = dsPause then
+              Obj.Add('note', 'Values did not arrive within 5 s')
+            else
+              Obj.Add('note', 'Values are available only while the debugger is paused');
+          end;
+          Ctx.Result := Obj.AsJSON;
+        finally Obj.Free; end;
+      end;
+
+      'debug_list_threads':
+      begin
+        Result := True;
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        if GSyncHelper.OutState <> dsPause then
+        begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
+        TThread.Synchronize(nil, @GSyncHelper.InitThreads);
+        TimeoutMs := 5000;
+        Elapsed   := 0;
+        while not GSyncHelper.OutThrReady and (Elapsed < TimeoutMs) do
+        begin
+          Sleep(100);
+          Inc(Elapsed, 100);
+          TThread.Synchronize(nil, @GSyncHelper.ReadThreads);
+        end;
+        Ctx.Result := GSyncHelper.OutThrJSON;
+      end;
+
+      'debug_get_exception':
+      begin
+        Result := True;
+        { McpDebugGuard records every exception the debugger reports (class,
+          message, location) before any dialog would appear.  The record lives
+          until the program is resumed past it or a new session starts. }
+        TThread.Synchronize(nil, @GSyncHelper.ReadState);
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('has_exception', GSyncHelper.OutExcValid);
+          Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
+          if GSyncHelper.OutExcValid then
+            Obj.Add('exception', GetJSON(GSyncHelper.OutExcJSON))
+          else if GSyncHelper.OutState in [dsNone, dsIdle, dsStop] then
+            Obj.Add('note', 'Debugger is not running.')
+          else
+            Obj.Add('note', 'No exception since the program was last resumed.');
+          Ctx.Result := Obj.AsJSON;
+        finally Obj.Free; end;
+      end;
     end;
-    Ctx.Result := GSyncHelper.OutThrJSON;
-  end
-
-  else if Name = 'debug_get_exception' then
-  begin
-    Result := True;
-    { McpDebugGuard records every exception the debugger reports (class,
-      message, location) before any dialog would appear.  The record lives
-      until the program is resumed past it or a new session starts. }
-    TThread.Synchronize(nil, @GSyncHelper.ReadState);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('has_exception', GSyncHelper.OutExcValid);
-      Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
-      if GSyncHelper.OutExcValid then
-        Obj.Add('exception', GetJSON(GSyncHelper.OutExcJSON))
-      else if GSyncHelper.OutState in [dsNone, dsIdle, dsStop] then
-        Obj.Add('note', 'Debugger is not running.')
-      else
-        Obj.Add('note', 'No exception since the program was last resumed.');
-      Ctx.Result := Obj.AsJSON;
-    finally Obj.Free; end;
-  end;
 
 end;
 
