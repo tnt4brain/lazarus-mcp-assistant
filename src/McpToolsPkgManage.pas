@@ -36,6 +36,7 @@ const
   MAX_WARNINGS = 50;
   MAX_LIST     = 200;
 
+  { no oneOf in the schema, see PKG_TARGET_PROPS in McpToolsPackages }
   PKG_TARGET =
     '"package_name":{"type":"string","description":"A package loaded in the IDE"},' +
     '"lpk_path":{"type":"string","description":"Or the .lpk file, loaded for this call ' +
@@ -54,10 +55,9 @@ const
       'Lazarus (default false: only others, e.g. yours and downloaded ones)"}}}';
 
   SCHEMA_OPEN =
-    '{"type":"object","properties":{' +
-    '"lpk_path":{"type":"string","description":"Absolute path of the .lpk"},' +
+    '{"type":"object","properties":{' + PKG_TARGET + ',' +
     '"editor":{"type":"boolean","description":"Also open its package editor window ' +
-      '(default false)"}},"required":["lpk_path"]}';
+      '(default false)"}}}';
 
   SCHEMA_CREATE =
     '{"type":"object","properties":{' +
@@ -624,7 +624,10 @@ begin
   else if Name = 'package_list' then
     Ctx.Result := PackageList(Ctx.Params)
   else if Name = 'package_open' then
-    Ctx.Result := PackageOpen(Ctx.Params, Err)
+  begin
+    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+    else Ctx.Result := PackageOpen(Ctx.Params, Err);
+  end
   else if Name = 'package_create' then
     Ctx.Result := PackageCreate(Ctx.Params, Err)
   else if Name = 'package_get_settings' then

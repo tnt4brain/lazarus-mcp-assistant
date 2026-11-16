@@ -638,7 +638,7 @@ begin
   T := Call('package_uninstall', '{"package_name":"NoSuchPackageXyz"}');
   CheckTrue(Pos('Package not found: NoSuchPackageXyz', T) > 0, 'refused: ' + T);
   T := Call('package_uninstall', '{}');
-  CheckTrue(Pos('Missing required parameter(s): package_name', T) > 0, 'no name: ' + T);
+  CheckTrue(Pos('package_name or lpk_path required', T) > 0, 'no name: ' + T);
   CheckEquals(200, McpPost('{"jsonrpc":"2.0","id":1,"method":"ping"}').Code,
     'the IDE is still up');
 end;

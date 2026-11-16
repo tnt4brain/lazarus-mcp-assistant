@@ -22,6 +22,7 @@ uses
   fpjson, jsonparser,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
+  PackageLinks, PackageLinkIntf,
   McpToolsPkgManage, McpRunProgram, McpMessages;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
@@ -190,6 +191,10 @@ type
   public
     LpkPath    : string;
     UninstallName : string;  { package_uninstall: the package to remove }
+    SelName    : string;     { package_name / lpk_path as given, for ResolveSelector }
+    SelLpk     : string;
+    SelError   : string;
+    SelInstall : Boolean;    { True: an install wants the .lpk; False: an uninstall wants the name }
     ToolName   : string;
     PollCmd    : string;
     StopServer : TMcpStopServerProc;
@@ -212,6 +217,7 @@ type
     procedure CollectFailure;
     procedure CheckConsent;
     procedure FindUninstallPackage;
+    procedure ResolveSelector;
     procedure DismissExceptionDialog;
     procedure ReadPollPaths;
     procedure DoStopDebugger;
@@ -248,6 +254,50 @@ begin
 end;
 
 { Main thread: does the package to uninstall exist? }
+{ Main thread: the other half of package_name / lpk_path.  For an install SelLpk is
+  filled from SelName (a loaded package, else the IDE's package links); for an
+  uninstall SelName from SelLpk (the loaded package of that file, else the file name).
+  SelError is set when the two given disagree or nothing is known. }
+procedure TBuildSyncHelper.ResolveSelector;
+var
+  Pkg  : TIDEPackage;
+  Link : TPackageLink;
+  I    : Integer;
+begin
+  SelError := '';
+  if (SelLpk <> '') and (SelName <> '') and
+     not SameText(ExtractFileNameOnly(SelLpk), SelName) then
+  begin
+    SelError := 'package_name ' + SelName + ' and lpk_path ' + SelLpk +
+                ' name different packages; give one of them';
+    Exit;
+  end;
+  if SelInstall and (SelLpk = '') and (SelName <> '') then
+  begin
+    Pkg := PackageEditingInterface.FindPackageWithName(SelName);
+    if Assigned(Pkg) and (Pkg.Filename <> '') then
+      SelLpk := Pkg.Filename
+    else
+    begin
+      Link := LazPackageLinks.FindLinkWithPkgName(SelName);
+      if Assigned(Link) then SelLpk := Link.LPKFilename;
+    end;
+    if (SelLpk = '') or not FileExists(SelLpk) then
+    begin
+      SelLpk := '';
+      SelError := 'Package ' + SelName + ' is not loaded and not known to the IDE: give ' +
+                  'its lpk_path';
+    end;
+  end
+  else if (not SelInstall) and (SelName = '') and (SelLpk <> '') then
+  begin
+    SelName := ExtractFileNameOnly(SelLpk);
+    for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+      if CompareFilenames(PackageEditingInterface.GetPackages(I).Filename, SelLpk) = 0 then
+        SelName := PackageEditingInterface.GetPackages(I).Name;
+  end;
+end;
+
 procedure TBuildSyncHelper.FindUninstallPackage;
 begin
   PkgFound := PackageEditingInterface.FindPackageWithName(UninstallName) <> nil;
@@ -539,16 +589,24 @@ begin
   LpkPath := '';
   if Assigned(Ctx.Params) then
     LpkPath := Ctx.Params.Get('lpk_path', '');
-  if (Name = 'package_install') and (LpkPath = '') then
-  begin
-    Ctx.Error := True; Ctx.Result := 'lpk_path required'; Exit;
-  end;
   UninstallName := '';
-  if (Name = 'package_uninstall') and Assigned(Ctx.Params) then
-    UninstallName := Ctx.Params.Get('package_name', '');
-  if (Name = 'package_uninstall') and (UninstallName = '') then
+  if (Name = 'package_install') or (Name = 'package_uninstall') then
   begin
-    Ctx.Error := True; Ctx.Result := 'package_name required'; Exit;
+    GBuildHelper.SelLpk  := Trim(LpkPath);
+    GBuildHelper.SelName := '';
+    GBuildHelper.SelInstall := Name = 'package_install';
+    if Assigned(Ctx.Params) then GBuildHelper.SelName := Trim(Ctx.Params.Get('package_name', ''));
+    if (GBuildHelper.SelLpk = '') and (GBuildHelper.SelName = '') then
+    begin
+      Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
+    end;
+    TThread.Synchronize(nil, @GBuildHelper.ResolveSelector);
+    if GBuildHelper.SelError <> '' then
+    begin
+      Ctx.Error := True; Ctx.Result := GBuildHelper.SelError; Exit;
+    end;
+    if Name = 'package_install' then LpkPath := GBuildHelper.SelLpk
+    else begin LpkPath := ''; UninstallName := GBuildHelper.SelName; end;
   end;
   if (Name = 'ide_rebuild') and (LpkPath <> '') then
   begin
