@@ -33,6 +33,7 @@ type
     procedure TestResetSoftKeepsStaged;
     procedure TestStashAndPop;
     procedure TestStashPaths;
+    procedure TestCommitAmend;
     procedure TestLog;
     procedure TestInitCreatesRepository;
     procedure TestInitKeepsExistingGitignore;
@@ -238,6 +239,37 @@ begin
   finally
     SL.Free;
   end;
+end;
+
+procedure TTestGitWrite.TestCommitAmend;
+var
+  T, Before : string;
+begin
+  Before := Trim(Git(['rev-list', '--count', 'HEAD']));
+  WriteA('three');
+  Git(['add', 'a.txt']);
+  T := Tool('git_commit', '"amend":true,"message":"two, reworded"');
+  CheckFalse(IsError(T), T);
+  CheckEquals(Before, Trim(Git(['rev-list', '--count', 'HEAD'])), 'no new commit');
+  CheckEquals('two, reworded', Trim(Git(['log', '-1', '--format=%s'])), 'new message');
+  CheckEquals('three', Trim(Git(['show', 'HEAD:a.txt'])), 'the staged change is in it');
+  { no message: the old one stays }
+  WriteA('four');
+  Git(['add', 'a.txt']);
+  T := Tool('git_commit', '"amend":true');
+  CheckFalse(IsError(T), T);
+  CheckEquals('two, reworded', Trim(Git(['log', '-1', '--format=%s'])), 'message kept');
+  CheckEquals('four', Trim(Git(['show', 'HEAD:a.txt'])), 'with the second change');
+  { without amend a message is still needed }
+  T := Tool('git_commit', '');
+  CheckTrue(IsError(T), 'a plain commit needs a message: ' + T);
+  { a commit a remote branch holds is not rewritten }
+  Git(['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+  WriteA('five');
+  Git(['add', 'a.txt']);
+  T := Tool('git_commit', '"amend":true,"message":"nope"');
+  CheckTrue(IsError(T) and (Pos('remote branch', T) > 0), 'refused: ' + T);
+  CheckEquals('two, reworded', Trim(Git(['log', '-1', '--format=%s'])), 'history untouched');
 end;
 
 procedure TTestGitWrite.TestLog;

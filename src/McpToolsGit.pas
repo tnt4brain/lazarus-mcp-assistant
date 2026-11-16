@@ -59,9 +59,10 @@ const
 
   SCHEMA_GIT_COMMIT =
     '{"type":"object","properties":{' +
-    '"message":{"type":"string","description":"Commit message"},' +
+    '"message":{"type":"string","description":"Commit message (required unless amend=true, where it replaces the old message; omitted, the old one is kept)"},' +
+    '"amend":{"type":"boolean","description":"Replace the last commit with one that also holds the staged changes (git commit --amend). Refused when that commit is already on a remote branch. Default false"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
-    '"required":["message"]}';
+    '"required":[]}';
 
   SCHEMA_GIT_CHECKOUT =
     '{"type":"object","properties":{' +
@@ -179,6 +180,15 @@ begin
   finally
     Proc.Free;
   end;
+end;
+
+{ True when a remote-tracking branch holds HEAD: a commit someone may have fetched. }
+function HeadIsOnRemote(const WorkDir: string): Boolean;
+var
+  Out_ : string;
+begin
+  Result := RunGit(['branch', '-r', '--contains', 'HEAD'], WorkDir, Out_) and
+            (Trim(Out_) <> '');
 end;
 
 function GetGitWorkDir(const Ctx: TMcpToolCall): string;
@@ -874,13 +884,31 @@ begin
     WorkDir := GetGitWorkDir(Ctx);
     Message := '';
     if Assigned(Ctx.Params) then Message := Ctx.Params.Get('message', '');
-    if Message = '' then
+    if Assigned(Ctx.Params) and Ctx.Params.Get('amend', False) then
     begin
-      Ctx.Error  := True;
-      Ctx.Result := 'message required';
-      Exit;
+      { rewriting a commit others may have fetched forces a push over theirs }
+      if HeadIsOnRemote(WorkDir) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Not amended: the last commit is already on a remote branch. ' +
+          'Make a new commit instead';
+        Exit;
+      end;
+      if Message = '' then
+        Ok := RunGit(['commit', '--amend', '--no-edit'], WorkDir, Output)
+      else
+        Ok := RunGit(['commit', '--amend', '-F', '-'], WorkDir, Output, Message);
+    end
+    else
+    begin
+      if Message = '' then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'message required (unless amend=true)';
+        Exit;
+      end;
+      Ok := RunGit(['commit', '-F', '-'], WorkDir, Output, Message);
     end;
-    Ok := RunGit(['commit', '-F', '-'], WorkDir, Output, Message);
     Obj := TJSONObject.Create;
     try
       Obj.Add('output',   Output);
@@ -1128,7 +1156,8 @@ begin
     SCHEMA_GIT_ADD, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('git_commit',
     'Commit currently staged changes with the given message. ' +
-    'Stage files first with git_add.',
+    'Stage files first with git_add. amend=true folds them into the last commit instead ' +
+    '(new message optional); refused if that commit is already on a remote branch.',
     SCHEMA_GIT_COMMIT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_checkout',
     'Switch to a branch, restore a file, or detach HEAD at a commit. ' +

@@ -272,8 +272,9 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 
 ### Git — `git_*`
 
-`git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`,
-`git_checkout` (`create=true` makes a new branch), `git_stash` (all changes, or
+`git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`
+(`amend=true` folds the staged changes into the last commit; refused once a remote
+branch holds it), `git_checkout` (`create=true` makes a new branch), `git_stash` (all changes, or
 only `paths`), `git_stash_pop`, `git_reset` (soft/mixed only — no hard reset).
 `work_dir` defaults to the project directory.
 
