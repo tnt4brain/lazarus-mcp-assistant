@@ -18,20 +18,23 @@ const
   MD_MAX_DEPTH  = 16;   { nesting of quotes, lists and emphasis }
   MD_MAX_IMAGES = 32;   { data: images lifted out of one document }
 
-  { the look of Bootstrap 5: borders, shaded areas and inline code }
-  MD_BORDER     = '#DEE2E6';
-  MD_SHADE      = '#F8F9FA';
-  MD_CODE_COLOR = '#D63384';
+type
+  { The colours of a rendered page, as '#RRGGBB'.  The defaults are the look of Bootstrap 5; the
+    IDE's Markdown window replaces them with colours taken from the editor's colour scheme
+    (McpMarkdownView), so a page matches the editor, a dark scheme included.  A Back of ''
+    leaves the page background to the viewer. }
+  TMdPalette = record
+    Back, Text, Link : string;
+    Border, Shade, Cell : string;   { table and quote borders, shaded areas, table cells }
+    Code : string;                  { inline code }
+    Note, Tip, Important, Warning, Caution : string;   { the stripe and title of an alert }
+    Added, Removed : string;        { the inserted and the removed text of an inline diff }
+  end;
 
-  { IPro reads tag selectors and whole-pixel margins: Bootstrap's 1rem under a block, half
-    that under a heading }
-  MD_STYLE =
-    'h1,h2,h3,h4,h5,h6{margin-top:0px;margin-bottom:8px}' +
-    'p{margin-top:0px;margin-bottom:16px}' +
-    'ul{margin-top:0px;margin-bottom:16px}' +
-    'ol{margin-top:0px;margin-bottom:16px}' +
-    'table{margin-bottom:16px}' +
-    'table.md{border:1px solid ' + MD_BORDER + '}';
+var
+  MdPalette : TMdPalette;
+
+procedure MdDefaultPalette(out APalette: TMdPalette);
 
 type
   TMarkdownHtml = class
@@ -77,6 +80,47 @@ implementation
 
 const
   HardBreak = #1;
+
+procedure MdDefaultPalette(out APalette: TMdPalette);
+begin
+  { Bootstrap 5 }
+  APalette.Back      := '';
+  APalette.Text      := '#212529';
+  APalette.Link      := '#0D6EFD';
+  APalette.Border    := '#DEE2E6';
+  APalette.Shade     := '#F8F9FA';
+  APalette.Cell      := '#FFFFFF';
+  APalette.Code      := '#D63384';
+  APalette.Note      := '#0D6EFD';
+  APalette.Tip       := '#198754';
+  APalette.Important := '#6F42C1';
+  APalette.Warning   := '#FD7E14';
+  APalette.Caution   := '#DC3545';
+  APalette.Added     := '#198754';
+  APalette.Removed   := '#DC3545';
+end;
+
+{ IPro reads tag selectors and whole-pixel margins: Bootstrap's 1rem under a block, half
+  that under a heading }
+function MdStyle: string;
+begin
+  Result :=
+    'h1,h2,h3,h4,h5,h6{margin-top:0px;margin-bottom:8px}' +
+    'p{margin-top:0px;margin-bottom:16px}' +
+    'ul{margin-top:0px;margin-bottom:16px}' +
+    'ol{margin-top:0px;margin-bottom:16px}' +
+    'table{margin-bottom:16px}' +
+    'table.md{border:1px solid ' + MdPalette.Border + '}';
+end;
+
+function MdBodyTag: string;
+begin
+  Result := '<body';
+  if MdPalette.Back <> '' then
+    Result := Result + ' bgcolor="' + MdPalette.Back + '" text="' + MdPalette.Text +
+              '" link="' + MdPalette.Link + '" vlink="' + MdPalette.Link + '"';
+  Result := Result + '>';
+end;
 
 function ParseTitle(const ARest: string): string; forward;
 
@@ -1283,9 +1327,9 @@ var
       Exit;
     end;
     if Sign = '+' then
-      B.Append('<font color="#198754"><u>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</u></font>')
+      B.Append('<font color="' + MdPalette.Added + '"><u>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</u></font>')
     else
-      B.Append('<font color="#DC3545"><del>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</del></font>');
+      B.Append('<font color="' + MdPalette.Removed + '"><del>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</del></font>');
     I := E + 3;
     Result := True;
   end;
@@ -1362,7 +1406,7 @@ begin
               if (Length(Inner) > 1) and (Inner[1] = ' ') and (Inner[Length(Inner)] = ' ') then
                 Inner := Copy(Inner, 2, Length(Inner) - 2);
               Inner := StringReplace(MdEscape(Inner), ' ', '&nbsp;', [rfReplaceAll]);
-              B.Append('<font color="' + MD_CODE_COLOR + '"><tt>' + Inner + '</tt></font>');
+              B.Append('<font color="' + MdPalette.Code + '"><tt>' + Inner + '</tt></font>');
               I := P + Run;
             end
             else
@@ -1614,7 +1658,7 @@ begin
   try
     { the frame's colour comes from the table.md rule of the style block }
     B.Append('<table class="md" width="100%" border="1" cellpadding="12" cellspacing="0">' +
-             '<tr><td bgcolor="' + MD_SHADE + '">');
+             '<tr><td bgcolor="' + MdPalette.Shade + '">');
     for Item in ALines do
     begin
       L := StringReplace(MdEscape(Item), ' ', '&nbsp;', [rfReplaceAll]);
@@ -1648,8 +1692,8 @@ var
       if Cell = '' then Cell := '&nbsp;';
       B.Append('<' + ATag);
       if Align[C] <> '' then B.Append(' align="' + Align[C] + '"');
-      if ATag = 'th' then B.Append(' bgcolor="' + MD_SHADE + '"')
-      else B.Append(' bgcolor="#FFFFFF"');
+      if ATag = 'th' then B.Append(' bgcolor="' + MdPalette.Shade + '"')
+      else B.Append(' bgcolor="' + MdPalette.Cell + '"');
       B.Append('>' + Cell + '</' + ATag + '>');
     end;
     B.Append('</tr>');
@@ -1704,7 +1748,7 @@ var
   Color, Title, Kind, First : string;
   P : Integer;
 begin
-  Color := MD_BORDER;
+  Color := MdPalette.Border;
   Title := '';
   if AInner.Count > 0 then
   begin
@@ -1714,11 +1758,11 @@ begin
     begin
       Kind := LowerCase(Copy(First, 3, P - 3));
       case Kind of
-        'note':      Color := '#0D6EFD';
-        'tip':       Color := '#198754';
-        'important': Color := '#6F42C1';
-        'warning':   Color := '#FD7E14';
-        'caution':   Color := '#DC3545';
+        'note':      Color := MdPalette.Note;
+        'tip':       Color := MdPalette.Tip;
+        'important': Color := MdPalette.Important;
+        'warning':   Color := MdPalette.Warning;
+        'caution':   Color := MdPalette.Caution;
       else
         Kind := '';
       end;
@@ -2070,7 +2114,7 @@ begin
     Body := Blocks(Lines, False);
     if Pos(TocMark, Body) > 0 then
       Body := StringReplace(Body, TocMark, TocHtml, [rfReplaceAll]);
-    Result := '<html><head><style type="text/css">' + MD_STYLE + '</style></head><body>' + #10 +
+    Result := '<html><head><style type="text/css">' + MdStyle + '</style></head>' + MdBodyTag + #10 +
               Body + NotesHtml + '</body></html>';
   finally
     FreeAndNil(FSlugs);
@@ -2081,5 +2125,8 @@ begin
     Lines.Free;
   end;
 end;
+
+initialization
+  MdDefaultPalette(MdPalette);
 
 end.

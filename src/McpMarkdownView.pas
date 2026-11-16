@@ -56,6 +56,7 @@ implementation
 uses
   Controls, ComCtrls, ExtCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
   LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEExternToolIntf,
+  SynEdit, SynHighlighterPas, IDEOptEditorIntf,
   McpMarkdown, McpImageInfo, McpMessages;
 
 const
@@ -75,6 +76,7 @@ type
     FSource  : string;     { the text last rendered for FFile (LF line ends, no BOM) }
     FStamp   : string;     { age and size of FFile when it was last read from disk }
     procedure RestoreScroll(Data: PtrInt);
+    procedure ApplyColors;
     function  LoadImage(const AUrl: string; out AWhy: string): TPicture;
     procedure GetImage(Sender: TIpHtmlNode; const URL: string; var Picture: TPicture);
     function  CanHandle(Sender: TObject; const URL: string): Boolean;
@@ -115,7 +117,183 @@ type
 var
   GForm  : TMdForm = nil;
   GCount : Integer = 0;
+  { the editor scheme's colours, as last read (IdeColors); used by what is drawn here }
+  GBack   : TColor = clWindow;
+  GFore   : TColor = clWindowText;
+  GLink   : TColor = clHotLight;
+  GShade  : TColor = $F0F0F0;
+  GBorder : TColor = clGray;
 
+{ ── The IDE's colours ────────────────────────────────────────────────────── }
+
+function HtmlColor(AColor: TColor): string;
+begin
+  AColor := ColorToRGB(AColor);
+  Result := '#' + HexStr(Red(AColor), 2) + HexStr(Green(AColor), 2) + HexStr(Blue(AColor), 2);
+end;
+
+{ A mix of two colours: APercent of B in A. }
+function Blend(A, B: TColor; APercent: Integer): TColor;
+begin
+  A := ColorToRGB(A);
+  B := ColorToRGB(B);
+  Result := RGBToColor(
+    (Red(A) * (100 - APercent) + Red(B) * APercent) div 100,
+    (Green(A) * (100 - APercent) + Green(B) * APercent) div 100,
+    (Blue(A) * (100 - APercent) + Blue(B) * APercent) div 100);
+end;
+
+{ A scheme attribute's colour; ADefault where the scheme leaves it unset. }
+function Pick(AColor, ADefault: TColor): TColor;
+begin
+  if (AColor = clNone) or (AColor = clDefault) then Result := ADefault
+  else Result := AColor;
+end;
+
+{ Hue of a colour in degrees (0..359); -1 for a grey, which has none. }
+function HueOf(AColor: TColor): Integer;
+var
+  R, G, B, Mx, Mn, D : Integer;
+  H : Integer;
+begin
+  AColor := ColorToRGB(AColor);
+  R := Red(AColor);
+  G := Green(AColor);
+  B := Blue(AColor);
+  Mx := R;
+  if G > Mx then Mx := G;
+  if B > Mx then Mx := B;
+  Mn := R;
+  if G < Mn then Mn := G;
+  if B < Mn then Mn := B;
+  D := Mx - Mn;
+  if D < 40 then Exit(-1);
+  if Mx = R then H := (60 * (G - B)) div D
+  else if Mx = G then H := 120 + (60 * (B - R)) div D
+  else H := 240 + (60 * (R - G)) div D;
+  Result := (H + 360) mod 360;
+end;
+
+{ A colour of hue AHue (degrees) that reads well on a background of the scheme's brightness:
+  light and strong on a dark one, dark and strong on a light one. }
+function Synth(AHue: Integer; ADarkBack: Boolean): TColor;
+var
+  V, S, Sector, F, P, Q, T : Integer;
+begin
+  S := 190;                                  { saturation, 0..255 }
+  if ADarkBack then V := 240 else V := 185;  { brightness, 0..255 }
+  Sector := (AHue mod 360) div 60;
+  F := ((AHue mod 360) mod 60) * 255 div 60;
+  P := V * (255 - S) div 255;
+  Q := V * (255 - S * F div 255) div 255;
+  T := V * (255 - S * (255 - F) div 255) div 255;
+  case Sector of
+    0: Result := RGBToColor(V, T, P);
+    1: Result := RGBToColor(Q, V, P);
+    2: Result := RGBToColor(P, V, T);
+    3: Result := RGBToColor(P, Q, V);
+    4: Result := RGBToColor(T, P, V);
+  else Result := RGBToColor(V, P, Q);
+  end;
+end;
+
+{ Of the highlighter's colours, the one whose hue is nearest to AHue (a circular distance),
+  when it is near enough (within 35 degrees) to be taken for that hue; otherwise a colour of
+  that hue made for the scheme's background (Synth), so a scheme without amber still gets an
+  amber warning.  AFallback only when nothing can be made. }
+function Nearest(AHl: TSynPasSyn; AHue: Integer; AFallback: TColor;
+  const AUsed: array of TColor): TColor;
+var
+  Cands : array[0..7] of TColor;
+  I, Hu, Dist, Best : Integer;
+  C : TColor;
+  Taken : Boolean;
+begin
+  Cands[0] := AHl.NumberAttri.Foreground;
+  Cands[1] := AHl.StringAttri.Foreground;
+  Cands[2] := AHl.KeyAttri.Foreground;
+  Cands[3] := AHl.SymbolAttri.Foreground;
+  Cands[4] := AHl.DirectiveAttri.Foreground;
+  Cands[5] := AHl.CommentAttri.Foreground;
+  Cands[6] := AHl.AsmAttri.Foreground;
+  Cands[7] := AHl.IdentifierAttri.Foreground;
+  Result := AFallback;
+  Best := 1000;
+  for I := Low(Cands) to High(Cands) do
+  begin
+    if (Cands[I] = clNone) or (Cands[I] = clDefault) then Continue;
+    Hu := HueOf(Cands[I]);
+    if Hu < 0 then Continue;
+    Taken := False;
+    for C in AUsed do
+      if ColorToRGB(C) = ColorToRGB(Cands[I]) then Taken := True;
+    if Taken then Continue;
+    Dist := Abs(Hu - AHue);
+    if Dist > 180 then Dist := 360 - Dist;
+    if Dist < Best then
+    begin
+      Best := Dist;
+      Result := Cands[I];
+    end;
+  end;
+  if Best > 35 then
+    Result := Synth(AHue, (Red(ColorToRGB(GBack)) * 299 + Green(ColorToRGB(GBack)) * 587 +
+      Blue(ColorToRGB(GBack)) * 114) div 1000 < 128);
+end;
+
+{ The Markdown palette from the editor's colour scheme (Tools > Options > Editor > Colors):
+  the text and its background, the mouse-link colour for links, the highlighter's colours
+  for code and the alert stripes.  Without the IDE's options (or when they fail) the
+  Bootstrap defaults stay.  Read at every render, so a scheme change shows in the next
+  document. }
+procedure IdeColors(out APalette: TMdPalette);
+var
+  Ed : TSynEdit;
+  Hl : TSynPasSyn;
+  CCaution, CWarning, CImportant, CTip : TColor;
+begin
+  MdDefaultPalette(APalette);
+  if not Assigned(IDEEditorOptions) then Exit;
+  Ed := TSynEdit.Create(nil);
+  Hl := TSynPasSyn.Create(nil);
+  try
+    try
+      IDEEditorOptions.GetSynEditorSettings(Ed);
+      IDEEditorOptions.GetHighlighterObjSettings(Hl);
+    except
+      Exit;
+    end;
+    GBack := ColorToRGB(Ed.Color);
+    GFore := ColorToRGB(Ed.Font.Color);
+    GLink := Pick(Ed.MouseLinkColor.Foreground, Pick(Hl.KeyAttri.Foreground, GFore));
+    GShade := Blend(GBack, GFore, 6);
+    GBorder := Blend(GBack, GFore, 25);
+    APalette.Back      := HtmlColor(GBack);
+    APalette.Text      := HtmlColor(GFore);
+    APalette.Link      := HtmlColor(GLink);
+    APalette.Border    := HtmlColor(GBorder);
+    APalette.Shade     := HtmlColor(GShade);
+    APalette.Cell      := HtmlColor(GBack);
+    APalette.Code      := HtmlColor(Pick(Hl.StringAttri.Foreground, GFore));
+    APalette.Note      := HtmlColor(GLink);
+    { the alerts rise in alertness: note (the link colour) < tip < important < warning < caution;
+      from the scheme's colours, red for caution, then amber, yellow and green, each a colour
+      the others do not use where the scheme has enough of them }
+    CCaution := Nearest(Hl, 0, GFore, [GLink]);
+    CWarning := Nearest(Hl, 30, GFore, [GLink, CCaution]);
+    CImportant := Nearest(Hl, 60, GFore, [GLink, CCaution, CWarning]);
+    CTip := Nearest(Hl, 120, GFore, [GLink, CCaution, CWarning, CImportant]);
+    APalette.Tip       := HtmlColor(CTip);
+    APalette.Important := HtmlColor(CImportant);
+    APalette.Warning   := HtmlColor(CWarning);
+    APalette.Caution   := HtmlColor(CCaution);
+    APalette.Added     := APalette.Tip;
+    APalette.Removed   := APalette.Caution;
+  finally
+    Hl.Free;
+    Ed.Free;
+  end;
+end;
 { ── The image handler ────────────────────────────────────────────────────── }
 
 function Placeholder(ANode: TIpHtmlNode; const AWhy: string): TPicture;
@@ -130,8 +308,9 @@ begin
   try
     Bmp.Canvas.Font.Size := 9;
     Bmp.SetSize(Bmp.Canvas.TextWidth(Alt) + 8, Bmp.Canvas.TextHeight(Alt) + 6);
-    Bmp.Canvas.Brush.Color := $F0F0F0;
-    Bmp.Canvas.Pen.Color := clGray;
+    Bmp.Canvas.Brush.Color := GShade;
+    Bmp.Canvas.Pen.Color := GBorder;
+    Bmp.Canvas.Font.Color := GFore;
     Bmp.Canvas.Rectangle(0, 0, Bmp.Width, Bmp.Height);
     Bmp.Canvas.TextOut(4, 3, Alt);
     Result := TPicture.Create;
@@ -326,11 +505,7 @@ begin
   FPanel.DefaultFontSize := Screen.SystemFont.Size + 2;
   FPanel.FixedTypeface := MonospaceFont;
   FPanel.FontQuality := fqCleartype;
-  { Bootstrap 5: body text #212529, links #0d6efd }
-  FPanel.TextColor := RGBToColor(33, 37, 41);
-  FPanel.LinkColor := RGBToColor(13, 110, 253);
-  FPanel.VLinkColor := RGBToColor(13, 110, 253);
-  FPanel.ALinkColor := RGBToColor(10, 88, 202);
+  ApplyColors;
   FPanel.MarginWidth := 24;
   FPanel.MarginHeight := 16;
   FPanel.FactBAParag := 1.25;      { Bootstrap's line height of 1.5 }
@@ -347,11 +522,34 @@ begin
   inherited Destroy;
 end;
 
+{ The panel's own colours: the editor scheme's, or Bootstrap's where the IDE gives none. }
+procedure TMdTab.ApplyColors;
+begin
+  IdeColors(MdPalette);
+  if MdPalette.Back <> '' then
+  begin
+    FPanel.Color := GBack;
+    FPanel.TextColor := GFore;
+    FPanel.LinkColor := GLink;
+    FPanel.VLinkColor := GLink;
+    FPanel.ALinkColor := Blend(GLink, GFore, 30);
+  end
+  else
+  begin
+    { Bootstrap 5: body text #212529, links #0d6efd }
+    FPanel.TextColor := RGBToColor(33, 37, 41);
+    FPanel.LinkColor := RGBToColor(13, 110, 253);
+    FPanel.VLinkColor := RGBToColor(13, 110, 253);
+    FPanel.ALinkColor := RGBToColor(10, 88, 202);
+  end;
+end;
+
 procedure TMdTab.SetDocument(const AMarkdown: string);
 var
   C : TMarkdownHtml;
   Html : string;
 begin
+  ApplyColors;
   C := TMarkdownHtml.Create;
   try
     Html := C.ToHtml(AMarkdown, FImages);

@@ -75,6 +75,7 @@ type
     procedure TestComments;
     procedure TestImageSize;
     procedure TestEmoji;
+    procedure TestPalette;
     procedure TestNewSyntaxIsLinear;
   end;
 
@@ -996,6 +997,42 @@ begin
   AssertFalse(McpImageHeader(PngOf(10, 0), K, W, H));
   AssertFalse(McpImageHeader(PngOf($FFFFFFFF, 10), K, W, H));
   AssertFalse(McpImageHeader(PngOf(200000, 10), K, W, H));
+end;
+
+{ The colours come from MdPalette: the IDE's editor scheme in the window, Bootstrap's here. }
+procedure TTestMarkdown.TestPalette;
+var
+  Saved, P : TMdPalette;
+  R : string;
+begin
+  Saved := MdPalette;
+  try
+    { the default page names no background: the viewer paints its own }
+    MdDefaultPalette(MdPalette);
+    HasNot(H('x'), 'bgcolor');
+    { a scheme: dark background, light text, its own accents }
+    P := Saved;
+    P.Back := '#1E1E1E'; P.Text := '#D4D4D4'; P.Link := '#569CD6';
+    P.Border := '#444444'; P.Shade := '#2A2A2A'; P.Cell := '#1E1E1E';
+    P.Code := '#CE9178'; P.Note := '#569CD6'; P.Tip := '#6A9955';
+    P.Added := '#6A9955'; P.Removed := '#F44747';
+    MdPalette := P;
+    R := H('`c` and {+ in +} [- out -]' + #10#10 + '| a | b |' + #10 + '|---|---|' + #10 + '| 1 | 2 |');
+    Has(R, '<body bgcolor="#1E1E1E" text="#D4D4D4" link="#569CD6" vlink="#569CD6">');
+    Has(R, '<font color="#CE9178"><tt>c</tt></font>');
+    Has(R, '<font color="#6A9955"><u>in</u></font>');
+    Has(R, '<font color="#F44747"><del>out</del></font>');
+    Has(R, '<th bgcolor="#2A2A2A">a</th>');
+    Has(R, '<td bgcolor="#1E1E1E">1</td>');
+    Has(R, 'border:1px solid #444444');
+    Has(H('> [!NOTE]' + #10 + '> x'), '<td width="5" bgcolor="#569CD6">');
+    { none of Bootstrap's colours is left }
+    HasNot(R, '#F8F9FA');
+    HasNot(R, '#DEE2E6');
+    HasNot(R, '#FFFFFF');
+  finally
+    MdPalette := Saved;
+  end;
 end;
 
 initialization
