@@ -85,15 +85,20 @@ type
     procedure SetDocument(const AMarkdown: string);
     procedure Follow(const AText: string);
     procedure CheckSource;
+    function  FileEditor: TSourceEditorInterface;
     property Id: string read FId;
+    property FileName: string read FFile;
   end;
 
   TMdForm = class(TForm)
   private
     FPages : TPageControl;
     FLink  : string;       { a relative .md link clicked, opened after the click returns }
-    FTimer : TTimer;
+    FTimer    : TTimer;     { slow stat of the files that no editor holds }
+    FDebounce : TTimer;     { armed by an editor event, one shot }
     procedure Tick(Sender: TObject);
+    procedure Debounced(Sender: TObject);
+    procedure EditorStatus(Sender: TObject);
     procedure OpenLink(Data: PtrInt);
     procedure CloseTab(Sender: TObject);
     procedure WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
@@ -394,20 +399,26 @@ begin
   Application.QueueAsyncCall(@RestoreScroll, Y);
 end;
 
-{ Called by the window's timer: an editor holding the file is the truth (also while the
-  user types), else the file on disk when its age or size changed. }
+function TMdTab.FileEditor: TSourceEditorInterface;
+begin
+  Result := nil;
+  if (FFile <> '') and Assigned(SourceEditorManagerIntf) then
+    Result := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FFile);
+end;
+
+{ An editor holding the file is the truth (also while the user types), else the file on
+  disk when its age or size changed.  Called after an editor event (debounced) and by the
+  slow timer for files no editor holds. }
 procedure TMdTab.CheckSource;
 var
   Ed    : TSourceEditorInterface;
-  Raw  : string;
+  Raw   : string;
   Stamp : string;
   S     : TFileStream;
 begin
   if FFile = '' then Exit;
   try
-    Ed := nil;
-    if Assigned(SourceEditorManagerIntf) then
-      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FFile);
+    Ed := FileEditor;
     if Assigned(Ed) then
       Raw := Ed.Lines.Text
     else
@@ -446,8 +457,18 @@ begin
   FPages.Options := FPages.Options + [nboShowCloseButtons];
   FPages.OnCloseTabClicked := @CloseTab;
   OnClose := @WindowClosed;
+  { Typing is an event: any status change of an editor (a keystroke moves the caret).  The
+    handler only arms a one-shot debounce, so rendering waits for a pause in the typing. }
+  FDebounce := TTimer.Create(Self);
+  FDebounce.Enabled := False;
+  FDebounce.Interval := 250;
+  FDebounce.OnTimer := @Debounced;
+  if Assigned(SourceEditorManagerIntf) then
+    SourceEditorManagerIntf.RegisterChangeEvent(semEditorStatus, @EditorStatus);
+  { A file on disk that no editor holds changes without any event the IDE could give (the
+    LCL has no file watcher), so one stat per such tab, rarely. }
   FTimer := TTimer.Create(Self);
-  FTimer.Interval := 700;
+  FTimer.Interval := 2000;
   FTimer.OnTimer := @Tick;
   { on the monitor of the IDE's main window, about two thirds of its work area }
   R := Screen.PrimaryMonitor.WorkareaRect;
@@ -464,17 +485,50 @@ end;
 destructor TMdForm.Destroy;
 begin
   if GForm = Self then GForm := nil;
+  if Assigned(SourceEditorManagerIntf) then
+    SourceEditorManagerIntf.UnRegisterChangeEvent(semEditorStatus, @EditorStatus);
   Application.RemoveAsyncCalls(Self);
   inherited Destroy;
 end;
 
+{ An editor changed: if it holds a file shown in a tab, look at that tab after a pause. }
+procedure TMdForm.EditorStatus(Sender: TObject);
+var
+  I : Integer;
+begin
+  if not (Sender is TSourceEditorInterface) then Exit;
+  for I := 0 to FPages.PageCount - 1 do
+    if (FPages.Pages[I] is TMdTab) and (TMdTab(FPages.Pages[I]).FileName <> '') and
+       (CompareFilenames(TMdTab(FPages.Pages[I]).FileName,
+                         TSourceEditorInterface(Sender).FileName) = 0) then
+    begin
+      FDebounce.Enabled := False;
+      FDebounce.Enabled := True;
+      Exit;
+    end;
+end;
+
+procedure TMdForm.Debounced(Sender: TObject);
+var
+  I : Integer;
+begin
+  FDebounce.Enabled := False;
+  if not Visible then Exit;
+  for I := 0 to FPages.PageCount - 1 do
+    if (FPages.Pages[I] is TMdTab) and Assigned(TMdTab(FPages.Pages[I]).FileEditor) then
+      TMdTab(FPages.Pages[I]).CheckSource;
+end;
+
+{ Files no editor holds: a stat each, only while the window is shown. }
 procedure TMdForm.Tick(Sender: TObject);
 var
   I : Integer;
 begin
   if not Visible then Exit;
   for I := 0 to FPages.PageCount - 1 do
-    if FPages.Pages[I] is TMdTab then TMdTab(FPages.Pages[I]).CheckSource;
+    if (FPages.Pages[I] is TMdTab) and (TMdTab(FPages.Pages[I]).FileName <> '') and
+       (TMdTab(FPages.Pages[I]).FileEditor = nil) then
+      TMdTab(FPages.Pages[I]).CheckSource;
 end;
 
 { The IDE re-creates its windows at start when they were open at exit; documents are not
