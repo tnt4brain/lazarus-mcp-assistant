@@ -33,6 +33,7 @@ type
     FToolCallLog: Boolean;          { mcp-tools.log, one record per tool call (ADR-022) }
     FToolLogFile: string;           { where that file is; '' = in the Lazarus config folder }
     FToolLogPane: Boolean;          { one line per call in the Messages window (ADR-022, Amendment 1) }
+    FReviewPolicy: string;          { a file with unsaved edits changed on disk: ask, editor or disk (ADR-025) }
     FClientTokens: TMcpTokenStore;  { named tokens, as hashes (ADR-021) }
     procedure LoadDefaultSettings;
     procedure LoadTokens;
@@ -62,6 +63,9 @@ type
     property ToolCallLog: Boolean read FToolCallLog write FToolCallLog;
     property ToolLogFile: string read FToolLogFile write FToolLogFile;
     property ToolLogPane: Boolean read FToolLogPane write FToolLogPane;
+    { 'ask' (the review window), 'editor' (the editor wins, the disk text goes to name.ext.agent),
+      'disk' (the editor takes the disk text); anything else reads as 'ask' }
+    property ReviewPolicy: string read FReviewPolicy write FReviewPolicy;
     { the named client tokens; saved with the other settings }
     property ClientTokens: TMcpTokenStore read FClientTokens;
   end;
@@ -97,6 +101,7 @@ begin
   FToolCallLog         := False;
   FToolLogFile         := '';
   FToolLogPane         := False;
+  FReviewPolicy        := 'ask';
 end;
 
 procedure TMcpIdeSettings.LoadTokens;
@@ -182,6 +187,8 @@ begin
                               FXmlConfig.GetValue('Tools/ToolCallLog', False));
     FToolLogFile         := FXmlConfig.GetValue('Logging/ToolCallLogFile', '');
     FToolLogPane         := FXmlConfig.GetValue('Logging/ToolCallPane', False);
+    FReviewPolicy        := FXmlConfig.GetValue('Review/Policy', 'ask');
+    if (FReviewPolicy <> 'editor') and (FReviewPolicy <> 'disk') then FReviewPolicy := 'ask';
     LoadTokens;
   except
     LoadDefaultSettings;
@@ -207,6 +214,7 @@ begin
     FXmlConfig.SetValue('Logging/ToolCallLog',     FToolCallLog);
     FXmlConfig.SetValue('Logging/ToolCallLogFile', FToolLogFile);
     FXmlConfig.SetValue('Logging/ToolCallPane',    FToolLogPane);
+    FXmlConfig.SetValue('Review/Policy',           FReviewPolicy);
     FXmlConfig.DeleteValue('Tools/ToolCallLog');
     SaveTokens;
     { settings of the removed API client; ApiKey was stored in plain text }

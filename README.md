@@ -274,7 +274,16 @@ its own repository.
 
 Nobody is at the IDE's keyboard while a tool call executes, so the plugin
 answers the IDE's "Some files have changed on disk" dialog with *Reload*,
-which reloads only files without unsaved editor changes. Every HTTP response
+which reloads only files without unsaved editor changes. Before each call it
+also reloads, quietly, the open editors whose file an agent changed with its own
+tools. An editor with unsaved changes is never overwritten: when its file changed on
+disk, a review window opens (the Tools menu opens it by hand too) with three
+panes, the editor's text, the result and the disk's text, a merge of both where
+the changes do not overlap, and per-change arrows to take either side; only the
+result pane is editable, and nothing is written to the disk. *Options > MCP
+Assistant* can instead keep the editor's text and save the disk's version beside
+the file as `name.ext.agent`, or let the editor take the disk's text (undo with
+Ctrl+Z). The next tool result tells the assistant which happened. Every HTTP response
 carries `Connection: close`, and the server's sockets are not inheritable, so a
 program started by the IDE cannot keep a connection open.
 

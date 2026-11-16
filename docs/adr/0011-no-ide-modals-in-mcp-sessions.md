@@ -128,17 +128,30 @@ The fallback is matched on class name. Unknown dialogs aren't answered: guessing
   a session. The second one is one reason for the debug session lease (ADR-012),
   which keeps other clients from building while a session is live.
 
-## Amendment (2026-11-15): the disk-diffs answer keeps unsaved edits
+## Amendment (2026-11-13): files changed on disk are reloaded before the dialog
 
-Decision 3 said the "files changed on disk" dialog keeps unsaved edits. That was wrong for
-some files. The cause is in the IDE's `diskdiffsdialog.pas`: it pre-checks every file whose
-**project unit** is not modified (`Project1.UnitInfoWithFilename(...).Modified`), so a file
-open in an editor but not in the project counts as unmodified, is checked, and OK reloads it
-over the unsaved edit.
+An agent that edits with its own tools, then calls ours, had the IDE ask "files changed
+on disk" later, when the user came back to the window. Before each `tools/call`,
+`McpReloadChangedFiles` now compares every open editor with its file (cached by file age)
+and reloads, through `DoRevertEditorFile`, an editor that is **not modified** and differs
+from the disk. A modified editor is never looked at. Tests: `tests/treloadfiles.pas`, both
+shown to fail without the call and without the `Modified` check.
+
+`LazarusIDE.DoCheckFilesOnDisk(True)` was tried first and rejected. Its dialog, answered
+by decision 3, threw away the unsaved edit of an editor whose file had changed too (seen
+live). The cause is in the IDE's `diskdiffsdialog.pas`: it pre-checks every file whose
+**project unit** is not modified (`Project1.UnitInfoWithFilename(...).Modified`), so a
+file open in an editor but not in the project counts as unmodified, is checked, and OK
+reloads it over the unsaved edit. So the claim above, that the dialog keeps unsaved edits,
+was wrong for such files.
 
 Decision 3's answer to `TDiskDiffsDlg` therefore first takes the check off every file
 whose open editor is modified (`UncheckModifiedEditors`, looked up by file name). Not yet
-triggered live: the dialog only opens on a focus change or a build.
+triggered live: the dialog only opens on a focus change or a build, and the reload that
+runs before each call now keeps it away in the common case. The review window of ADR-025
+is the replacement for the dialog; the dialog is still answered as above, and the files it
+leaves alone go to that review (2026-11-15).
+
 ## Amendment (2026-10-17): dialogs we can't prevent are reported, not answered
 
 Decision 3 answers a few known dialogs and leaves the rest blocking. A tool call
