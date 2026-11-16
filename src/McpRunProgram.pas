@@ -32,7 +32,7 @@ uses
   Classes, SysUtils, SyncObjs, process, pipes, jsonparser, Controls, Forms,
   LazIDEIntf, ProjectIntf, MacroIntf, LazFileUtils, LazUTF8,
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
-  McpToolContext;
+  McpToolContext, McpHeapReport;
 
 const
   MaxBuffer = 256 * 1024;   { unread bytes kept per stream; the oldest are dropped }
@@ -621,7 +621,7 @@ end;
 
 function ReportJSON(Run: TRunThread; Launch: TJSONObject): string;
 var
-  Obj: TJSONObject;
+  Obj, Heap: TJSONObject;
   SOut, SErr: string;
   Trunc: Boolean;
   Done: Boolean;
@@ -640,6 +640,8 @@ begin
       Obj.Add('stdin_open', True);
     Obj.Add('stdout', SOut);
     Obj.Add('stderr', SErr);
+    if ParseHeapReport(SErr, Heap) then
+      Obj.Add('heap_report', Heap);
     if Trunc then
       Obj.Add('truncated', True);
     Result := Obj.AsJSON;

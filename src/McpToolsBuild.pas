@@ -752,7 +752,10 @@ begin
   Tools.Add(MakeTool('project_run',
     'Build (if needed) and run the active project without the debugger, ' +
     'optionally with new command-line arguments. Waits up to wait_seconds (default 10) and ' +
-    'answers {success, running, pid, exit_code, stdout, stderr}; a program still running ' +
+    'answers {success, running, pid, exit_code, stdout, stderr}; when the program printed ' +
+    'a heaptrc report (project_set_settings heaptrc=true, then rebuild) the answer also ' +
+    'has heap_report {unfreed_blocks, unfreed_bytes, leaked, leaks[] with address, size ' +
+    'and stack}; a program still running ' +
     '(a GUI program, a server) comes back with running=true: read it later with ' +
     'project_run_output, which can also stop it. The program has no console window. Its ' +
     'stdin is closed (it reads end of file) unless you pass stdin text or ' +

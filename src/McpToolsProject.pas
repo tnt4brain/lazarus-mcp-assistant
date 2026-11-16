@@ -67,6 +67,17 @@ const
     '"output_dir":{"type":"string","description":"Unit output directory; macros like $(TargetOS) are expanded at build time"},' +
     '"custom_options":{"type":"string","description":"Custom compiler options string (REPLACES existing value; read project_get_settings first to preserve existing flags)"},' +
     '"debug_info":{"type":"string","description":"Debug information (-g): none, dwarf3, dwarf2, dwarf2set, stabs or auto. The FpDebug debugger (debug_run) needs a dwarf format; rebuild afterwards"},' +
+    '"heaptrc":{"type":"boolean","description":"Heap-leak report at exit (-gh, unit heaptrc). The report goes to stderr; project_run returns it as heap_report. Rebuild afterwards"},' +
+    '"trash_variables":{"type":"boolean","description":"Fill new variables and heap blocks with junk to expose use of uninitialised data (-gt)"},' +
+    '"line_info":{"type":"boolean","description":"Source lines in run-time error and heaptrc call stacks (-gl, unit lineinfo)"},' +
+    '"io_checks":{"type":"boolean","description":"I/O checking (-Ci)"},' +
+    '"range_checks":{"type":"boolean","description":"Range checking (-Cr)"},' +
+    '"overflow_checks":{"type":"boolean","description":"Integer overflow checking (-Co)"},' +
+    '"stack_checks":{"type":"boolean","description":"Stack checking (-Ct)"},' +
+    '"assertions":{"type":"boolean","description":"Generate code for assert() (-Sa)"},' +
+    '"smart_link":{"type":"boolean","description":"Smart-link units, a smaller executable (-CX -XX)"},' +
+    '"verify_method_calls":{"type":"boolean","description":"Verify that a method is called on a valid object (-CR)"},' +
+    '"optimization":{"type":"integer","description":"Optimization level 0 (none) to 3 (-O1..-O3)"},' +
     '"widgetset":{"type":"string","description":"LCL widgetset of the active build mode (win32, qt5, qt6, gtk2, gtk3, cocoa, ...); \"default\" or empty string = the platform''s default. Packages using the LCL are rebuilt for it at the next build"}}}';
 
   SCHEMA_ADD_FILE_TO_PROJECT =
@@ -469,6 +480,92 @@ begin
   else
     Result := False;
   end;
+end;
+
+{ The on/off compiler switches of project_get/set_settings, by parameter name.  The
+  debug-run ones (heaptrc, trash_variables, line_info, the checks) are what a leak or
+  crash hunt needs; the IDE keeps them per build mode in the compiler options. }
+const
+  SWITCH_NAMES : array[0..9] of string = ('heaptrc', 'trash_variables', 'line_info',
+    'io_checks', 'range_checks', 'overflow_checks', 'stack_checks', 'assertions',
+    'smart_link', 'verify_method_calls');
+
+function SwitchValue(AOpts: TLazCompilerOptions; AIndex: Integer): Boolean;
+begin
+  case AIndex of
+    0: Result := AOpts.UseHeaptrc;
+    1: Result := AOpts.TrashVariables;
+    2: Result := AOpts.UseLineInfoUnit;
+    3: Result := AOpts.IOChecks;
+    4: Result := AOpts.RangeChecks;
+    5: Result := AOpts.OverflowChecks;
+    6: Result := AOpts.StackChecks;
+    7: Result := AOpts.IncludeAssertionCode;
+    8: Result := AOpts.SmartLinkUnit;
+  else Result := AOpts.VerifyObjMethodCall;
+  end;
+end;
+
+procedure SetSwitchValue(AOpts: TLazCompilerOptions; AIndex: Integer; AValue: Boolean);
+begin
+  case AIndex of
+    0: AOpts.UseHeaptrc := AValue;
+    1: AOpts.TrashVariables := AValue;
+    2: AOpts.UseLineInfoUnit := AValue;
+    3: AOpts.IOChecks := AValue;
+    4: AOpts.RangeChecks := AValue;
+    5: AOpts.OverflowChecks := AValue;
+    6: AOpts.StackChecks := AValue;
+    7: AOpts.IncludeAssertionCode := AValue;
+    8: AOpts.SmartLinkUnit := AValue;
+  else AOpts.VerifyObjMethodCall := AValue;
+  end;
+end;
+
+{ '' when every switch given is a boolean and optimization is 0..3, else why not.
+  Called before anything changes. }
+function CheckSwitches(AParams: TJSONObject): string;
+var
+  I : Integer;
+  D : TJSONData;
+begin
+  Result := '';
+  if AParams = nil then Exit;
+  for I := Low(SWITCH_NAMES) to High(SWITCH_NAMES) do
+  begin
+    D := AParams.Find(SWITCH_NAMES[I]);
+    if (D <> nil) and (D.JSONType <> jtBoolean) then
+      Exit(SWITCH_NAMES[I] + ' must be true or false');
+  end;
+  D := AParams.Find('optimization');
+  if D <> nil then
+    if (D.JSONType <> jtNumber) or (D.AsInteger < 0) or (D.AsInteger > 3) or
+       (D.AsFloat <> D.AsInteger) then
+      Exit('optimization must be 0 (none), 1, 2 or 3');
+end;
+
+procedure ApplySwitches(AParams: TJSONObject; AOpts: TLazCompilerOptions);
+var
+  I : Integer;
+  D : TJSONData;
+begin
+  if AParams = nil then Exit;
+  for I := Low(SWITCH_NAMES) to High(SWITCH_NAMES) do
+  begin
+    D := AParams.Find(SWITCH_NAMES[I]);
+    if D <> nil then SetSwitchValue(AOpts, I, D.AsBoolean);
+  end;
+  D := AParams.Find('optimization');
+  if D <> nil then AOpts.OptimizationLevel := D.AsInteger;
+end;
+
+procedure AddSwitches(AObj: TJSONObject; AOpts: TLazCompilerOptions);
+var
+  I : Integer;
+begin
+  for I := Low(SWITCH_NAMES) to High(SWITCH_NAMES) do
+    AObj.Add(SWITCH_NAMES[I], SwitchValue(AOpts, I));
+  AObj.Add('optimization', AOpts.OptimizationLevel);
 end;
 
 const
@@ -1050,7 +1147,10 @@ begin
         Obj.Add('widgetset',          EffectiveWidgetset);
         Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
         if Assigned(Proj.LazCompilerOptions) then
+        begin
           Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
+          AddSwitches(Obj, Proj.LazCompilerOptions);
+        end;
       end
       else
         Obj.Add('error', 'No active project');
@@ -1082,6 +1182,11 @@ begin
       Ctx.Result := 'debug_info must be none, dwarf3, dwarf2, dwarf2set, stabs or auto';
       Exit;
     end;
+    Ctx.Result := CheckSwitches(Ctx.Params);
+    if Ctx.Result <> '' then
+    begin
+      Ctx.Error := True; Exit;
+    end;
     { first, so that an unknown widgetset changes nothing }
     if Assigned(Ctx.Params) and (Ctx.Params.Find('widgetset') <> nil) then
     begin
@@ -1106,6 +1211,7 @@ begin
         Proj.LazCompilerOptions.GenerateDebugInfo := DbgGen;
         if DbgGen then Proj.LazCompilerOptions.DebugInfoType := DbgType;
       end;
+      ApplySwitches(Ctx.Params, Proj.LazCompilerOptions);
     end;
     LazarusIDE.DoSaveProject([]);
     Obj := TJSONObject.Create;
@@ -1118,6 +1224,7 @@ begin
       Obj.Add('widgetset',          EffectiveWidgetset);
       Obj.Add('widgetset_override', WidgetsetOverride(TProject(Proj)));
       Obj.Add('debug_info', DebugInfoName(Proj.LazCompilerOptions));
+      AddSwitches(Obj, Proj.LazCompilerOptions);
       Ctx.Result := Obj.AsJSON;
     finally
       Obj.Free;

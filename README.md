@@ -214,7 +214,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 |---|---|
 | `project_get_directory` | Root directory of the active project (contains the `.lpi`) |
 | `project_list_files` | Source files of the active project |
-| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, debug info (`debug_info`: none, dwarf3, ...; the debugger needs DWARF), compiler and FPC version, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does) |
+| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, debug info (`debug_info`: none, dwarf3, ...; the debugger needs DWARF), compiler and FPC version, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does), and the debug-run switches `heaptrc`, `trash_variables`, `line_info`, `io_checks`, `range_checks`, `overflow_checks`, `stack_checks`, `assertions`, `smart_link`, `verify_method_calls` and `optimization` (0-3) |
 | `project_add_file` / `project_remove_file` | Project file list (files stay on disk). Adding a file already in the project reports `already_in_project`. Removing a file open in the editor is refused until it is closed |
 | `project_create_unit` | New unit on disk, added to the project and opened |
 | `project_list_packages` | Required packages as in Project Inspector: version limits, resolved `.lpk`, status (`ok`, `not_found`, ...); `recursive` adds the whole graph in compile order |
@@ -223,7 +223,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_list_todos` | `TODO` / `FIXME` / `DONE` comments, as the IDE's ToDo List shows them |
 | `project_build` | Incremental build; returns success and errors |
 | `project_get_compiler_errors` | Errors and warnings of the last build |
-| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `wait_seconds`, default 10; a program still running comes back with `running: true`) |
+| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `wait_seconds`, default 10; a program still running comes back with `running: true`); a heaptrc report in stderr also comes back parsed as `heap_report` (unfreed blocks and bytes, each leak's size and call stack) |
 | `project_run_output` | The output of that program since the last read, its exit code once it ended; can wait for more, or stop it |
 | `project_run_input` | Sends text to the stdin of that program (`project_run` with `stdin` or `keep_stdin_open`), or closes it; returns the answer |
 | `project_get_windows` | The running program's visible windows (Windows: a tree of windowed controls, `Class "text" x,y wxh`, about 20 tokens a line. Linux (X11): the top-level windows only, found by process id, without the controls inside); `image` adds a PNG of each window (scaled to `max_size`), which also shows controls without a handle such as `TLabel`. Never waits for the program, so it also works while the program is paused in the debugger (the image is then copied from the screen). `ide=true` with `window` looks at the IDE's own windows instead (a form being built, a dialog); `window` is required then, so only the windows you name are shown |

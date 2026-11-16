@@ -34,6 +34,7 @@ type
     procedure TestEditorReplaceRange;
     procedure TestEditorFileDeletedAndCreatedAgain;
     procedure TestProjectGetSettings;
+    procedure TestProjectSwitchesRefused;
     procedure TestProjectOpenAlreadyOpen;
     procedure TestPackageGetInfo;
     procedure TestPackageFindUnit;
@@ -577,6 +578,29 @@ begin
     Ignore('no project open: ' + T);
   CheckNoError(Self, 'project_get_settings', T);
   CheckTrue(Pos('"project_file"', T) > 0, 'settings name the project: ' + T);
+  { the debug-run switches are reported, as booleans and a level }
+  CheckTrue(Pos('"heaptrc":', T) > 0, 'heaptrc is reported: ' + T);
+  CheckTrue(Pos('"range_checks":', T) > 0, 'range_checks is reported: ' + T);
+  CheckTrue(Pos('"optimization":', T) > 0, 'optimization is reported: ' + T);
+end;
+
+procedure TTestToolSmoke.TestProjectSwitchesRefused;
+{ A wrong switch value is refused before anything changes (the project is not touched). }
+var
+  Before, T : string;
+begin
+  Before := Call('project_get_settings', '{}');
+  if Pos('TOOL ERROR', Before) = 1 then
+    Ignore('no project open: ' + Before);
+  T := Call('project_set_settings', '{"heaptrc":"yes","output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a string is not a boolean: ' + T);
+  CheckTrue(Pos('heaptrc', T) > 0, 'the message names the parameter: ' + T);
+  T := Call('project_set_settings', '{"optimization":7,"output_dir":"lib/never"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'optimization 7 is refused: ' + T);
+  CheckTrue(Pos('optimization', T) > 0, 'the message names the parameter: ' + T);
+  T := Call('project_set_settings', '{"optimization":1.5}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'a fraction is refused: ' + T);
+  CheckEquals(Before, Call('project_get_settings', '{}'), 'nothing changed');
 end;
 
 procedure TTestToolSmoke.TestProjectOpenAlreadyOpen;
