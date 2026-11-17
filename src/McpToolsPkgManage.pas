@@ -488,8 +488,7 @@ begin
       Obj.Add('package', Pkg.Name);
       Obj.Add('unchanged', True);
       Cur.Free;
-      Result := Obj.AsJSON;
-      Exit;
+      Exit(Obj.AsJSON);
     end;
     Obj.Add('old', Old);
     Old := nil;

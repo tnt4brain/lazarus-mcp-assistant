@@ -446,8 +446,7 @@ begin
     begin
       Rest := Copy(AName, Length(Prefixes[I]) + 1, MaxInt);
       if Prefixes[I] = 'git_' then Rest := 'git ' + Rest;  { "Git: git stash pop" }
-      Result := Categories[I] + ': ' + StringReplace(Rest, '_', ' ', [rfReplaceAll]);
-      Exit;
+      Exit(Categories[I] + ': ' + StringReplace(Rest, '_', ' ', [rfReplaceAll]));
     end;
 end;
 

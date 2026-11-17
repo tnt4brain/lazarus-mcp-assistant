@@ -234,14 +234,12 @@ var
 
   procedure AddHunk(AEnd, BEnd: Integer);
   begin
-    if (AEnd > PA) or (BEnd > PB) then
+    if (AEnd <= PA) and (BEnd <= PB) then Exit;
+    SetLength(Result, Length(Result) + 1);
+    with Result[High(Result)] do
     begin
-      SetLength(Result, Length(Result) + 1);
-      with Result[High(Result)] do
-      begin
-        AStart := PA; ACount := AEnd - PA;
-        BStart := PB; BCount := BEnd - PB;
-      end;
+      AStart := PA; ACount := AEnd - PA;
+      BStart := PB; BCount := BEnd - PB;
     end;
   end;
 

@@ -1250,20 +1250,13 @@ begin
       Other := PackageEditingInterface.GetPackages(I);
       if Other.Modified then Mods.AddObject(Other.Name, Other);
     end;
-    if (Target <> nil) and (Mods.IndexOfObject(Target) < 0) then
+    { nothing to write: the target is not modified, or (no target) nothing is }
+    if (Mods.Count = 0) or ((Target <> nil) and (Mods.IndexOfObject(Target) < 0)) then
     begin
-      Obj.Add('package', Target.Name);
+      if Target <> nil then Obj.Add('package', Target.Name);
       Obj.Add('saved', True);
       Obj.Add('nothing_to_save', True);
-      Result := Obj.AsJSON;
-      Exit;
-    end;
-    if Mods.Count = 0 then
-    begin
-      Obj.Add('saved', True);
-      Obj.Add('nothing_to_save', True);
-      Result := Obj.AsJSON;
-      Exit;
+      Exit(Obj.AsJSON);
     end;
     if not SaveAll then
       for I := 0 to Mods.Count - 1 do

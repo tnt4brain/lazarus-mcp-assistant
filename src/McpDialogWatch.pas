@@ -258,17 +258,12 @@ end;
 
 procedure McpRemoveDialogWatch;
 begin
-  if Assigned(GWatch) then
-  begin
-    { only if nobody wrapped us since }
-    if TMethod(LazMessageWorker).Data = Pointer(GWatch) then
-    begin
-      LazMessageWorker  := GWatch.OrigMessage;
-      LazQuestionWorker := GWatch.OrigQuestion;
-      FreeAndNil(GWatch);
-    end;
-    { else leaked on purpose: the wrapper may still be called }
-  end;
+  if not Assigned(GWatch) then Exit;
+  { only if nobody wrapped us since; else leaked on purpose: the wrapper may still be called }
+  if TMethod(LazMessageWorker).Data <> Pointer(GWatch) then Exit;
+  LazMessageWorker  := GWatch.OrigMessage;
+  LazQuestionWorker := GWatch.OrigQuestion;
+  FreeAndNil(GWatch);
 end;
 
 {$IFDEF WINDOWS}

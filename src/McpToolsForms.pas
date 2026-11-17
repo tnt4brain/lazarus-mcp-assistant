@@ -1946,17 +1946,15 @@ begin
       if Assigned(IDEComponentPalette) then
         for RegComp in IDEComponentPalette.Comps do
         begin
-          if Pos(Query, LowerCase(RegComp.ComponentClass.ClassName)) > 0 then
-          begin
-            Obj := TJSONObject.Create;
-            Obj.Add('class_name', RegComp.ComponentClass.ClassName);
-            Obj.Add('unit_name',  RegComp.GetUnitName);
-            if Assigned(RegComp.RealPage) then
-              Obj.Add('palette_page', RegComp.RealPage.PageName)
-            else
-              Obj.Add('palette_page', RegComp.OrigPageName);
-            Arr.Add(Obj);
-          end;
+          if Pos(Query, LowerCase(RegComp.ComponentClass.ClassName)) = 0 then Continue;
+          Obj := TJSONObject.Create;
+          Obj.Add('class_name', RegComp.ComponentClass.ClassName);
+          Obj.Add('unit_name',  RegComp.GetUnitName);
+          if Assigned(RegComp.RealPage) then
+            Obj.Add('palette_page', RegComp.RealPage.PageName)
+          else
+            Obj.Add('palette_page', RegComp.OrigPageName);
+          Arr.Add(Obj);
         end;
       Ctx.Result := Arr.AsJSON;
     finally
