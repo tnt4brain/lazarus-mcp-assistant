@@ -58,7 +58,7 @@ function TTestGitWrite.Git(const AArgs: array of string): string;
 var
   O : string;
 begin
-  if not RunCommandInDir(FDir, 'git', AArgs, O) then
+  if not RunCommandInDir(FDir, 'git', AArgs, O, [poNoConsole], swoHide) then
     Fail('git ' + AArgs[0] + ' failed: ' + O);
   Result := O;
 end;
@@ -109,7 +109,7 @@ begin
   FDir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpgitwrite' + PathDelim +
           TestName + IntToStr(GetTickCount64) + PathDelim;
   ForceDirectories(FDir);
-  if not RunCommandInDir(FDir, 'git', ['init', '-q'], O) then
+  if not RunCommandInDir(FDir, 'git', ['init', '-q'], O, [poNoConsole], swoHide) then
     Ignore('git not usable here: ' + O);
   Git(['config', 'user.name', 'MCP Test']);
   Git(['config', 'user.email', 'mcp@test.invalid']);
@@ -352,7 +352,7 @@ begin
   T := Tool('git_archive', '"output":' + JsonStr(Out_) + ',"prefix":"pkg"');
   CheckFalse(IsError(T), T);
   CheckTrue(FileExists(Out_), 'archive written');
-  if RunCommandInDir(FDir, 'tar', ['-tf', Out_], Listing) then
+  if RunCommandInDir(FDir, 'tar', ['-tf', Out_], Listing, [poNoConsole], swoHide) then
     CheckTrue(Pos('pkg/a.txt', StringReplace(Listing, '\', '/', [rfReplaceAll])) > 0,
       'prefix and file in the archive: ' + Listing);
   { never overwritten }
@@ -405,9 +405,9 @@ begin
     ',"initial_branch":"trunk","gitignore":true}', []);
   CheckFalse(IsError(T), T);
   CheckTrue(DirectoryExists(D + '.git'), 'a repository now');
-  CheckTrue(RunCommandInDir(D, 'git', ['symbolic-ref', '--short', 'HEAD'], O), O);
+  CheckTrue(RunCommandInDir(D, 'git', ['symbolic-ref', '--short', 'HEAD'], O, [poNoConsole], swoHide), O);
   CheckEquals('trunk', Trim(O), 'the first branch is named');
-  CheckFalse(RunCommandInDir(D, 'git', ['rev-parse', '--verify', '-q', 'HEAD'], O),
+  CheckFalse(RunCommandInDir(D, 'git', ['rev-parse', '--verify', '-q', 'HEAD'], O, [poNoConsole], swoHide),
     'nothing is committed');
   CheckTrue(FileExists(D + 'x.txt'), 'the files are kept');
   CheckTrue(FileExists(D + '.gitignore'), 'the .gitignore is written');
