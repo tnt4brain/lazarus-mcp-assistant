@@ -65,7 +65,7 @@ function WindoweeLpi: string;
 implementation
 
 uses
-  SysUtils, DateUtils, Math, base64, fpjson, jsonparser, FileUtil, LazFileUtils;
+  SysUtils, DateUtils, Math, base64, fpjson, jsonparser, FileUtil, LazFileUtils, Process;
 
 const
   { in the text of project_get_windows once the fixture's form is up: on Windows
@@ -204,13 +204,14 @@ end;
 procedure TTestWindows.KillFixture;
 var
   Until_ : TDateTime;
+  Killed : string;
 begin
   Call('debug_stop', '{}');
   if Pos('No visible window', Call('project_get_windows', '{}')) > 0 then Exit;
   {$IFDEF WINDOWS}
-  ExecuteProcess('taskkill', '/F /IM ' + ExtractFileName(WindoweeExe), []);
+  RunCommand('taskkill', ['/F', '/IM', ExtractFileName(WindoweeExe)], Killed, [poNoConsole], swoHide);
   {$ELSE}
-  ExecuteProcess('/usr/bin/pkill', ['-x', ExtractFileName(WindoweeExe)]);
+  RunCommand('/usr/bin/pkill', ['-x', ExtractFileName(WindoweeExe)], Killed);
   {$ENDIF}
   Until_ := IncSecond(Now, 10);
   while (Pos('No visible window', Call('project_get_windows', '{}')) = 0) and (Now < Until_) do

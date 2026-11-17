@@ -361,10 +361,10 @@ begin
   DeleteDirectory(Dir, False);
   ForceDirectories(Dir);
   try
-    if not RunCommandInDir(Dir, 'git', ['init', '-q'], O) then
+    if not RunCommandInDir(Dir, 'git', ['init', '-q'], O, [poNoConsole], swoHide) then
       Ignore('git not usable here: ' + O);
-    RunCommandInDir(Dir, 'git', ['config', 'user.name', 'MCP Test'], O);
-    RunCommandInDir(Dir, 'git', ['config', 'user.email', 'mcp@test.invalid'], O);
+    RunCommandInDir(Dir, 'git', ['config', 'user.name', 'MCP Test'], O, [poNoConsole], swoHide);
+    RunCommandInDir(Dir, 'git', ['config', 'user.email', 'mcp@test.invalid'], O, [poNoConsole], swoHide);
     SL := TStringList.Create;
     try
       { new content each run: git's read-only object files can outlive
@@ -378,7 +378,7 @@ begin
     CheckNoError(Self, 'git_add', T);
     T := Call('git_commit', '{"message":' + JsonStr(Msg) + ',"work_dir":' + JsonStr(Dir) + '}');
     CheckNoError(Self, 'git_commit', T);
-    RunCommandInDir(Dir, 'git', ['log', '-1', '--format=%B'], O);
+    RunCommandInDir(Dir, 'git', ['log', '-1', '--format=%B'], O, [poNoConsole], swoHide);
     CheckEquals(Msg, TrimRight(AdjustLineBreaks(O, tlbsLF)), 'message kept whole');
   finally
     DeleteDirectory(Dir, False);
