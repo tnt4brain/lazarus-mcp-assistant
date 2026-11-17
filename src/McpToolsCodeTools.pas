@@ -333,13 +333,7 @@ begin
           end;
         end;
       end;
-      if Assigned(Node.FirstChild) then Node := Node.FirstChild
-      else if Assigned(Node.NextBrother) then Node := Node.NextBrother
-      else
-      begin
-        repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
-        if Assigned(Node) then Node := Node.NextBrother;
-      end;
+      Node := Node.Next;
     end;
     if Count = 1 then Result := True
     else if Count > 1 then
@@ -399,18 +393,11 @@ begin
             CleanToLineCol(Tool, CodeBuf, SectNode.NextBrother.StartPos, InsertLine, C)
           else
             CleanToLineCol(Tool, CodeBuf, ClsNode.EndPos - 1, InsertLine, C);
-          Result := True;
-          Exit;
+          Exit(True);
         end;
       end;
     end;
-    if Assigned(Node.FirstChild) then Node := Node.FirstChild
-    else if Assigned(Node.NextBrother) then Node := Node.NextBrother
-    else
-    begin
-      repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
-      if Assigned(Node) then Node := Node.NextBrother;
-    end;
+    Node := Node.Next;
   end;
 end;
 
@@ -1212,13 +1199,7 @@ begin
         Child := Child.NextBrother;
       end;
     end;
-    if Assigned(Node.FirstChild) then Node := Node.FirstChild
-    else if Assigned(Node.NextBrother) then Node := Node.NextBrother
-    else
-    begin
-      repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
-      if Assigned(Node) then Node := Node.NextBrother;
-    end;
+    Node := Node.Next;
   end;
 end;
 
