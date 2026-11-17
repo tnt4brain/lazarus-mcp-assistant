@@ -21,7 +21,7 @@ uses
   TUtils, TProtocol, TAuth, TTestInfra,
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
-  TCodeRename, TWindows, TFindDeclaration, TGitWrite, TTokens,
+  TCodeRename, TWindows, TFindDeclaration, TGitWrite, TGitRemote, TGitHistory, TConflictFiles, TTokens,
   TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }

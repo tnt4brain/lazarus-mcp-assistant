@@ -294,6 +294,27 @@ existing repository.
 it runs without holding the IDE, and nothing is built or opened: the result lists
 the `.lpi` and `.lpk` files found, for `project_open`.
 
+Remotes and history ([ADR-028](docs/adr/0028-git-remote-and-history-tools.md)):
+
+- `git_remote` (`list`, `add`, `set_url`, `rename`, `remove`), `git_fetch` (a configured remote; no
+  tags unless asked), `git_pull` (`ff-only` by default, or `merge`, or `rebase`), `git_push` (one branch
+  and named tags; `force` is `--force-with-lease`) and `git_tag` (`list`, `create`, `delete`; local).
+  **The user is asked in the IDE** for every push, every pull and every change of a remote's address,
+  with the remote, the address git will use and the commits that would go; there is no "remember" and no
+  setting that skips it. A force push asks a second question that names the commits it would discard.
+  Fetch from a configured remote, listing and local tags do not ask. No remote or branch name is assumed
+  (`origin` is only what `git clone` calls the first one), and every behavior a result depends on is
+  named on the command line, so a user's or a repository's `push.default`, `pull.rebase` or `merge.ff`
+  cannot change what a tool does; the answer carries the exact command that ran.
+- `git_merge` (`ff`, `squash`), `git_rebase` (`upstream`, `onto`; never interactive), `git_squash` (`count`
+  or `since`, `message`), `git_resolve` (one side of a whole file, or delete it), `git_merge_abort`,
+  `git_rebase_abort` and `git_rebase_continue`. Each refuses to start unless the tracked files are clean,
+  no editor has unsaved changes and nothing else is in progress, and makes a **backup ref**
+  (`refs/mcp-backup/<branch>/<UTC time>`) first: `git_reset` to it undoes the operation, `git_branches`
+  with `backups=true` lists them and `delete_backups=N` removes the old ones. A conflict is left in git's
+  own state and reported with the files and the next steps. Rebase and squash (and `git_reset`) warn when
+  commits that are already on a remote would be rewritten. They need git 2.38 (`git_merge`: 2.27).
+
 For the file open in the editor: `git_blame` (who last changed a line, and in
 which commit) defaults to the active editor's file and cursor line, and blames
 unsaved edits as uncommitted; `git_diff` with `active_file` diffs that file in

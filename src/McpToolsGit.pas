@@ -16,7 +16,8 @@ uses
   Classes, SysUtils, DateUtils, Math, Process, FileUtil, LazFileUtils,
   LazIDEIntf, SrcEditorIntf, CodeToolManager, CodeCache, LConvEncoding,
   fpjson,
-  McpToolContext, McpIdeState, McpToolsCodeTools, McpConsent;
+  McpToolContext, McpIdeState, McpToolsCodeTools, McpConsent, McpGitRun,
+  McpToolsGitRemote, McpToolsGitHistory, McpGitConflicts;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -74,6 +75,8 @@ const
 
   SCHEMA_GIT_BRANCHES =
     '{"type":"object","properties":{' +
+    '"backups":{"type":"boolean","description":"List the backup refs that git_merge, git_rebase and git_squash made (refs/mcp-backup/...), newest first, instead of the branches. git_reset to one undoes that operation"},' +
+    '"delete_backups":{"type":"integer","description":"Delete the backup refs older than this many days (0: all of them), then list what is left. The branches and commits are not touched"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
@@ -148,62 +151,6 @@ const
 
 { ── Helpers ──────────────────────────────────────────────────────────────── }
 
-{ AInput, if any, is written to git's standard input (git commit -F -): on
-  Windows TProcess joins the arguments into one command line without escaping
-  double quotes, so free text must not be an argument. }
-function RunGit(const Args: array of string; const WorkDir: string;
-  out Output: string; const AInput: string = ''): Boolean;
-var
-  GitExe    : string;
-  Proc      : TProcess;
-  Chunk     : string;
-  BytesRead : LongInt;
-  Arg       : string;
-const
-  BufSize = 4096;
-begin
-  GitExe := McpGitExecutable;
-  if GitExe = '' then
-  begin
-    Output := 'git executable not found on PATH; the user can set its path in ' +
-              'Tools > Options > MCP Assistant';
-    Result := False;
-    Exit;
-  end;
-  Output := '';
-  Proc   := TProcess.Create(nil);
-  try
-    Proc.Executable := GitExe;
-    for Arg in Args do
-      Proc.Parameters.Add(Arg);
-    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
-    Proc.ShowWindow := swoHide;
-    if WorkDir <> '' then
-      Proc.CurrentDirectory := WorkDir;
-    Proc.Execute;
-    if AInput <> '' then
-      Proc.Input.Write(AInput[1], Length(AInput));
-    Proc.CloseInput;
-    Chunk := '';
-    repeat
-      SetLength(Chunk, BufSize);
-      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
-      if BytesRead > 0 then
-      begin
-        SetLength(Chunk, BytesRead);
-        Output := Output + Chunk;
-      end;
-    until (BytesRead = 0) and not Proc.Running;
-    Proc.WaitOnExit;
-    Result := Proc.ExitCode = 0;
-    if not Result and (Pos('not a git repository', Output) > 0) then
-      Output := Trim(Output) + LineEnding + '(pass work_dir: a directory inside the repository; ' +
-        'without it the saved project''s directory, then the active editor''s file directory is used)';
-  finally
-    Proc.Free;
-  end;
-end;
-
 { True when a remote-tracking branch holds HEAD: a commit someone may have fetched. }
 function HeadIsOnRemote(const WorkDir: string): Boolean;
 var
@@ -211,21 +158,6 @@ var
 begin
   Result := RunGit(['branch', '-r', '--contains', 'HEAD'], WorkDir, Out_) and
             (Trim(Out_) <> '');
-end;
-
-function GetGitWorkDir(const Ctx: TMcpToolCall): string;
-begin
-  if Assigned(Ctx.Params) then
-    Result := Ctx.Params.Get('work_dir', '')
-  else
-    Result := '';
-  if (Result = '') and Assigned(LazarusIDE.ActiveProject) and
-     (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
-    Result := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile);
-  if (Result = '') and Assigned(SourceEditorManagerIntf) and
-     Assigned(SourceEditorManagerIntf.ActiveEditor) and
-     FilenameIsAbsolute(SourceEditorManagerIntf.ActiveEditor.FileName) then
-    Result := ExtractFilePath(SourceEditorManagerIntf.ActiveEditor.FileName);
 end;
 
 const
@@ -467,71 +399,6 @@ end;
 
 { ── git_clone ────────────────────────────────────────────────────────────── }
 
-{ Like RunGit, for a command that may take minutes and talks to a remote:
-  runs on the MCP worker thread (so AExe is passed in, McpGitExecutable is for
-  the main thread), never asks for credentials (stdin is closed, so a prompt
-  would hang), and is stopped after ATimeoutMs. }
-function RunGitTimed(const AExe: string; const Args: array of string;
-  const WorkDir: string; ATimeoutMs: QWord; out Output: string): Boolean;
-var
-  Proc     : TProcess;
-  Buf      : string;
-  N, I     : LongInt;
-  Arg      : string;
-  Started  : QWord;
-  TimedOut : Boolean;
-
-  procedure Drain;
-  begin
-    while Proc.Output.NumBytesAvailable > 0 do
-    begin
-      SetLength(Buf, 4096);
-      N := Proc.Output.Read(Buf[1], 4096);
-      if N <= 0 then Break;
-      SetLength(Buf, N);
-      Output := Output + Buf;
-    end;
-  end;
-
-begin
-  Output   := '';
-  TimedOut := False;
-  Proc     := TProcess.Create(nil);
-  try
-    Proc.Executable := AExe;
-    for Arg in Args do
-      Proc.Parameters.Add(Arg);
-    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
-    if WorkDir <> '' then
-      Proc.CurrentDirectory := WorkDir;
-    for I := 1 to GetEnvironmentVariableCount do
-      Proc.Environment.Add(GetEnvironmentString(I));
-    Proc.Environment.Add('GIT_TERMINAL_PROMPT=0');
-    Proc.Execute;
-    Proc.CloseInput;
-    Started := GetTickCount64;
-    while Proc.Running do
-    begin
-      Drain;
-      if GetTickCount64 - Started > ATimeoutMs then
-      begin
-        TimedOut := True;
-        Proc.Terminate(1);
-        Break;
-      end;
-      Sleep(30);
-    end;
-    Proc.WaitOnExit;
-    Drain;
-    Result := (Proc.ExitCode = 0) and not TimedOut;
-    if TimedOut then
-      Output := Output + LineEnding + 'git clone was stopped after ' +
-        IntToStr(ATimeoutMs div 60000) + ' minutes.';
-  finally
-    Proc.Free;
-  end;
-end;
-
 type
   { main-thread part of git_clone: the git executable and the user's consent }
   TGitCloneSync = class
@@ -713,6 +580,70 @@ begin
   end;
 end;
 
+{ git_branches with backups or delete_backups: the refs of refs/mcp-backup (ADR-028). }
+{ A file staged or a commit made: the Review window drops the conflict pages that are settled. }
+procedure DropSettledConflicts(const AWorkDir: string);
+var
+  G : TGit;
+begin
+  G.Exe := McpGitExecutable;
+  G.Dir := AWorkDir;
+  if G.Exe <> '' then
+    SyncConflicts(G);
+end;
+
+procedure BranchBackups(var Ctx: TMcpToolCall; const AWorkDir: string);
+var
+  G       : TGit;
+  Refs, Deleted : TStringList;
+  Days    : Integer;
+  Obj     : TJSONObject;
+  Item    : TJSONObject;
+  Arr     : TJSONArray;
+  Line    : string;
+begin
+  G.Exe := McpGitExecutable;
+  G.Dir := AWorkDir;
+  if G.Exe = '' then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'git executable not found on PATH; the user can set its path in ' +
+                  'Tools > Options > MCP Assistant';
+    Exit;
+  end;
+  Refs    := TStringList.Create;
+  Deleted := TStringList.Create;
+  Obj     := TJSONObject.Create;
+  try
+    Days := Ctx.Params.Get('delete_backups', -1);
+    if Days >= 0 then
+    begin
+      if not DeleteBackups(G, Days, Deleted) then
+        Ctx.Error := True;
+      Arr := TJSONArray.Create;
+      for Line in Deleted do
+        Arr.Add(Line);
+      Obj.Add('deleted', Arr);
+    end;
+    ListBackups(G, Refs);
+    Arr := TJSONArray.Create;
+    for Line in Refs do
+    begin
+      Item := TJSONObject.Create;
+      Item.Add('ref', Copy(Line, 1, Pos(#9, Line + #9) - 1));
+      Item.Add('commit', Copy(Line, Pos(#9, Line + #9) + 1, MaxInt));
+      Arr.Add(Item);
+    end;
+    Obj.Add('backups', Arr);
+    Obj.Add('work_dir', AWorkDir);
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+    Deleted.Free;
+    Refs.Free;
+  end;
+end;
+
 function DispatchGitTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   WorkDir   : string;
@@ -734,6 +665,8 @@ var
   En        : TJSONEnum;
   ActiveEd  : TSourceEditorInterface;
   I         : Integer;
+  Git       : TGit;
+  PublishedNote : string;
 begin
   Result := False;
 
@@ -891,6 +824,8 @@ begin
       finally
         GitArgs.Free;
       end;
+      if Ok then
+        DropSettledConflicts(WorkDir);
       Obj := TJSONObject.Create;
       try
         Obj.Add('output',   Output);
@@ -933,6 +868,8 @@ begin
         end;
         Ok := RunGit(['commit', '-F', '-'], WorkDir, Output, Message);
       end;
+      if Ok then
+        DropSettledConflicts(WorkDir);
       Obj := TJSONObject.Create;
       try
         Obj.Add('output',   Output);
@@ -989,6 +926,12 @@ begin
     begin
       Result  := True;
       WorkDir := GetGitWorkDir(Ctx);
+      if Assigned(Ctx.Params) and
+         (Ctx.Params.Get('backups', False) or (Ctx.Params.Get('delete_backups', -1) >= 0)) then
+      begin
+        BranchBackups(Ctx, WorkDir);
+        Exit;
+      end;
       Ok := RunGit(['branch', '-a', '--format=%(HEAD) %(refname:short)'],
                    WorkDir, Output);
       Obj := TJSONObject.Create;
@@ -1257,6 +1200,12 @@ begin
         Ctx.Result := 'target required';
         Exit;
       end;
+      { commits that leave the branch and are already on a remote: ADR-028, section 3 }
+      PublishedNote := '';
+      Git.Exe := McpGitExecutable;
+      Git.Dir := WorkDir;
+      if (Git.Exe <> '') and (Target[1] <> '-') and RefExists(Git, Target + '^{commit}') then
+        PublishedNote := PublishedWarning(Git, Target + '..HEAD');
       GitArgs := TStringList.Create;
       try
         GitArgs.Add('reset');
@@ -1273,6 +1222,8 @@ begin
       try
         Obj.Add('output',   Output);
         Obj.Add('work_dir', WorkDir);
+        if Ok and (PublishedNote <> '') then
+          Obj.Add('warning', PublishedNote);
         if not Ok then Ctx.Error := True;
         Ctx.Result := Obj.AsJSON;
       finally
@@ -1316,7 +1267,9 @@ begin
     'a new branch of that name (from start_point, default HEAD) and switches to it.',
     SCHEMA_GIT_CHECKOUT, MCP_ANN_DEST));
   Tools.Add(MakeTool('git_branches',
-    'List all local and remote branches. The current branch is prefixed with *.',
+    'List all local and remote branches. The current branch is prefixed with *. backups=true ' +
+    'lists the backup refs of git_merge, git_rebase and git_squash instead; delete_backups=N ' +
+    'deletes those older than N days.',
     SCHEMA_GIT_BRANCHES, MCP_ANN_RO));
   Tools.Add(MakeTool('git_branch_delete',
     'Delete a local branch that is fully merged (git branch -d). Git refuses the checked-out ' +
@@ -1356,7 +1309,9 @@ begin
   Tools.Add(MakeTool('git_reset',
     'Reset the current HEAD to target. mode=mixed (default) unstages changes ' +
     'and moves HEAD; mode=soft keeps changes staged. ' +
-    'Hard reset is intentionally not supported — use the terminal for that.',
+    'Hard reset is intentionally not supported — use the terminal for that. The result warns ' +
+    'when commits that leave the branch are already on a remote. A backup ref from git_merge, ' +
+    'git_rebase or git_squash as target undoes that operation.',
     SCHEMA_GIT_RESET, MCP_ANN_DEST));
 end;
 

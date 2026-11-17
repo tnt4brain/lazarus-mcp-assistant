@@ -35,6 +35,27 @@ function McpConfirmPackageInstall(const ALpkPath, AToolName: string;
 function McpConfirmClone(const AUrl, ATargetDir, ABranch, AToolName: string;
   ADepth: Integer; out AReason: string): Boolean;
 
+{ git_push, git_pull and git_remote add / set_url / rename / remove (ADR-028, section 1):
+  code leaves the machine, enters the working tree, or the place later pushes and pulls
+  go to changes.  Asked for every call, no "remember", no setting that skips it, 180 s
+  without an answer mean no.  AVerb finishes "An assistant wants to ...", AYesCaption
+  is the button that approves, ADetails is what the user reads (the caller names the
+  remote, its effective URL, the refs and the commits); AUrl is that effective URL.
+  Otherwise AReason says why not (for the client). }
+function McpConfirmGitRemote(const AToolName, AVerb, AYesCaption, AUrl, ADetails: string;
+  out AReason: string): Boolean;
+
+{ Test seam for McpConfirmGitRemote, armed only through the MCP_TEST_HOOKS hook (McpTestHooks).
+  It replaces the dialog's ShowModal and nothing else: the text is still built and kept.
+  It answers the next ADialogs dialogs (a force push asks twice) and disarms.  A "yes" is
+  honoured only when the address is a folder under the system's temp directory, so an
+  assistant that can reach the hook cannot approve a push to a real address; for any other
+  address the dialog is shown to the human as usual and the stub is spent.  A "no" is
+  always honoured. }
+procedure McpConsentStubArm(AAnswer: Boolean; ADialogs: Integer);
+function McpConsentStubCount: Integer;         { dialogs the stub has taken the place of }
+function McpConsentStubLastDetails: string;    { the text of the last one }
+
 { Is AForm one of the consent dialogs above?  ide_answer_dialog refuses to click in it: the
   dialog exists so that a human decides, and the assistant must not be able to approve
   its own request. }
@@ -265,6 +286,40 @@ begin
     McpAddMessage(mluImportant, AMsg);
 end;
 
+var
+  GStubLeft    : Integer = 0;     { dialogs the stub will still answer }
+  GStubAnswer  : Boolean = False;
+  GStubCount   : Integer = 0;
+  GStubDetails : string  = '';
+
+procedure McpConsentStubArm(AAnswer: Boolean; ADialogs: Integer);
+begin
+  GStubLeft   := ADialogs;
+  GStubAnswer := AAnswer;
+end;
+
+function McpConsentStubCount: Integer;
+begin
+  Result := GStubCount;
+end;
+
+function McpConsentStubLastDetails: string;
+begin
+  Result := GStubDetails;
+end;
+
+{ Is AUrl a folder inside the system's temp directory? }
+function IsTempFolder(const AUrl: string): Boolean;
+var
+  Temp, Dir : string;
+begin
+  if (AUrl = '') or not DirectoryExists(AUrl) then Exit(False);
+  Temp := IncludeTrailingPathDelimiter(ExpandFileNameUTF8(GetTempDir(False)));
+  Dir  := IncludeTrailingPathDelimiter(ExpandFileNameUTF8(AUrl));
+  Result := (Length(Dir) > Length(Temp)) and
+            (CompareFilenames(Copy(Dir, 1, Length(Temp)), Temp) = 0);
+end;
+
 { ── Public ───────────────────────────────────────────────────────────────── }
 
 function McpPackageNeedsConsent(const ALpkPath: string): Boolean;
@@ -370,6 +425,51 @@ begin
     AReason := 'The user declined cloning ' + AUrl + ' (or did not answer within ' +
       IntToStr(CONSENT_TIMEOUT_S) + ' s). Do not retry unless the user asks you to.';
     LogToIDE('MCP: cloning ' + AUrl + ' was declined.');
+  end;
+end;
+
+function McpConfirmGitRemote(const AToolName, AVerb, AYesCaption, AUrl, ADetails: string;
+  out AReason: string): Boolean;
+var
+  Dlg  : TMcpConsentForm;
+  Text : string;
+begin
+  AReason := '';
+  Text := 'An MCP assistant (tool ' + AToolName + ') asks you to allow this:' +
+    LineEnding + LineEnding + ADetails;
+  if Pos('http://', LowerCase(AUrl)) = 1 then
+    Text := Text + LineEnding + 'NOTE: this address is plain HTTP, not encrypted.' + LineEnding;
+
+  if GStubLeft > 0 then
+  begin
+    Dec(GStubLeft);
+    GStubDetails := Text;
+    if not GStubAnswer or IsTempFolder(AUrl) then
+    begin
+      Inc(GStubCount);
+      Result := GStubAnswer;
+      if not Result then
+        AReason := 'The user declined (stub).';
+      Exit;
+    end;
+    GStubLeft := 0;   { not a folder under temp: a human decides, and the stub is spent }
+  end;
+
+  Dlg := TMcpConsentForm.CreateConsent(
+    'An assistant wants to ' + AVerb + '. Do you want this?', Text,
+    'MCP Assistant: ' + AVerb + '?', AYesCaption, 'Don''t');
+  try
+    Result := Dlg.ShowModal = mrYes;
+  finally
+    Dlg.Free;
+  end;
+  if Result then
+    LogToIDE('MCP: the user allowed ' + AToolName + ' (' + AVerb + ') for ' + AUrl + '.')
+  else
+  begin
+    AReason := 'The user declined to let the assistant ' + AVerb + ' (or did not answer within ' +
+      IntToStr(CONSENT_TIMEOUT_S) + ' s). Do not retry unless the user asks you to.';
+    LogToIDE('MCP: ' + AToolName + ' (' + AVerb + ') for ' + AUrl + ' was declined.');
   end;
 end;
 

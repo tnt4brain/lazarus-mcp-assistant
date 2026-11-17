@@ -32,3 +32,4 @@ ADR-007 was never assigned; no document is missing.
 | [0025](0025-disk-conflict-review-window.md) | # ADR-025 — A review window for files changed on disk while the editor has unsaved changes |
 | [0026](0026-rebuild-sequence.md) | # ADR-026 — The IDE rebuild checks first and recovers from a failed build |
 | [0027](0027-navigation-and-refactoring-tools.md) | # ADR-027 — Navigation and refactoring beyond references and rename |
+| [0028](0028-git-remote-and-history-tools.md) | # ADR-028 — Git tools for remotes and for history: consent on the network, safety nets on rewriting, nothing left to git's defaults |

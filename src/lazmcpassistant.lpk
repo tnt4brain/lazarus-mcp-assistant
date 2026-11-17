@@ -15,8 +15,8 @@
     </CompilerOptions>
     <Description Value="A completely generic, brand-agnostic Model Context Protocol (MCP) IDE Assistant client for the Lazarus RAD IDE and Free Pascal ecosystem."/>
     <License Value="BSD-3-Clause"/>
-    <Version Major="1" Minor="6" Release="2"/>
-    <Files Count="51">
+    <Version Major="1" Minor="7"/>
+    <Files Count="56">
       <Item1>
         <Filename Value="lazmcpassistant.pas"/>
         <UnitName Value="LazMcpAssistant"/>
@@ -222,6 +222,26 @@
         <Filename Value="McpNativeDialog.pas"/>
         <UnitName Value="McpNativeDialog"/>
       </Item51>
+      <Item52>
+        <Filename Value="McpGitRun.pas"/>
+        <UnitName Value="McpGitRun"/>
+      </Item52>
+      <Item53>
+        <Filename Value="McpToolsGitRemote.pas"/>
+        <UnitName Value="McpToolsGitRemote"/>
+      </Item53>
+      <Item54>
+        <Filename Value="McpToolsGitHistory.pas"/>
+        <UnitName Value="McpToolsGitHistory"/>
+      </Item54>
+      <Item55>
+        <Filename Value="McpConflictFiles.pas"/>
+        <UnitName Value="McpConflictFiles"/>
+      </Item55>
+      <Item56>
+        <Filename Value="McpGitConflicts.pas"/>
+        <UnitName Value="McpGitConflicts"/>
+      </Item56>
     </Files>
     <CompatibilityMode Value="True"/>
     <RequiredPkgs Count="7">
