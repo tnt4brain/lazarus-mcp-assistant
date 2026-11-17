@@ -167,10 +167,10 @@ end;
 
 function InfoKnown(const Infos: TClassInfos; const Info: TClassInfo): Boolean;
 var
-  I : Integer;
+  Known : TClassInfo;
 begin
-  for I := 0 to High(Infos) do
-    if (Infos[I].Code = Info.Code) and (Infos[I].Y = Info.Y) and (Infos[I].X = Info.X) then
+  for Known in Infos do
+    if (Known.Code = Info.Code) and (Known.Y = Info.Y) and (Known.X = Info.X) then
       Exit(True);
   Result := False;
 end;
@@ -294,16 +294,16 @@ end;
 
 function InfosToJson(const Infos: TClassInfos): TJSONArray;
 var
-  I : Integer;
+  Info : TClassInfo;
   O : TJSONObject;
 begin
   Result := TJSONArray.Create;
-  for I := 0 to High(Infos) do
+  for Info in Infos do
   begin
-    O := PosObj(Infos[I].Code, Infos[I].X, Infos[I].Y);
-    O.Add('class', Infos[I].Name);
-    O.Add('parent', Infos[I].Parent);
-    O.Add('depth', Infos[I].Depth);
+    O := PosObj(Info.Code, Info.X, Info.Y);
+    O.Add('class', Info.Name);
+    O.Add('parent', Info.Parent);
+    O.Add('depth', Info.Depth);
     Result.Add(O);
   end;
 end;
@@ -391,8 +391,9 @@ end;
 
 function DoOverrides(var Ctx: TMcpToolCall): Boolean;
 var
+  Info : TClassInfo;
   Code, DCode, MCode : TCodeBuffer;
-  MX, MY, TopLine, BTop, BBottom, CleanPos, I : Integer;
+  MX, MY, TopLine, BTop, BBottom, CleanPos    : Integer;
   Tool, Tool2 : TCodeTool;
   Node, ProcNode, Proc2, TypeDef : TCodeTreeNode;
   MethodName, ClassName, Err, Kind : string;
@@ -440,8 +441,8 @@ begin
     Arr := TJSONArray.Create;
     Obj := TJSONObject.Create;
     try
-      for I := 0 to High(Infos) do
-        if FindMethodIn(Infos[I].Code, Infos[I].X, Infos[I].Y, MethodName, Tool2, Proc2) then
+      for Info in Infos do
+        if FindMethodIn(Info.Code, Info.X, Info.Y, MethodName, Tool2, Proc2) then
         begin
           if Tool2.ProcNodeHasSpecifier(Proc2, psOverride) then Kind := 'override'
           else if Tool2.ProcNodeHasSpecifier(Proc2, psReintroduce) then Kind := 'reintroduce'
@@ -450,7 +451,7 @@ begin
           if Tool2.CleanPosToCaret(Tool2.CurPos.StartPos, At) then
           begin
             O := PosObj(At.Code, At.X, At.Y);
-            O.Add('class', Infos[I].Name);
+            O.Add('class', Info.Name);
             O.Add('kind', Kind);
             O.Add('signature', Trim(At.Code.GetLine(At.Y - 1, False)));
             Arr.Add(O);
@@ -507,6 +508,7 @@ var
 
   procedure Visit(V: Integer);
   var
+    Ptr : Pointer;
     K, W : Integer;
     Comp : TFPList;
     Arr  : TJSONArray;
@@ -516,9 +518,9 @@ var
     Stack.Add(Pointer(PtrInt(V)));
     OnStack[V] := True;
     Edges := TFPList(Adj[V]);
-    for K := 0 to Edges.Count - 1 do
+    for Ptr in Edges do
     begin
-      W := PtrInt(Edges[K]);
+      W := PtrInt(Ptr);
       if Index[W] < 0 then
       begin
         Visit(W);
@@ -576,13 +578,13 @@ end;
 
 procedure AddNames(Src: TStrings; Dst: TStringList);
 var
-  I : Integer;
+  Item : string;
   N : string;
 begin
   if Src = nil then Exit;
-  for I := 0 to Src.Count - 1 do
+  for Item in Src do
   begin
-    N := Src[I];
+    N := Item;
     if Pos(' ', N) > 0 then N := Copy(N, 1, Pos(' ', N) - 1);
     Dst.Add(N);
   end;
@@ -590,6 +592,9 @@ end;
 
 function DoDependencies(var Ctx: TMcpToolCall): Boolean;
 var
+  Ptr : Pointer;
+  En : TJSONEnum;
+  Item : string;
   Handled : Boolean;
   Tmp     : TMcpToolCall;
   List    : TJSONArray;
@@ -612,12 +617,12 @@ begin
   Units := TFPList.Create;
   List := TJSONArray(GetJSON(Tmp.Result));
   try
-    for I := 0 to List.Count - 1 do
+    for En in List do
     begin
-      Ext := LowerCase(ExtractFileExt(List.Strings[I]));
+      Ext := LowerCase(ExtractFileExt(En.Value.AsString));
       if (Ext <> '.pas') and (Ext <> '.pp') and (Ext <> '.lpr') then Continue;
       U := TUnitRec.Create;
-      U.FileName := List.Strings[I];
+      U.FileName := En.Value.AsString;
       U.Name := LowerCase(ExtractFileNameOnly(U.FileName));
       Units.Add(U);
     end;
@@ -629,9 +634,9 @@ begin
       U.Name := LowerCase(ExtractFileNameOnly(FileArg));
       Units.Add(U);
     end;
-    for I := 0 to Units.Count - 1 do
+    for Ptr in Units do
     begin
-      U := TUnitRec(Units[I]);
+      U := TUnitRec(Ptr);
       Code := LoadCode(U.FileName);
       if Code = nil then begin U.Error := 'could not load'; Continue; end;
       MainU := nil; ImplU := nil;
@@ -671,9 +676,9 @@ begin
         end;
         Obj.Add('uses_implementation', Arr);
         Arr := TJSONArray.Create;
-        for J := 0 to Units.Count - 1 do
+        for Ptr in Units do
         begin
-          U := TUnitRec(Units[J]);
+          U := TUnitRec(Ptr);
           if U = One then Continue;
           if U.IntfUses.IndexOf(One.Name) >= 0 then
           begin
@@ -690,7 +695,7 @@ begin
           if Assigned(Code) and CodeToolBoss.FindUnusedUnits(Code, Unused) then
           begin
             Arr := TJSONArray.Create;
-            for J := 0 to Unused.Count - 1 do Arr.Add(Unused[J]);
+            for Item in Unused do Arr.Add(Item);
             Obj.Add('unused_units', Arr);
           end else
             Obj.Add('unused_units_error', CodeToolBoss.ErrorMessage);
@@ -707,7 +712,7 @@ begin
     { the whole project: edges between its own units, and the cycles }
     AdjAll := TFPList.Create; AdjIntf := TFPList.Create;
     try
-      for I := 0 to Units.Count - 1 do
+      for Ptr in Units do
       begin
         AdjAll.Add(TFPList.Create);
         AdjIntf.Add(TFPList.Create);
@@ -775,7 +780,7 @@ begin
       AdjAll.Free; AdjIntf.Free;
     end;
   finally
-    for I := 0 to Units.Count - 1 do TUnitRec(Units[I]).Free;
+    for Ptr in Units do TUnitRec(Ptr).Free;
     Units.Free;
     List.Free;
   end;
@@ -812,10 +817,10 @@ end;
 procedure AddCand(var C: TCands; const AName, AKind, AOwner: string; APos: Integer;
   const ANote: string);
 var
-  I : Integer;
+  Item : TCand;
 begin
-  for I := 0 to High(C) do
-    if (C[I].Name = AName) and (C[I].Owner = AOwner) and (C[I].Kind = AKind) then Exit;
+  for Item in C do
+    if (Item.Name = AName) and (Item.Owner = AOwner) and (Item.Kind = AKind) then Exit;
   SetLength(C, Length(C) + 1);
   C[High(C)].Name := AName;
   C[High(C)].Kind := AKind;
@@ -896,6 +901,7 @@ end;
 
 function DoUnused(var Ctx: TMcpToolCall): Boolean;
 var
+  Item : TCand;
   Code     : TCodeBuffer;
   Tool, Tool2 : TCodeTool;
   Files, Texts, Cand : TStringList;
@@ -949,12 +955,12 @@ begin
       Stream.Free;
     end;
     Checked := 0;
-    for I := 0 to High(C) do
+    for Item in C do
     begin
       if Checked >= MaxSym then Break;
       Inc(Checked);
-      Low := LowerCase(C[I].Name);
-      if not Tool.CleanPosToCaret(C[I].NamePos, At) then Continue;
+      Low := LowerCase(Item.Name);
+      if not Tool.CleanPosToCaret(Item.NamePos, At) then Continue;
       Cand := TStringList.Create;
       try
         for J := 0 to Files.Count - 1 do
@@ -963,7 +969,7 @@ begin
         Tree := nil;
         if not CodeToolBoss.FindReferencesInFiles(Cand, At.Code, Point(At.X, At.Y), False, Tree) then
         begin
-          DbgNote := DbgNote + 'FAILED ' + C[I].Name + ': ' + CodeToolBoss.ErrorMessage + ' | ';
+          DbgNote := DbgNote + 'FAILED ' + Item.Name + ': ' + CodeToolBoss.ErrorMessage + ' | ';
           Continue;
         end;
         Refs := 0;
@@ -1000,9 +1006,9 @@ begin
         if Refs = 0 then
         begin
           O := PosObj(At.Code, At.X, At.Y);
-          O.Add('name', IfThen(C[I].Owner <> '', C[I].Owner + '.', '') + C[I].Name);
-          O.Add('kind', C[I].Kind);
-          if C[I].Note <> '' then O.Add('note', C[I].Note);
+          O.Add('name', IfThen(Item.Owner <> '', Item.Owner + '.', '') + Item.Name);
+          O.Add('kind', Item.Kind);
+          if Item.Note <> '' then O.Add('note', Item.Note);
           Arr.Add(O);
         end;
       finally
@@ -1031,19 +1037,23 @@ end;
 function KindOf(const S: string; out K: TExtractProcType): Boolean;
 begin
   Result := True;
-  if (S = '') or (S = 'procedure') then K := eptProcedure
-  else if S = 'procedure_with_interface' then K := eptProcedureWithInterface
-  else if S = 'sub_procedure' then K := eptSubProcedure
-  else if S = 'sub_procedure_same_level' then K := eptSubProcedureSameLvl
-  else if S = 'private_method' then K := eptPrivateMethod
-  else if S = 'protected_method' then K := eptProtectedMethod
-  else if S = 'public_method' then K := eptPublicMethod
-  else if S = 'published_method' then K := eptPublishedMethod
-  else Result := False;
+  case S of
+    '', 'procedure':           K := eptProcedure;
+    'procedure_with_interface': K := eptProcedureWithInterface;
+    'sub_procedure':           K := eptSubProcedure;
+    'sub_procedure_same_level': K := eptSubProcedureSameLvl;
+    'private_method':          K := eptPrivateMethod;
+    'protected_method':        K := eptProtectedMethod;
+    'public_method':           K := eptPublicMethod;
+    'published_method':        K := eptPublishedMethod;
+  else
+    Result := False;
+  end;
 end;
 
 function DoExtract(var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
   Code, NewCode : TCodeBuffer;
   P1, P2 : TPoint;
   Kind   : TExtractProcType;
@@ -1145,8 +1155,8 @@ begin
       if (NewCode <> nil) and (NewCode <> Code) then Changed.Add(NewCode.Filename);
       Obj.Add('files_changed', Changed);
       if AutoSave then
-        for I := 0 to Changed.Count - 1 do
-          LazarusIDE.DoSaveEditorFile(Changed.Strings[I], []);
+        for En in Changed do
+          LazarusIDE.DoSaveEditorFile(En.Value.AsString, []);
       Obj.Add('saved', AutoSave);
       Ctx.Result := Obj.AsJSON;
     finally
@@ -1217,23 +1227,25 @@ end;
 
 function RequiresPackage(Info: TJSONData; const AName: string): Boolean;
 var
+  En : TJSONEnum;
   Reqs : TJSONArray;
-  I    : Integer;
 begin
   Result := False;
   Reqs := TJSONArray(TJSONObject(Info).Find('requires'));
   if Reqs <> nil then
-    for I := 0 to Reqs.Count - 1 do
-      if SameText(TJSONObject(Reqs[I]).Get('name', ''), AName) then Exit(True);
+    for En in Reqs do
+      if SameText(TJSONObject(En.Value).Get('name', ''), AName) then Exit(True);
 end;
 
 function DoMoveUnit(var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   FileArg, FromArg, ToArg, Res, FromName, ToName, MovedUnit, FromDir, Abs : string;
   P       : TJSONObject;
   FromInfo, ToInfo : TJSONData;
   Files   : TJSONArray;
-  I, J    : Integer;
+  I       : Integer;
   Used    : TStringList;
   FromUnits : TStringList;   { lower-case unit name = file, of the source package }
   NeedsFrom, NeedsTo : Boolean;
@@ -1265,31 +1277,31 @@ begin
       Obj := nil;
       try
         if Files <> nil then
-          for I := 0 to Files.Count - 1 do
+          for En in Files do
           begin
-            Abs := ExpandFileName(FromDir + TJSONObject(Files[I]).Get('file', ''));
-            if TJSONObject(Files[I]).Get('unit', '') <> '' then
-              FromUnits.Values[LowerCase(TJSONObject(Files[I]).Get('unit', ''))] := Abs;
+            Abs := ExpandFileName(FromDir + TJSONObject(En.Value).Get('file', ''));
+            if TJSONObject(En.Value).Get('unit', '') <> '' then
+              FromUnits.Values[LowerCase(TJSONObject(En.Value).Get('unit', ''))] := Abs;
             if SameFileName(Abs, FileArg) then
-              MovedUnit := TJSONObject(Files[I]).Get('unit', '');
+              MovedUnit := TJSONObject(En.Value).Get('unit', '');
           end;
         if MovedUnit = '' then
           Exit(Fail(Ctx, FileArg + ' is not a unit of ' + FromName));
         Files := TJSONArray(TJSONObject(ToInfo).Find('files'));
         if Files <> nil then
-          for I := 0 to Files.Count - 1 do
-            if SameText(TJSONObject(Files[I]).Get('unit', ''), MovedUnit) then
+          for En in Files do
+            if SameText(TJSONObject(En.Value).Get('unit', ''), MovedUnit) then
               Exit(Fail(Ctx, ToName + ' has a unit called ' + MovedUnit + ' already'));
 
         { what the unit needs from the units it leaves behind }
         NeedsFrom := False; NeedsTo := False;
         UsedNamesOf(FileArg, Used);
-        for I := 0 to Used.Count - 1 do
-          if (LowerCase(Used[I]) <> LowerCase(MovedUnit)) and
-             (FromUnits.Values[LowerCase(Used[I])] <> '') then
+        for Item in Used do
+          if (LowerCase(Item) <> LowerCase(MovedUnit)) and
+             (FromUnits.Values[LowerCase(Item)] <> '') then
           begin
             NeedsFrom := True;
-            Why.Add(MovedUnit + ' uses ' + Used[I] + ', which stays in ' + FromName);
+            Why.Add(MovedUnit + ' uses ' + Item + ', which stays in ' + FromName);
           end;
         { and what the units left behind need from it }
         for I := 0 to FromUnits.Count - 1 do
@@ -1297,8 +1309,8 @@ begin
           Abs := FromUnits.ValueFromIndex[I];
           if SameFileName(Abs, FileArg) then Continue;
           UsedNamesOf(Abs, Used);
-          for J := 0 to Used.Count - 1 do
-            if SameText(Used[J], MovedUnit) then
+          for Item in Used do
+            if SameText(Item, MovedUnit) then
             begin
               NeedsTo := True;
               Why.Add(ExtractFileNameOnly(Abs) + ' (stays in ' + FromName + ') uses ' + MovedUnit);
@@ -1384,12 +1396,15 @@ begin
     if not LazarusIDE.BeginCodeTools then
       Exit(Fail(Ctx, 'The IDE is busy (building, debugging or another code tool); try again'));
   CodeToolBoss.ClearError;
-  if Name = 'code_find_descendants' then DoDescendants(Ctx)
-  else if Name = 'code_find_overrides' then DoOverrides(Ctx)
-  else if Name = 'code_unit_dependencies' then DoDependencies(Ctx)
-  else if Name = 'code_find_unused' then DoUnused(Ctx)
-  else if Name = 'package_move_unit' then DoMoveUnit(Ctx)
-  else DoExtract(Ctx);
+  case Name of
+    'code_find_descendants':  DoDescendants(Ctx);
+    'code_find_overrides':    DoOverrides(Ctx);
+    'code_unit_dependencies': DoDependencies(Ctx);
+    'code_find_unused':       DoUnused(Ctx);
+    'package_move_unit':      DoMoveUnit(Ctx);
+  else
+    DoExtract(Ctx);
+  end;
 end;
 
 procedure RegisterNavSchemas(Tools: TJSONArray);

@@ -106,13 +106,13 @@ end;
 
 destructor TRefKeeper.Destroy;
 var
-  I : Integer;
+  Ptr : Pointer;
 begin
-  for I := 0 to FEntries.Count - 1 do
-    TRefEntry(FEntries[I]).Free;
+  for Ptr in FEntries do
+    TRefEntry(Ptr).Free;
   FEntries.Free;
-  for I := 0 to FPos.Count - 1 do
-    TPosEntry(FPos[I]).Free;
+  for Ptr in FPos do
+    TPosEntry(Ptr).Free;
   FPos.Free;
   inherited Destroy;
 end;

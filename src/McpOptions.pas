@@ -314,9 +314,12 @@ begin
   {$ENDIF}
   FGitPath.Text       := McpSettings.GitPath;
   FAllowInstall.Checked := McpSettings.AllowPackageInstall;
-  if McpSettings.ReviewPolicy = 'editor' then FReviewPolicy.ItemIndex := 1
-  else if McpSettings.ReviewPolicy = 'disk' then FReviewPolicy.ItemIndex := 2
-  else FReviewPolicy.ItemIndex := 0;
+  case McpSettings.ReviewPolicy of
+    'editor': FReviewPolicy.ItemIndex := 1;
+    'disk':   FReviewPolicy.ItemIndex := 2;
+  else
+    FReviewPolicy.ItemIndex := 0;
+  end;
   FListen.Text         := McpSettings.ListenAddress;
   ListenChanged(nil);
   FFileLabel.Caption   := 'Stored in ' + McpSettings.ConfigFileName;

@@ -261,12 +261,13 @@ end;
 
 function PackageCreate(AParams: TJSONObject; out AErr: string): string;
 var
+  En : TJSONEnum;
+  Item : string;
   Name, Dir, Lpk, UnitName, Ver, Text, TypeIdent : string;
   PkgType : TLazPackageType;
   Req     : TJSONArray;
   Reqs    : TStringList;
   V       : TPkgVersion;
-  I       : Integer;
   SL      : TStringList;
   Pkg     : TLazPackage;
   Other   : TLazPackage;
@@ -305,12 +306,12 @@ begin
     if Req = nil then
       Reqs.Add('FCL')
     else
-      for I := 0 to Req.Count - 1 do
-        Reqs.Add(Trim(Req.Strings[I]));
-    for I := 0 to Reqs.Count - 1 do
-      if not KnownToIDE(Reqs[I]) then
+      for En in Req do
+        Reqs.Add(Trim(En.Value.AsString));
+    for Item in Reqs do
+      if not KnownToIDE(Item) then
       begin
-        AErr := 'Package not found: ' + Reqs[I] + ' (neither loaded nor known to the ' +
+        AErr := 'Package not found: ' + Item + ' (neither loaded nor known to the ' +
                 'IDE''s package links)';
         Exit;
       end;
@@ -356,10 +357,10 @@ begin
     if Reqs.Count > 0 then
     begin
       Text := Text + '    <RequiredPkgs>' + LineEnding;
-      for I := 0 to Reqs.Count - 1 do
+      for Item in Reqs do
         Text := Text +
           '      <Item>' + LineEnding +
-          '        <PackageName Value="' + XmlAttr(Reqs[I]) + '"/>' + LineEnding +
+          '        <PackageName Value="' + XmlAttr(Item) + '"/>' + LineEnding +
           '      </Item>' + LineEnding;
       Text := Text + '    </RequiredPkgs>' + LineEnding;
     end;
@@ -487,8 +488,7 @@ begin
       Obj.Add('package', Pkg.Name);
       Obj.Add('unchanged', True);
       Cur.Free;
-      Result := Obj.AsJSON;
-      Exit;
+      Exit(Obj.AsJSON);
     end;
     Obj.Add('old', Old);
     Old := nil;
@@ -522,10 +522,7 @@ begin
   if (Method <> 'auto') and (Method <> 'ide') and (Method <> 'lazbuild') then
   begin AErr := 'method must be auto, ide or lazbuild'; Exit; end;
   if Method = 'lazbuild' then
-  begin
-    Result := '{"use_lazbuild":true}';
-    Exit;
-  end;
+    Exit('{"use_lazbuild":true}');
   Name := Trim(AParams.Get('package_name', ''));
   Lpk  := Trim(AParams.Get('lpk_path', ''));
   Pkg  := nil;
@@ -538,10 +535,7 @@ begin
   if Pkg = nil then
   begin
     if (Method = 'auto') and (Lpk <> '') then
-    begin
-      Result := '{"use_lazbuild":true}';
-      Exit;
-    end;
+      Exit('{"use_lazbuild":true}');
     if Lpk = '' then
     begin
       AErr := 'Package not loaded: ' + Name + '. Give its lpk_path instead.';
@@ -608,46 +602,54 @@ var
 begin
   Result := True;
   Err := '';
-  if Name = 'package_get_info' then
-  begin
-    if not HasTarget(Ctx.Params) then
-      Err := 'package_name or lpk_path required'
-    else if Ctx.Params.Get('lpk_path', '') <> '' then
+  case Name of
+    'package_get_info':
     begin
-      if TargetPackage(Ctx.Params, Pkg, Err, False) then
-        Ctx.Result := PackageInfoJSON(Pkg.Name, Ctx.Params.Get('files', False), Pkg);
-    end
-    else
-      Ctx.Result := PackageInfoJSON(Ctx.Params.Get('package_name', ''),
-                                    Ctx.Params.Get('files', False));
-  end
-  else if Name = 'package_list' then
-    Ctx.Result := PackageList(Ctx.Params)
-  else if Name = 'package_open' then
-  begin
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageOpen(Ctx.Params, Err);
-  end
-  else if Name = 'package_create' then
-    Ctx.Result := PackageCreate(Ctx.Params, Err)
-  else if Name = 'package_get_settings' then
-  begin
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageGetSettings(Ctx.Params, Err);
-  end
-  else if Name = 'package_set_settings' then
-  begin
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageSetSettings(Ctx.Params, Err);
-  end
-  else if Name = 'package_compile_ide' then
-  begin
-    { internal: the main-thread half of package_compile }
-    if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
-    else Ctx.Result := PackageCompileIde(Ctx.Params, Err);
-  end
+      if not HasTarget(Ctx.Params) then
+        Err := 'package_name or lpk_path required'
+      else if Ctx.Params.Get('lpk_path', '') <> '' then
+      begin
+        if TargetPackage(Ctx.Params, Pkg, Err, False) then
+          Ctx.Result := PackageInfoJSON(Pkg.Name, Ctx.Params.Get('files', False), Pkg);
+      end
+      else
+        Ctx.Result := PackageInfoJSON(Ctx.Params.Get('package_name', ''),
+                                      Ctx.Params.Get('files', False));
+    end;
+
+    'package_list':
+      Ctx.Result := PackageList(Ctx.Params);
+
+    'package_open':
+    begin
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageOpen(Ctx.Params, Err);
+    end;
+
+    'package_create':
+      Ctx.Result := PackageCreate(Ctx.Params, Err);
+
+    'package_get_settings':
+    begin
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageGetSettings(Ctx.Params, Err);
+    end;
+
+    'package_set_settings':
+    begin
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageSetSettings(Ctx.Params, Err);
+    end;
+
+    'package_compile_ide':
+    begin
+      { internal: the main-thread half of package_compile }
+      if not HasTarget(Ctx.Params) then Err := 'package_name or lpk_path required'
+      else Ctx.Result := PackageCompileIde(Ctx.Params, Err);
+    end;
   else
     Result := False;
+  end;
   PName := Err;
   if Result and (PName <> '') then
   begin

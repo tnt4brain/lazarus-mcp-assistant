@@ -63,15 +63,15 @@ end;
   the JSON array McpDoSearchInProject takes. }
 function DirectoryFilesJSON(const ADir, AMask: string): string;
 var
+  Item : string;
   Found : TStringList;
   Arr   : TJSONArray;
-  I     : Integer;
 begin
   Found := FindAllFiles(ADir, AMask, True);
   Arr   := TJSONArray.Create;
   try
-    for I := 0 to Found.Count - 1 do
-      Arr.Add(Found[I]);
+    for Item in Found do
+      Arr.Add(Item);
     Result := Arr.AsJSON;
   finally
     Arr.Free;
@@ -333,13 +333,7 @@ begin
           end;
         end;
       end;
-      if Assigned(Node.FirstChild) then Node := Node.FirstChild
-      else if Assigned(Node.NextBrother) then Node := Node.NextBrother
-      else
-      begin
-        repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
-        if Assigned(Node) then Node := Node.NextBrother;
-      end;
+      Node := Node.Next;
     end;
     if Count = 1 then Result := True
     else if Count > 1 then
@@ -399,18 +393,11 @@ begin
             CleanToLineCol(Tool, CodeBuf, SectNode.NextBrother.StartPos, InsertLine, C)
           else
             CleanToLineCol(Tool, CodeBuf, ClsNode.EndPos - 1, InsertLine, C);
-          Result := True;
-          Exit;
+          Exit(True);
         end;
       end;
     end;
-    if Assigned(Node.FirstChild) then Node := Node.FirstChild
-    else if Assigned(Node.NextBrother) then Node := Node.NextBrother
-    else
-    begin
-      repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
-      if Assigned(Node) then Node := Node.NextBrother;
-    end;
+    Node := Node.Next;
   end;
 end;
 
@@ -423,6 +410,7 @@ end;
   Main thread. }
 procedure DoCompleteCode(var Ctx: TMcpToolCall);
 var
+  Item : string;
   FilePath, OldSrc         : string;
   ErrText                  : string;
   Line, Col                : Integer;
@@ -515,8 +503,8 @@ begin
     if AutoSave then
     begin
       LazarusIDE.DoSaveEditorFile(FilePath, []);
-      for I := 0 to OtherFiles.Count - 1 do
-        LazarusIDE.DoSaveEditorFile(OtherFiles[I], []);
+      for Item in OtherFiles do
+        LazarusIDE.DoSaveEditorFile(Item, []);
     end;
     Obj := TJSONObject.Create;
     try
@@ -526,7 +514,7 @@ begin
       if OtherFiles.Count > 0 then
       begin
         Others := TJSONArray.Create;
-        for I := 0 to OtherFiles.Count - 1 do Others.Add(OtherFiles[I]);
+        for Item in OtherFiles do Others.Add(Item);
         Obj.Add('other_files_changed', Others);
       end;
       if Assigned(NewCode) and (NewY > 0) then
@@ -557,6 +545,8 @@ end;
   Main thread. }
 procedure DoRenameIdentifier(var Ctx: TMcpToolCall);
 var
+  Ptr : Pointer;
+  En : TJSONEnum;
   FilePath, NewName, Ident : string;
   Refused                  : string;
   Line, Col, I             : Integer;
@@ -651,8 +641,8 @@ begin
   RefTree    := nil;
   Obj        := TJSONObject.Create;
   try
-    for I := 0 to FileListJ.Count - 1 do
-      FileNames.Add(FileListJ.Strings[I]);
+    for En in FileListJ do
+      FileNames.Add(En.Value.AsString);
     { as the IDE does: the declaring file and the one asked about, either
       of them may be outside the project }
     if FileNames.IndexOf(DeclCode.Filename) < 0 then
@@ -698,8 +688,8 @@ begin
     end;
     { all or nothing: a reference in a file that may not be changed (the RTL, the LCL, another
       project's sources) stops the rename before anything is touched }
-    for I := 0 to Bufs.Count - 1 do
-      if not McpCheckWritable(TCodeBuffer(Bufs[I]).Filename, Refused) then
+    for Ptr in Bufs do
+      if not McpCheckWritable(TCodeBuffer(Ptr).Filename, Refused) then
       begin
         Ctx.Error := True;
         Ctx.Result := 'Nothing was renamed. ' + Refused + ' (dry_run lists every reference.)';
@@ -787,6 +777,7 @@ end;
 { Text indented as the members it joins, unless the caller indented it already. }
 function IndentMembers(const AText, AIndent: string): string;
 var
+  Item : string;
   Lines : TStringList;
   I     : Integer;
   Done  : Boolean;
@@ -795,10 +786,10 @@ begin
   try
     Lines.Text := AText;
     Done := False;
-    for I := 0 to Lines.Count - 1 do
-      if Trim(Lines[I]) <> '' then
+    for Item in Lines do
+      if Trim(Item) <> '' then
       begin
-        Done := (Lines[I][1] in [' ', #9]);   { already indented: leave it }
+        Done := (Item[1] in [' ', #9]);   { already indented: leave it }
         Break;
       end;
     if not Done then
@@ -920,11 +911,14 @@ begin
     Recursive := False;
     Exit(ExtractFilePath(Code.Filename));
   end;
-  if AName = 'lcl' then S := '$(LazarusDir)/lcl'
-  else if AName = 'components' then S := '$(LazarusDir)/components'
-  else if AName = 'rtl' then S := '$(FPCSrcDir)/rtl'
-  else if AName = 'fcl' then S := '$(FPCSrcDir)/packages'
-  else Exit;
+  case AName of
+    'lcl':        S := '$(LazarusDir)/lcl';
+    'components': S := '$(LazarusDir)/components';
+    'rtl':        S := '$(FPCSrcDir)/rtl';
+    'fcl':        S := '$(FPCSrcDir)/packages';
+  else
+    Exit;
+  end;
   if Assigned(IDEMacros) and IDEMacros.SubstituteMacros(S) then
     Result := SetDirSeparators(S);
 end;
@@ -968,6 +962,8 @@ function AddExtraFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
   FileNames: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
   out Err: string): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   Also      : TJSONArray;
   Roots     : TStringList;   { folder, '1' = recursive in Objects }
   Found     : TStringList;
@@ -988,20 +984,20 @@ begin
   Seen := TStringList.Create;
   try
     if Assigned(Also) then
-      for I := 0 to Also.Count - 1 do
+      for En in Also do
       begin
         Used := True;
-        if Also.Strings[I] = 'packages' then
+        if En.Value.AsString = 'packages' then
         begin
           for J := 0 to PackageEditingInterface.GetPackageCount - 1 do
             if PackageEditingInterface.GetPackages(J).DirectoryExpanded <> '' then
               Roots.AddObject(PackageEditingInterface.GetPackages(J).DirectoryExpanded, TObject(PtrUInt(1)));
           Continue;
         end;
-        Root := ExtraSourceRoot(Also.Strings[I], Code, Recursive);
+        Root := ExtraSourceRoot(En.Value.AsString, Code, Recursive);
         if Root = '' then
         begin
-          Err := 'Unknown "also" scope ' + Also.Strings[I] +
+          Err := 'Unknown "also" scope ' + En.Value.AsString +
                  ' (same_folder, lcl, components, rtl, fcl, packages)';
           Exit(False);
         end;
@@ -1027,24 +1023,24 @@ begin
     MaxFiles := Params.Get('max_files', DefaultMaxFiles);
     Seen.Sorted := True;
     Seen.CaseSensitive := False;
-    for I := 0 to FileNames.Count - 1 do
-      Seen.Add(FileNames[I]);
+    for Item in FileNames do
+      Seen.Add(Item);
     for I := 0 to Roots.Count - 1 do
     begin
       if not DirectoryExists(Roots[I]) then Continue;
       Found := FindAllFiles(Roots[I], '*.pas;*.pp;*.lpr', PtrUInt(Roots.Objects[I]) <> 0);
       try
-        for J := 0 to Found.Count - 1 do
+        for Item in Found do
         begin
-          if Seen.IndexOf(Found[J]) >= 0 then Continue;
-          if not FileHasWord(Found[J], Ident) then Continue;
+          if Seen.IndexOf(Item) >= 0 then Continue;
+          if not FileHasWord(Item, Ident) then Continue;
           if Searched >= MaxFiles then
           begin
             Truncated := True;
             Break;
           end;
-          Seen.Add(Found[J]);
-          FileNames.Add(Found[J]);
+          Seen.Add(Item);
+          FileNames.Add(Item);
           Inc(Searched);
         end;
       finally
@@ -1062,10 +1058,11 @@ function McpScopeFiles(Params: TJSONObject; Code: TCodeBuffer; X, Y: Integer;
   Files: TStringList; out Used, Truncated: Boolean; out Searched: Integer;
   out Err: string): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   Ctx2    : TMcpToolCall;
   Handled : Boolean;
   List    : TJSONArray;
-  J       : Integer;
   HasSelf : Boolean;
 begin
   Result := False;
@@ -1075,14 +1072,14 @@ begin
   if Ctx2.Error then begin Err := Ctx2.Result; Exit; end;
   List := TJSONArray(GetJSON(Ctx2.Result));
   try
-    for J := 0 to List.Count - 1 do
-      Files.Add(List.Strings[J]);
+    for En in List do
+      Files.Add(En.Value.AsString);
   finally
     List.Free;
   end;
   HasSelf := False;
-  for J := 0 to Files.Count - 1 do
-    if SameFileName(Files[J], Code.Filename) then HasSelf := True;
+  for Item in Files do
+    if SameFileName(Item, Code.Filename) then HasSelf := True;
   if not HasSelf then Files.Add(Code.Filename);
   Result := AddExtraFiles(Params, Code, X, Y, Files, Used, Truncated, Searched, Err);
 end;
@@ -1202,13 +1199,7 @@ begin
         Child := Child.NextBrother;
       end;
     end;
-    if Assigned(Node.FirstChild) then Node := Node.FirstChild
-    else if Assigned(Node.NextBrother) then Node := Node.NextBrother
-    else
-    begin
-      repeat Node := Node.Parent until not Assigned(Node) or Assigned(Node.NextBrother);
-      if Assigned(Node) then Node := Node.NextBrother;
-    end;
+    Node := Node.Next;
   end;
 end;
 
@@ -1315,6 +1306,8 @@ end;
 
 function DoDispatchCodeTools(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  En : TJSONEnum;
+  Item : string;
   Root       : TStmtNode;
   MaxDepth   : Integer;
   FilePath   : string;
@@ -1360,32 +1353,48 @@ var
 begin
   Result := False;
 
-  if Name = 'code_get_unit_interface' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+  case Name of
+    'code_get_unit_interface':
     begin
-      Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
-    end;
-    Ctx.Result := McpGetUnitInterface(Ctx.Params.Strings['file'], Ctx.Error);
-  end
-
-  else if Name = 'project_search' then
-  begin
-    Result := True;
-    FilePath := '';
-    if Assigned(Ctx.Params) then FilePath := Ctx.Params.Get('directory', '');
-    if FilePath <> '' then
-    begin
-      if not DirectoryExists(FilePath) then
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
       begin
-        Ctx.Error := True; Ctx.Result := 'Directory not found: ' + FilePath; Exit;
+        Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
       end;
-      TmpCtx.Result := DirectoryFilesJSON(FilePath,
-        Ctx.Params.Get('mask', '*.pas;*.pp;*.inc;*.lpr;*.dpr;*.lfm'));
-    end
-    else
+      Ctx.Result := McpGetUnitInterface(Ctx.Params.Strings['file'], Ctx.Error);
+    end;
+
+    'project_search':
     begin
+      Result := True;
+      FilePath := '';
+      if Assigned(Ctx.Params) then FilePath := Ctx.Params.Get('directory', '');
+      if FilePath <> '' then
+      begin
+        if not DirectoryExists(FilePath) then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Directory not found: ' + FilePath; Exit;
+        end;
+        TmpCtx.Result := DirectoryFilesJSON(FilePath,
+          Ctx.Params.Get('mask', '*.pas;*.pp;*.inc;*.lpr;*.dpr;*.lfm'));
+      end
+      else
+      begin
+        TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
+        TmpCtx.StopServer := nil;
+        McpDispatch('project_list_files', TmpCtx, TmpHandled);
+        if TmpCtx.Error then
+        begin
+          Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+        end;
+      end;
+      Ctx.Result := McpDoSearchInProject(TmpCtx.Result,
+        IfThen(Assigned(Ctx.Params), Ctx.Params.Get('query', ''), ''), @EditorLines);
+    end;
+
+    'project_list_todos':
+    begin
+      Result := True;
       TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
       TmpCtx.StopServer := nil;
       McpDispatch('project_list_files', TmpCtx, TmpHandled);
@@ -1393,858 +1402,844 @@ begin
       begin
         Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
       end;
+      Ctx.Result := McpDoListTodos(TmpCtx.Result,
+        Assigned(Ctx.Params) and Ctx.Params.Get('include_done', False));
     end;
-    Ctx.Result := McpDoSearchInProject(TmpCtx.Result,
-      IfThen(Assigned(Ctx.Params), Ctx.Params.Get('query', ''), ''), @EditorLines);
-  end
 
-  else if Name = 'project_list_todos' then
-  begin
-    Result := True;
-    TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.StopServer := nil;
-    McpDispatch('project_list_files', TmpCtx, TmpHandled);
-    if TmpCtx.Error then
+    'code_find_declaration':
     begin
-      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      end;
+      Symbol   := Ctx.Params.Get('symbol', '');
+      FilePath := Ctx.Params.Get('file',   '');
+      if (Symbol = '') or (FilePath = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'symbol and file arguments required'; Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
+      end;
+      if ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
+           Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
+      begin
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('declaration_file', NewCode.Filename);
+          Obj.Add('line', NewY);
+          Obj.Add('col',  NewX);
+          if NewY >= 1 then
+          begin
+            Snippet := NewCode.GetLine(NewY - 1, False);
+            Obj.Add('context', Trim(Snippet));
+          end;
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+      end
+      else
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Declaration not found for: ' + Symbol + ' (' + Why + ')';
+      end;
     end;
-    Ctx.Result := McpDoListTodos(TmpCtx.Result,
-      Assigned(Ctx.Params) and Ctx.Params.Get('include_done', False));
-  end
 
-  else if Name = 'code_find_declaration' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
+    'code_get_identifier_info':
     begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file', '');
+      NewX     := Ctx.Params.Get('col',  0);
+      NewY     := Ctx.Params.Get('line', 0);
+      if FilePath = '' then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
+      end;
+      Snippet := CodeToolBoss.FindSmartHint(CodeBuf, NewX, NewY);
+      Ctx.Result := '{"hint":' + TJSONString.Create(Snippet).AsJSON + '}';
     end;
-    Symbol   := Ctx.Params.Get('symbol', '');
-    FilePath := Ctx.Params.Get('file',   '');
-    if (Symbol = '') or (FilePath = '') then
+
+    'code_get_outline':
     begin
-      Ctx.Error := True; Ctx.Result := 'symbol and file arguments required'; Exit;
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file', '');
+      CodeBuf  := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+      end;
+      { the whole unit: OnlyInterface=True left out every routine of the
+        implementation }
+      if not CodeToolBoss.Explore(CodeBuf, Tool, False, False) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
+      end;
+      Outline := TJSONArray.Create;
+      try
+        TreeNode := Tool.Tree.Root;
+        while Assigned(TreeNode) do
+        begin
+          if TreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition, ctnConstDefinition,
+                                ctnProcedure, ctnProperty, ctnUseUnit] then
+          begin
+            CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, NewY, NewX);
+            Entry := TJSONObject.Create;
+            Entry.Add('kind', NodeDescriptionAsString(TreeNode.Desc));
+            Entry.Add('line', NewY);
+            { procedure and property nodes start with their keyword }
+            if TreeNode.Desc = ctnProcedure then
+              Entry.Add('name', Tool.ExtractProcName(TreeNode, []))
+            else if TreeNode.Desc = ctnProperty then
+              Entry.Add('name', Tool.ExtractPropName(TreeNode, False))
+            else
+              Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
+            Outline.Add(Entry);
+          end;
+          if Assigned(TreeNode.FirstChild) and
+             (TreeNode.Desc in [ctnUnit, ctnInterface, ctnImplementation,
+                                 ctnTypeSection, ctnVarSection, ctnConstSection,
+                                 ctnUsesSection, ctnTypeDefinition,
+                                 ctnClass, ctnRecordType, ctnObject,
+                                 ctnProgram, ctnLibrary, ctnPackage] + AllClassSections) then
+            TreeNode := TreeNode.FirstChild
+          else if Assigned(TreeNode.NextBrother) then
+            TreeNode := TreeNode.NextBrother
+          else
+          begin
+            TreeNode := TreeNode.Parent;
+            while Assigned(TreeNode) and not Assigned(TreeNode.NextBrother) do
+              TreeNode := TreeNode.Parent;
+            if Assigned(TreeNode) then
+              TreeNode := TreeNode.NextBrother;
+          end;
+        end;
+        Ctx.Result := Outline.AsJSON;
+      finally
+        Outline.Free;
+      end;
     end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
+
+    'code_find_references':
     begin
-      Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file', '');
+      NewX     := Ctx.Params.Get('col',  0);
+      NewY     := Ctx.Params.Get('line', 0);
+      if FilePath = '' then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+      end;
+      TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
+      TmpCtx.StopServer := nil;
+      McpDispatch('project_list_files', TmpCtx, TmpHandled);
+      if TmpCtx.Error then
+      begin
+        Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
+      end;
+      FileListJ := TJSONArray(GetJSON(TmpCtx.Result));
+      FileNames := TStringList.Create;
+      RefTree   := nil;
+      try
+        for En in FileListJ do
+          FileNames.Add(En.Value.AsString);
+        { a file outside the project (or package) is still searched: its own references }
+        FoundSelf := False;
+        for Item in FileNames do
+          if SameFileName(Item, CodeBuf.Filename) then FoundSelf := True;
+        if not FoundSelf then FileNames.Add(CodeBuf.Filename);
+        if not AddExtraFiles(Ctx.Params, CodeBuf, NewX, NewY, FileNames, ExtraUsed,
+             ExtraTrunc, ExtraCount, ExtraErr) then
+        begin
+          Ctx.Error := True; Ctx.Result := ExtraErr; Exit;
+        end;
+        DeclPt := Point(NewX, NewY);
+        if not CodeToolBoss.FindReferencesInFiles(FileNames, CodeBuf,
+               DeclPt, False, RefTree) then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'FindReferences failed: ' +
+            IfThen(CodeToolBoss.ErrorMessage <> '', CodeToolBoss.ErrorMessage,
+                   'no identifier at line ' + IntToStr(NewY) + ', col ' + IntToStr(NewX));
+          Exit;
+        end;
+        RefArr := TJSONArray.Create;
+        try
+          if Assigned(RefTree) then
+          begin
+            RefNode := RefTree.FindLowest;
+            while Assigned(RefNode) do
+            begin
+              RefPos := PCodeXYPosition(RefNode.Data);
+              RefObj := TJSONObject.Create;
+              RefObj.Add('file', RefPos^.Code.Filename);
+              RefObj.Add('line', RefPos^.Y);
+              RefObj.Add('col',  RefPos^.X);
+              RefArr.Add(RefObj);
+              RefNode := RefNode.Successor;
+            end;
+          end;
+          if ExtraUsed then
+          begin
+            { with an extra scope the answer says how far the search went }
+            Obj := TJSONObject.Create;
+            try
+              Obj.Add('references', RefArr.Clone as TJSONArray);
+              Obj.Add('extra_files_searched', ExtraCount);
+              if ExtraTrunc then
+                Obj.Add('truncated', True);
+              Ctx.Result := Obj.AsJSON;
+            finally
+              Obj.Free;
+            end;
+          end else
+            Ctx.Result := RefArr.AsJSON;
+        finally
+          RefArr.Free;
+        end;
+      finally
+        FileNames.Free;
+        FileListJ.Free;
+        if Assigned(RefTree) then
+          CodeToolBoss.FreeTreeOfPCodeXYPosition(RefTree);
+      end;
     end;
-    if ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
-         Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
+
+    'code_rename_identifier':
     begin
+      Result := True;
+      DoRenameIdentifier(Ctx);
+    end;
+
+    'code_goto_declaration':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'symbol and file required'; Exit;
+      end;
+      Symbol   := Ctx.Params.Get('symbol', '');
+      FilePath := Ctx.Params.Get('file',   '');
+      if (Symbol = '') or (FilePath = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'symbol and file required'; Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
+      end;
+      if not ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
+               Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'Declaration not found for: ' + Symbol + ' (' + Why + ')';
+        Exit;
+      end;
+      DeclPt := Point(NewX, NewY);
+      if (SourceEditorManagerIntf.SourceEditorIntfWithFilename(NewCode.Filename) = nil) and
+         not McpCheckFileToOpen(NewCode.Filename, Symbol) then
+      begin
+        Ctx.Error := True; Ctx.Result := Symbol; Exit;
+      end;
+      if LazarusIDE.DoOpenFileAndJumpToPos(NewCode.Filename, DeclPt,
+           NewTopLine, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not open: ' + NewCode.Filename; Exit;
+      end;
       Obj := TJSONObject.Create;
       try
         Obj.Add('declaration_file', NewCode.Filename);
         Obj.Add('line', NewY);
         Obj.Add('col',  NewX);
         if NewY >= 1 then
-        begin
-          Snippet := NewCode.GetLine(NewY - 1, False);
-          Obj.Add('context', Trim(Snippet));
-        end;
+          Obj.Add('context', Trim(NewCode.GetLine(NewY - 1, False)));
         Ctx.Result := Obj.AsJSON;
       finally
         Obj.Free;
       end;
-    end
-    else
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'Declaration not found for: ' + Symbol + ' (' + Why + ')';
     end;
-  end
 
-  else if Name = 'code_get_identifier_info' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
+    'project_create_unit':
     begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file', '');
-    NewX     := Ctx.Params.Get('col',  0);
-    NewY     := Ctx.Params.Get('line', 0);
-    if FilePath = '' then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
-    end;
-    Snippet := CodeToolBoss.FindSmartHint(CodeBuf, NewX, NewY);
-    Ctx.Result := '{"hint":' + TJSONString.Create(Snippet).AsJSON + '}';
-  end
-
-  else if Name = 'code_get_outline' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file', '');
-    CodeBuf  := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    { the whole unit: OnlyInterface=True left out every routine of the
-      implementation }
-    if not CodeToolBoss.Explore(CodeBuf, Tool, False, False) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
-    end;
-    Outline := TJSONArray.Create;
-    try
-      TreeNode := Tool.Tree.Root;
-      while Assigned(TreeNode) do
+      Result := True;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
       begin
-        if TreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition, ctnConstDefinition,
-                              ctnProcedure, ctnProperty, ctnUseUnit] then
-        begin
-          CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, NewY, NewX);
-          Entry := TJSONObject.Create;
-          Entry.Add('kind', NodeDescriptionAsString(TreeNode.Desc));
-          Entry.Add('line', NewY);
-          { procedure and property nodes start with their keyword }
-          if TreeNode.Desc = ctnProcedure then
-            Entry.Add('name', Tool.ExtractProcName(TreeNode, []))
-          else if TreeNode.Desc = ctnProperty then
-            Entry.Add('name', Tool.ExtractPropName(TreeNode, False))
-          else
-            Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
-          Outline.Add(Entry);
-        end;
-        if Assigned(TreeNode.FirstChild) and
-           (TreeNode.Desc in [ctnUnit, ctnInterface, ctnImplementation,
-                               ctnTypeSection, ctnVarSection, ctnConstSection,
-                               ctnUsesSection, ctnTypeDefinition,
-                               ctnClass, ctnRecordType, ctnObject,
-                               ctnProgram, ctnLibrary, ctnPackage] + AllClassSections) then
-          TreeNode := TreeNode.FirstChild
-        else if Assigned(TreeNode.NextBrother) then
-          TreeNode := TreeNode.NextBrother
+        Ctx.Error := True; Ctx.Result := 'file required'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file', '');
+      if not FilenameIsAbsolute(FilePath) then
+      begin
+        Proj := LazarusIDE.ActiveProject;
+        if Assigned(Proj) then
+          FilePath := AppendPathDelim(ExtractFilePath(Proj.ProjectInfoFile)) + FilePath
         else
         begin
-          TreeNode := TreeNode.Parent;
-          while Assigned(TreeNode) and not Assigned(TreeNode.NextBrother) do
-            TreeNode := TreeNode.Parent;
-          if Assigned(TreeNode) then
-            TreeNode := TreeNode.NextBrother;
+          Ctx.Error := True; Ctx.Result := 'No active project to resolve relative path'; Exit;
         end;
       end;
-      Ctx.Result := Outline.AsJSON;
-    finally
-      Outline.Free;
-    end;
-  end
-
-  else if Name = 'code_find_references' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file', '');
-    NewX     := Ctx.Params.Get('col',  0);
-    NewY     := Ctx.Params.Get('line', 0);
-    if FilePath = '' then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    TmpCtx.Params := Ctx.Params; TmpCtx.Result := ''; TmpCtx.Error := False;
-    TmpCtx.StopServer := nil;
-    McpDispatch('project_list_files', TmpCtx, TmpHandled);
-    if TmpCtx.Error then
-    begin
-      Ctx.Error := True; Ctx.Result := TmpCtx.Result; Exit;
-    end;
-    FileListJ := TJSONArray(GetJSON(TmpCtx.Result));
-    FileNames := TStringList.Create;
-    RefTree   := nil;
-    try
-      for J := 0 to FileListJ.Count - 1 do
-        FileNames.Add(FileListJ.Strings[J]);
-      { a file outside the project (or package) is still searched: its own references }
-      FoundSelf := False;
-      for J := 0 to FileNames.Count - 1 do
-        if SameFileName(FileNames[J], CodeBuf.Filename) then FoundSelf := True;
-      if not FoundSelf then FileNames.Add(CodeBuf.Filename);
-      if not AddExtraFiles(Ctx.Params, CodeBuf, NewX, NewY, FileNames, ExtraUsed,
-           ExtraTrunc, ExtraCount, ExtraErr) then
+      if not McpCheckWritable(FilePath, Why) then
       begin
-        Ctx.Error := True; Ctx.Result := ExtraErr; Exit;
+        Ctx.Error := True; Ctx.Result := Why; Exit;
       end;
-      DeclPt := Point(NewX, NewY);
-      if not CodeToolBoss.FindReferencesInFiles(FileNames, CodeBuf,
-             DeclPt, False, RefTree) then
+      if FileExists(FilePath) then
       begin
-        Ctx.Error  := True;
-        Ctx.Result := 'FindReferences failed: ' +
-          IfThen(CodeToolBoss.ErrorMessage <> '', CodeToolBoss.ErrorMessage,
-                 'no identifier at line ' + IntToStr(NewY) + ', col ' + IntToStr(NewX));
-        Exit;
+        Ctx.Error := True; Ctx.Result := 'File already exists: ' + FilePath; Exit;
       end;
-      RefArr := TJSONArray.Create;
-      try
-        if Assigned(RefTree) then
-        begin
-          RefNode := RefTree.FindLowest;
-          while Assigned(RefNode) do
-          begin
-            RefPos := PCodeXYPosition(RefNode.Data);
-            RefObj := TJSONObject.Create;
-            RefObj.Add('file', RefPos^.Code.Filename);
-            RefObj.Add('line', RefPos^.Y);
-            RefObj.Add('col',  RefPos^.X);
-            RefArr.Add(RefObj);
-            RefNode := RefNode.Successor;
-          end;
-        end;
-        if ExtraUsed then
-        begin
-          { with an extra scope the answer says how far the search went }
-          Obj := TJSONObject.Create;
-          try
-            Obj.Add('references', RefArr.Clone as TJSONArray);
-            Obj.Add('extra_files_searched', ExtraCount);
-            if ExtraTrunc then
-              Obj.Add('truncated', True);
-            Ctx.Result := Obj.AsJSON;
-          finally
-            Obj.Free;
-          end;
-        end else
-          Ctx.Result := RefArr.AsJSON;
-      finally
-        RefArr.Free;
+      NewName := Ctx.Params.Get('content', '');
+      if NewName = '' then
+      begin
+        PasName := ChangeFileExt(ExtractFileName(FilePath), '');
+        NewName :=
+          'unit ' + PasName + ';' + LineEnding +
+          LineEnding +
+          '{$mode objfpc}{$H+}' + LineEnding +
+          LineEnding +
+          'interface' + LineEnding +
+          LineEnding +
+          'implementation' + LineEnding +
+          LineEnding +
+          'end.' + LineEnding;
       end;
-    finally
-      FileNames.Free;
-      FileListJ.Free;
-      if Assigned(RefTree) then
-        CodeToolBoss.FreeTreeOfPCodeXYPosition(RefTree);
-    end;
-  end
-
-  else if Name = 'code_rename_identifier' then
-  begin
-    Result := True;
-    DoRenameIdentifier(Ctx);
-  end
-
-  else if Name = 'code_goto_declaration' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'symbol and file required'; Exit;
-    end;
-    Symbol   := Ctx.Params.Get('symbol', '');
-    FilePath := Ctx.Params.Get('file',   '');
-    if (Symbol = '') or (FilePath = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'symbol and file required'; Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
-    end;
-    if not ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
-             Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
-    begin
-      Ctx.Error  := True;
-      Ctx.Result := 'Declaration not found for: ' + Symbol + ' (' + Why + ')';
-      Exit;
-    end;
-    DeclPt := Point(NewX, NewY);
-    if (SourceEditorManagerIntf.SourceEditorIntfWithFilename(NewCode.Filename) = nil) and
-       not McpCheckFileToOpen(NewCode.Filename, Symbol) then
-    begin
-      Ctx.Error := True; Ctx.Result := Symbol; Exit;
-    end;
-    if LazarusIDE.DoOpenFileAndJumpToPos(NewCode.Filename, DeclPt,
-         NewTopLine, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not open: ' + NewCode.Filename; Exit;
-    end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('declaration_file', NewCode.Filename);
-      Obj.Add('line', NewY);
-      Obj.Add('col',  NewX);
-      if NewY >= 1 then
-        Obj.Add('context', Trim(NewCode.GetLine(NewY - 1, False)));
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'project_create_unit' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file', '');
-    if not FilenameIsAbsolute(FilePath) then
-    begin
+      CodeBuf := CodeToolBoss.CreateFile(FilePath);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not create buffer for: ' + FilePath; Exit;
+      end;
+      CodeBuf.Source := NewName;
+      if not CodeBuf.Save then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not save: ' + FilePath; Exit;
+      end;
       Proj := LazarusIDE.ActiveProject;
       if Assigned(Proj) then
-        FilePath := AppendPathDelim(ExtractFilePath(Proj.ProjectInfoFile)) + FilePath
+      begin
+        { a file added this way stays out of the project until it is marked }
+        PF := Proj.CreateProjectFile(FilePath);
+        Proj.AddFile(PF, False);
+        PF.IsPartOfProject := True;
+      end;
+      LazarusIDE.DoOpenEditorFile(FilePath, -1, -1, [ofRegularFile]);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('filename', FilePath);
+        Obj.Add('created',  True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'code_add_uses':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file',      '');
+      Symbol   := Ctx.Params.Get('unit_name', '');
+      AutoSave := Ctx.Params.Get('auto_save', False);
+      if (FilePath = '') or (Symbol = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file and unit_name required'; Exit;
+      end;
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+      { the editor's unsaved text goes to the code buffer without a disk write }
+      if not LazarusIDE.BeginCodeTools then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+        Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+      end;
+      { Snapshot source before CodeTools mutates TCodeBuffer via ApplyChanges }
+      PasName := CodeBuf.Source;
+      if Ctx.Params.Get('in_interface', True) then
+      begin
+        if not CodeToolBoss.AddUnitToMainUsesSection(CodeBuf, Symbol, '') then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'AddUnitToMainUsesSection failed: ' + CodeToolBoss.ErrorMessage;
+          Exit;
+        end;
+      end
       else
       begin
-        Ctx.Error := True; Ctx.Result := 'No active project to resolve relative path'; Exit;
+        if not CodeToolBoss.AddUnitToImplementationUsesSection(CodeBuf, Symbol, '') then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'AddUnitToImplementationUsesSection failed: ' + CodeToolBoss.ErrorMessage;
+          Exit;
+        end;
+      end;
+      { Apply mutates TCodeBuffer in memory only — no disk write }
+      if not CodeToolBoss.ApplyChanges then
+      begin
+        Ctx.Error := True; Ctx.Result := 'ApplyChanges failed'; Exit;
+      end;
+      { Diff OrigSource vs NewSource to find the single insertion point.
+        CodeTools always produces one contiguous insertion for this operation. }
+      Snippet := CodeBuf.Source;  { NewSource }
+      I := 1;
+      while (I <= Length(PasName)) and (I <= Length(Snippet))
+            and (PasName[I] = Snippet[I]) do
+        Inc(I);
+      { I = first divergence (1-based absolute position in original) }
+      J := 0;
+      while (J < Length(PasName) - I + 1) and (J < Length(Snippet) - I + 1)
+            and (PasName[Length(PasName) - J] = Snippet[Length(Snippet) - J]) do
+        Inc(J);
+      { InsertedText = Snippet[I .. Length(Snippet)-J] }
+      NewName := Copy(Snippet, I, Length(Snippet) - J - I + 1);
+      { Convert absolute position I in PasName to line/col }
+      CodeBuf.Source := PasName;  { restore so AbsoluteToLineCol is consistent }
+      CodeBuf.AbsoluteToLineCol(I, NewY, NewX);
+      { Open editor if not already open }
+      if not Assigned(Ed) then
+      begin
+        if not McpCheckFileToOpen(FilePath, NewName) then
+        begin
+          Ctx.Error := True; Ctx.Result := NewName; Exit;
+        end;
+        if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
+             [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
+        end;
+        Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+      end;
+      { Insert into editor buffer — lands on undo stack, no disk write }
+      Ed.ReplaceText(Point(NewX, NewY), Point(NewX, NewY), NewName);
+      if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',      FilePath);
+        Obj.Add('unit_name', Symbol);
+        Obj.Add('added',     True);
+        if AutoSave then Obj.Add('saved', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
       end;
     end;
-    if not McpCheckWritable(FilePath, Why) then
-    begin
-      Ctx.Error := True; Ctx.Result := Why; Exit;
-    end;
-    if FileExists(FilePath) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'File already exists: ' + FilePath; Exit;
-    end;
-    NewName := Ctx.Params.Get('content', '');
-    if NewName = '' then
-    begin
-      PasName := ChangeFileExt(ExtractFileName(FilePath), '');
-      NewName :=
-        'unit ' + PasName + ';' + LineEnding +
-        LineEnding +
-        '{$mode objfpc}{$H+}' + LineEnding +
-        LineEnding +
-        'interface' + LineEnding +
-        LineEnding +
-        'implementation' + LineEnding +
-        LineEnding +
-        'end.' + LineEnding;
-    end;
-    CodeBuf := CodeToolBoss.CreateFile(FilePath);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not create buffer for: ' + FilePath; Exit;
-    end;
-    CodeBuf.Source := NewName;
-    if not CodeBuf.Save then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not save: ' + FilePath; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    if Assigned(Proj) then
-    begin
-      { a file added this way stays out of the project until it is marked }
-      PF := Proj.CreateProjectFile(FilePath);
-      Proj.AddFile(PF, False);
-      PF.IsPartOfProject := True;
-    end;
-    LazarusIDE.DoOpenEditorFile(FilePath, -1, -1, [ofRegularFile]);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('filename', FilePath);
-      Obj.Add('created',  True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'code_add_uses' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
+    'code_insert_in_procedure':
     begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file',      '');
-    Symbol   := Ctx.Params.Get('unit_name', '');
-    AutoSave := Ctx.Params.Get('auto_save', False);
-    if (FilePath = '') or (Symbol = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file and unit_name required'; Exit;
-    end;
-    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    { the editor's unsaved text goes to the code buffer without a disk write }
-    if not LazarusIDE.BeginCodeTools then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
-      Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    { Snapshot source before CodeTools mutates TCodeBuffer via ApplyChanges }
-    PasName := CodeBuf.Source;
-    if Ctx.Params.Get('in_interface', True) then
-    begin
-      if not CodeToolBoss.AddUnitToMainUsesSection(CodeBuf, Symbol, '') then
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file',       '');
+      Symbol   := Ctx.Params.Get('proc_name',  '');
+      NewName  := Ctx.Params.Get('class_name', '');
+      Snippet  := Ctx.Params.Get('text',       '');
+      AutoSave := Ctx.Params.Get('auto_save',  False);
+      Line     := Ctx.Params.Get('line', 0);
+      if (FilePath = '') or (Symbol = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
+      end;
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+      { the editor's unsaved text goes to the code buffer without a disk write }
+      if not LazarusIDE.BeginCodeTools then
       begin
         Ctx.Error := True;
-        Ctx.Result := 'AddUnitToMainUsesSection failed: ' + CodeToolBoss.ErrorMessage;
+        Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
         Exit;
       end;
-    end
-    else
-    begin
-      if not CodeToolBoss.AddUnitToImplementationUsesSection(CodeBuf, Symbol, '') then
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
       begin
-        Ctx.Error := True;
-        Ctx.Result := 'AddUnitToImplementationUsesSection failed: ' + CodeToolBoss.ErrorMessage;
-        Exit;
+        Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
       end;
-    end;
-    { Apply mutates TCodeBuffer in memory only — no disk write }
-    if not CodeToolBoss.ApplyChanges then
-    begin
-      Ctx.Error := True; Ctx.Result := 'ApplyChanges failed'; Exit;
-    end;
-    { Diff OrigSource vs NewSource to find the single insertion point.
-      CodeTools always produces one contiguous insertion for this operation. }
-    Snippet := CodeBuf.Source;  { NewSource }
-    I := 1;
-    while (I <= Length(PasName)) and (I <= Length(Snippet))
-          and (PasName[I] = Snippet[I]) do
-      Inc(I);
-    { I = first divergence (1-based absolute position in original) }
-    J := 0;
-    while (J < Length(PasName) - I + 1) and (J < Length(Snippet) - I + 1)
-          and (PasName[Length(PasName) - J] = Snippet[Length(Snippet) - J]) do
-      Inc(J);
-    { InsertedText = Snippet[I .. Length(Snippet)-J] }
-    NewName := Copy(Snippet, I, Length(Snippet) - J - I + 1);
-    { Convert absolute position I in PasName to line/col }
-    CodeBuf.Source := PasName;  { restore so AbsoluteToLineCol is consistent }
-    CodeBuf.AbsoluteToLineCol(I, NewY, NewX);
-    { Open editor if not already open }
-    if not Assigned(Ed) then
-    begin
-      if not McpCheckFileToOpen(FilePath, NewName) then
+      if not CodeToolBoss.Explore(CodeBuf, Tool, True, False) then
       begin
-        Ctx.Error := True; Ctx.Result := NewName; Exit;
+        Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
       end;
-      if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
-           [ofOnlyIfExists, ofRegularFile]) <> mrOK then
-      begin
-        Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
-      end;
-      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    end;
-    { Insert into editor buffer — lands on undo stack, no disk write }
-    Ed.ReplaceText(Point(NewX, NewY), Point(NewX, NewY), NewName);
-    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('file',      FilePath);
-      Obj.Add('unit_name', Symbol);
-      Obj.Add('added',     True);
-      if AutoSave then Obj.Add('saved', True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'code_insert_in_procedure' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file',       '');
-    Symbol   := Ctx.Params.Get('proc_name',  '');
-    NewName  := Ctx.Params.Get('class_name', '');
-    Snippet  := Ctx.Params.Get('text',       '');
-    AutoSave := Ctx.Params.Get('auto_save',  False);
-    Line     := Ctx.Params.Get('line', 0);
-    if (FilePath = '') or (Symbol = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
-    end;
-    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    { the editor's unsaved text goes to the code buffer without a disk write }
-    if not LazarusIDE.BeginCodeTools then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
-      Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    if not CodeToolBoss.Explore(CodeBuf, Tool, True, False) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
-    end;
-    if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, Line, BeginLine, EndLine, Why) then
-    begin
-      Ctx.Error := True;
-      if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
-      Exit;
-    end;
-    if not Assigned(Ed) then
-    begin
-      if not McpCheckFileToOpen(FilePath, NewName) then
-      begin
-        Ctx.Error := True; Ctx.Result := NewName; Exit;
-      end;
-      if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
-           [ofOnlyIfExists, ofRegularFile]) <> mrOK then
-      begin
-        Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
-      end;
-      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    end;
-    Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
-    Ed.ReplaceText(Point(1, BeginLine + 1), Point(1, BeginLine + 1),
-                   Snippet + #10);
-    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('file',       FilePath);
-      Obj.Add('procedure',  Symbol);
-      Obj.Add('begin_line', BeginLine);
-      Obj.Add('inserted',   True);
-      if AutoSave then Obj.Add('saved', True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'code_replace_procedure_body' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file',       '');
-    Symbol   := Ctx.Params.Get('proc_name',  '');
-    NewName  := Ctx.Params.Get('class_name', '');
-    Snippet  := Ctx.Params.Get('new_body',   '');
-    AutoSave := Ctx.Params.Get('auto_save',  False);
-    Line     := Ctx.Params.Get('line', 0);
-    if (FilePath = '') or (Symbol = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
-    end;
-    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    { the editor's unsaved text goes to the code buffer without a disk write }
-    if not LazarusIDE.BeginCodeTools then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
-      Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    if not CodeToolBoss.Explore(CodeBuf, Tool, True, False) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
-    end;
-    if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, Line, BeginLine, EndLine, Why) then
-    begin
-      Ctx.Error := True;
-      if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
-      Exit;
-    end;
-    if not Assigned(Ed) then
-    begin
-      if not McpCheckFileToOpen(FilePath, NewName) then
-      begin
-        Ctx.Error := True; Ctx.Result := NewName; Exit;
-      end;
-      if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
-           [ofOnlyIfExists, ofRegularFile]) <> mrOK then
-      begin
-        Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
-      end;
-      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    end;
-    Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
-    Ed.ReplaceText(Point(1, BeginLine + 1), Point(1, EndLine),
-                   Snippet + #10);
-    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('file',       FilePath);
-      Obj.Add('procedure',  Symbol);
-      Obj.Add('begin_line', BeginLine);
-      Obj.Add('end_line',   EndLine);
-      Obj.Add('replaced',   True);
-      if AutoSave then Obj.Add('saved', True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'code_add_to_class' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file',       '');
-    Symbol   := Ctx.Params.Get('class_name', '');
-    NewName  := Ctx.Params.Get('section',    'public');
-    Snippet  := Ctx.Params.Get('text',       '');
-    AutoSave := Ctx.Params.Get('auto_save',  False);
-    if (FilePath = '') or (Symbol = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file and class_name required'; Exit;
-    end;
-    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    { the editor's unsaved text goes to the code buffer without a disk write }
-    if not LazarusIDE.BeginCodeTools then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
-      Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    if not CodeToolBoss.Explore(CodeBuf, Tool, False, False) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
-    end;
-    if not FindClassSectionLine(Tool, CodeBuf, Symbol, NewName, InsertLine) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'Class or section not found: ' + Symbol + ' / ' + NewName;
-      Exit;
-    end;
-    if not Assigned(Ed) then
-    begin
-      if not McpCheckFileToOpen(FilePath, NewName) then
-      begin
-        Ctx.Error := True; Ctx.Result := NewName; Exit;
-      end;
-      if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
-           [ofOnlyIfExists, ofRegularFile]) <> mrOK then
-      begin
-        Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
-      end;
-      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
-    end;
-    Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
-    Snippet := StringReplace(IndentMembers(Snippet, ClassMemberIndent(CodeBuf, InsertLine)),
-                 LineEnding, #10, [rfReplaceAll]);
-    Ed.ReplaceText(Point(1, InsertLine), Point(1, InsertLine),
-                   Snippet + #10);
-    if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('file',     FilePath);
-      Obj.Add('class',    Symbol);
-      Obj.Add('section',  NewName);
-      Obj.Add('inserted', True);
-      if AutoSave then Obj.Add('saved', True);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
-
-  else if Name = 'code_complete' then
-  begin
-    Result := True;
-    DoCompleteCode(Ctx);
-  end
-
-  else if Name = 'code_edit_statement' then
-  begin
-    Result := True;
-    DoEditStatement(Ctx);
-  end
-
-  else if Name = 'code_get_procedure_ast' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
-    end;
-    FilePath := Ctx.Params.Get('file',       '');
-    Symbol   := Ctx.Params.Get('proc_name',  '');
-    NewName  := Ctx.Params.Get('class_name', '');
-    NewY     := Ctx.Params.Get('line',       0);
-    NewX     := Ctx.Params.Get('col',        0);
-    MaxDepth := Ctx.Params.Get('depth',      1);
-    if MaxDepth < 1 then MaxDepth := 1;
-    if MaxDepth > 10 then MaxDepth := 10;
-    if FilePath = '' then
-    begin
-      Ctx.Error := True; Ctx.Result := 'file required'; Exit;
-    end;
-    if (Symbol = '') and (NewY = 0) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'proc_name or line required'; Exit;
-    end;
-    CodeBuf := McpLoadCode(FilePath, False);
-    if not Assigned(CodeBuf) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
-    end;
-    if not CodeToolBoss.Explore(CodeBuf, Tool, True, False) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
-    end;
-    BeginNode := nil;
-    BeginLine := 0;
-    EndLine   := 0;
-    if Symbol <> '' then
-    begin
-      { Name-based: use FindProcBodyLines to get lines, then find BeginBlock node }
-      if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, NewY, BeginLine, EndLine, Why) then
+      if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, Line, BeginLine, EndLine, Why) then
       begin
         Ctx.Error := True;
         if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
         Exit;
       end;
-      TreeNode := Tool.Tree.Root;
-      while Assigned(TreeNode) do
+      if not Assigned(Ed) then
       begin
-        if TreeNode.Desc = ctnProcedure then
+        if not McpCheckFileToOpen(FilePath, NewName) then
         begin
-          Child := TreeNode.FirstChild;
-          while Assigned(Child) do
-          begin
-            if Child.Desc = ctnBeginBlock then
-            begin
-              CleanToLineCol(Tool, CodeBuf, Child.StartPos, I, J);
-              if I = BeginLine then begin BeginNode := Child; Break; end;
-            end;
-            Child := Child.NextBrother;
-          end;
-          if Assigned(BeginNode) then Break;
+          Ctx.Error := True; Ctx.Result := NewName; Exit;
         end;
-        if Assigned(TreeNode.FirstChild) then TreeNode := TreeNode.FirstChild
-        else if Assigned(TreeNode.NextBrother) then TreeNode := TreeNode.NextBrother
-        else
+        if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
+             [ofOnlyIfExists, ofRegularFile]) <> mrOK then
         begin
-          repeat TreeNode := TreeNode.Parent until not Assigned(TreeNode) or Assigned(TreeNode.NextBrother);
-          if Assigned(TreeNode) then TreeNode := TreeNode.NextBrother;
+          Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
         end;
+        Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
       end;
-    end
-    else
-    begin
-      { Position-based: find BeginBlock whose line range contains NewY }
-      TreeNode := Tool.Tree.Root;
-      while Assigned(TreeNode) do
-      begin
-        if TreeNode.Desc = ctnProcedure then
-        begin
-          Child := TreeNode.FirstChild;
-          while Assigned(Child) do
-          begin
-            if Child.Desc = ctnBeginBlock then
-            begin
-              CleanToLineCol(Tool, CodeBuf, Child.StartPos,   I, J);
-              CleanToLineCol(Tool, CodeBuf, Child.EndPos - 1, EndLine, J);
-              if (NewY >= I) and (NewY <= EndLine) then
-              begin
-                BeginNode := Child;
-                BeginLine := I;
-                Symbol    := ExtractProcNodeName(Tool, CodeBuf, TreeNode);
-                Break;
-              end;
-            end;
-            Child := Child.NextBrother;
-          end;
-          if Assigned(BeginNode) then Break;
-        end;
-        if Assigned(TreeNode.FirstChild) then TreeNode := TreeNode.FirstChild
-        else if Assigned(TreeNode.NextBrother) then TreeNode := TreeNode.NextBrother
-        else
-        begin
-          repeat TreeNode := TreeNode.Parent until not Assigned(TreeNode) or Assigned(TreeNode.NextBrother);
-          if Assigned(TreeNode) then TreeNode := TreeNode.NextBrother;
-        end;
-      end;
-      if not Assigned(BeginNode) then
-      begin
-        Ctx.Error := True;
-        Ctx.Result := 'No procedure found containing line ' + IntToStr(NewY);
-        Exit;
+      Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
+      Ed.ReplaceText(Point(1, BeginLine + 1), Point(1, BeginLine + 1),
+                     Snippet + #10);
+      if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',       FilePath);
+        Obj.Add('procedure',  Symbol);
+        Obj.Add('begin_line', BeginLine);
+        Obj.Add('inserted',   True);
+        if AutoSave then Obj.Add('saved', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
       end;
     end;
-    Obj := TJSONObject.Create;
-    try
-      Obj.Add('scope',      Symbol);
-      Obj.Add('begin_line', BeginLine);
-      Obj.Add('end_line',   EndLine);
-      { Locals: ctnVarSection children of the enclosing ctnProcedure }
-      Outline := TJSONArray.Create;
-      if Assigned(BeginNode) and Assigned(BeginNode.Parent) then
+
+    'code_replace_procedure_body':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) then
       begin
-        Child := BeginNode.Parent.FirstChild;
-        while Assigned(Child) do
-        begin
-          if Child.Desc = ctnVarSection then
-          begin
-            TreeNode := Child.FirstChild;
-            while Assigned(TreeNode) do
-            begin
-              if TreeNode.Desc = ctnVarDefinition then
-              begin
-                CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, I, J);
-                Entry := TJSONObject.Create;
-                Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
-                Why := Tool.ExtractDefinitionNodeType(TreeNode);
-                if Why <> '' then Entry.Add('type', Why);
-                Entry.Add('line', I);
-                Outline.Add(Entry);
-              end;
-              TreeNode := TreeNode.NextBrother;
-            end;
-          end;
-          Child := Child.NextBrother;
-        end;
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
       end;
-      Obj.Add('locals', Outline);
-      { The statements: CodeTools' tree ends at the begin block, so the body text is read by
-        McpStatements }
-      if Assigned(BeginNode) then
+      FilePath := Ctx.Params.Get('file',       '');
+      Symbol   := Ctx.Params.Get('proc_name',  '');
+      NewName  := Ctx.Params.Get('class_name', '');
+      Snippet  := Ctx.Params.Get('new_body',   '');
+      AutoSave := Ctx.Params.Get('auto_save',  False);
+      Line     := Ctx.Params.Get('line', 0);
+      if (FilePath = '') or (Symbol = '') then
       begin
-        Root := BodyStatements(Tool, CodeBuf, BeginNode);
-        try
-          Obj.Add('nodes', StatementsJson(Root, MaxDepth));
-        finally
-          Root.Free;
+        Ctx.Error := True; Ctx.Result := 'file and proc_name required'; Exit;
+      end;
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+      { the editor's unsaved text goes to the code buffer without a disk write }
+      if not LazarusIDE.BeginCodeTools then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+        Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+      end;
+      if not CodeToolBoss.Explore(CodeBuf, Tool, True, False) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
+      end;
+      if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, Line, BeginLine, EndLine, Why) then
+      begin
+        Ctx.Error := True;
+        if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
+        Exit;
+      end;
+      if not Assigned(Ed) then
+      begin
+        if not McpCheckFileToOpen(FilePath, NewName) then
+        begin
+          Ctx.Error := True; Ctx.Result := NewName; Exit;
+        end;
+        if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
+             [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
+        end;
+        Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+      end;
+      Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
+      Ed.ReplaceText(Point(1, BeginLine + 1), Point(1, EndLine),
+                     Snippet + #10);
+      if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',       FilePath);
+        Obj.Add('procedure',  Symbol);
+        Obj.Add('begin_line', BeginLine);
+        Obj.Add('end_line',   EndLine);
+        Obj.Add('replaced',   True);
+        if AutoSave then Obj.Add('saved', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'code_add_to_class':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file',       '');
+      Symbol   := Ctx.Params.Get('class_name', '');
+      NewName  := Ctx.Params.Get('section',    'public');
+      Snippet  := Ctx.Params.Get('text',       '');
+      AutoSave := Ctx.Params.Get('auto_save',  False);
+      if (FilePath = '') or (Symbol = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file and class_name required'; Exit;
+      end;
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+      { the editor's unsaved text goes to the code buffer without a disk write }
+      if not LazarusIDE.BeginCodeTools then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'The IDE is busy (building, debugging or another code tool); try again';
+        Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+      end;
+      if not CodeToolBoss.Explore(CodeBuf, Tool, False, False) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
+      end;
+      if not FindClassSectionLine(Tool, CodeBuf, Symbol, NewName, InsertLine) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Class or section not found: ' + Symbol + ' / ' + NewName;
+        Exit;
+      end;
+      if not Assigned(Ed) then
+      begin
+        if not McpCheckFileToOpen(FilePath, NewName) then
+        begin
+          Ctx.Error := True; Ctx.Result := NewName; Exit;
+        end;
+        if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
+             [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Could not open: ' + FilePath; Exit;
+        end;
+        Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
+      end;
+      Snippet := StringReplace(Snippet, #13#10, #10, [rfReplaceAll]);
+      Snippet := StringReplace(IndentMembers(Snippet, ClassMemberIndent(CodeBuf, InsertLine)),
+                   LineEnding, #10, [rfReplaceAll]);
+      Ed.ReplaceText(Point(1, InsertLine), Point(1, InsertLine),
+                     Snippet + #10);
+      if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('file',     FilePath);
+        Obj.Add('class',    Symbol);
+        Obj.Add('section',  NewName);
+        Obj.Add('inserted', True);
+        if AutoSave then Obj.Add('saved', True);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'code_complete':
+    begin
+      Result := True;
+      DoCompleteCode(Ctx);
+    end;
+
+    'code_edit_statement':
+    begin
+      Result := True;
+      DoEditStatement(Ctx);
+    end;
+
+    'code_get_procedure_ast':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
+      end;
+      FilePath := Ctx.Params.Get('file',       '');
+      Symbol   := Ctx.Params.Get('proc_name',  '');
+      NewName  := Ctx.Params.Get('class_name', '');
+      NewY     := Ctx.Params.Get('line',       0);
+      NewX     := Ctx.Params.Get('col',        0);
+      MaxDepth := Ctx.Params.Get('depth',      1);
+      if MaxDepth < 1 then MaxDepth := 1;
+      if MaxDepth > 10 then MaxDepth := 10;
+      if FilePath = '' then
+      begin
+        Ctx.Error := True; Ctx.Result := 'file required'; Exit;
+      end;
+      if (Symbol = '') and (NewY = 0) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'proc_name or line required'; Exit;
+      end;
+      CodeBuf := McpLoadCode(FilePath, False);
+      if not Assigned(CodeBuf) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Could not load: ' + FilePath; Exit;
+      end;
+      if not CodeToolBoss.Explore(CodeBuf, Tool, True, False) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'Parse error: ' + CodeToolBoss.ErrorMessage; Exit;
+      end;
+      BeginNode := nil;
+      BeginLine := 0;
+      EndLine   := 0;
+      if Symbol <> '' then
+      begin
+        { Name-based: use FindProcBodyLines to get lines, then find BeginBlock node }
+        if not FindProcBodyLines(Tool, CodeBuf, Symbol, NewName, NewY, BeginLine, EndLine, Why) then
+        begin
+          Ctx.Error := True;
+          if Why <> '' then Ctx.Result := Why else Ctx.Result := 'Procedure not found: ' + Symbol;
+          Exit;
+        end;
+        TreeNode := Tool.Tree.Root;
+        while Assigned(TreeNode) do
+        begin
+          if TreeNode.Desc = ctnProcedure then
+          begin
+            Child := TreeNode.FirstChild;
+            while Assigned(Child) do
+            begin
+              if Child.Desc = ctnBeginBlock then
+              begin
+                CleanToLineCol(Tool, CodeBuf, Child.StartPos, I, J);
+                if I = BeginLine then begin BeginNode := Child; Break; end;
+              end;
+              Child := Child.NextBrother;
+            end;
+            if Assigned(BeginNode) then Break;
+          end;
+          if Assigned(TreeNode.FirstChild) then TreeNode := TreeNode.FirstChild
+          else if Assigned(TreeNode.NextBrother) then TreeNode := TreeNode.NextBrother
+          else
+          begin
+            repeat TreeNode := TreeNode.Parent until not Assigned(TreeNode) or Assigned(TreeNode.NextBrother);
+            if Assigned(TreeNode) then TreeNode := TreeNode.NextBrother;
+          end;
         end;
       end
       else
-        Obj.Add('nodes', TJSONArray.Create);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
+      begin
+        { Position-based: find BeginBlock whose line range contains NewY }
+        TreeNode := Tool.Tree.Root;
+        while Assigned(TreeNode) do
+        begin
+          if TreeNode.Desc = ctnProcedure then
+          begin
+            Child := TreeNode.FirstChild;
+            while Assigned(Child) do
+            begin
+              if Child.Desc = ctnBeginBlock then
+              begin
+                CleanToLineCol(Tool, CodeBuf, Child.StartPos,   I, J);
+                CleanToLineCol(Tool, CodeBuf, Child.EndPos - 1, EndLine, J);
+                if (NewY >= I) and (NewY <= EndLine) then
+                begin
+                  BeginNode := Child;
+                  BeginLine := I;
+                  Symbol    := ExtractProcNodeName(Tool, CodeBuf, TreeNode);
+                  Break;
+                end;
+              end;
+              Child := Child.NextBrother;
+            end;
+            if Assigned(BeginNode) then Break;
+          end;
+          if Assigned(TreeNode.FirstChild) then TreeNode := TreeNode.FirstChild
+          else if Assigned(TreeNode.NextBrother) then TreeNode := TreeNode.NextBrother
+          else
+          begin
+            repeat TreeNode := TreeNode.Parent until not Assigned(TreeNode) or Assigned(TreeNode.NextBrother);
+            if Assigned(TreeNode) then TreeNode := TreeNode.NextBrother;
+          end;
+        end;
+        if not Assigned(BeginNode) then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'No procedure found containing line ' + IntToStr(NewY);
+          Exit;
+        end;
+      end;
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('scope',      Symbol);
+        Obj.Add('begin_line', BeginLine);
+        Obj.Add('end_line',   EndLine);
+        { Locals: ctnVarSection children of the enclosing ctnProcedure }
+        Outline := TJSONArray.Create;
+        if Assigned(BeginNode) and Assigned(BeginNode.Parent) then
+        begin
+          Child := BeginNode.Parent.FirstChild;
+          while Assigned(Child) do
+          begin
+            if Child.Desc = ctnVarSection then
+            begin
+              TreeNode := Child.FirstChild;
+              while Assigned(TreeNode) do
+              begin
+                if TreeNode.Desc = ctnVarDefinition then
+                begin
+                  CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, I, J);
+                  Entry := TJSONObject.Create;
+                  Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
+                  Why := Tool.ExtractDefinitionNodeType(TreeNode);
+                  if Why <> '' then Entry.Add('type', Why);
+                  Entry.Add('line', I);
+                  Outline.Add(Entry);
+                end;
+                TreeNode := TreeNode.NextBrother;
+              end;
+            end;
+            Child := Child.NextBrother;
+          end;
+        end;
+        Obj.Add('locals', Outline);
+        { The statements: CodeTools' tree ends at the begin block, so the body text is read by
+          McpStatements }
+        if Assigned(BeginNode) then
+        begin
+          Root := BodyStatements(Tool, CodeBuf, BeginNode);
+          try
+            Obj.Add('nodes', StatementsJson(Root, MaxDepth));
+          finally
+            Root.Free;
+          end;
+        end
+        else
+          Obj.Add('nodes', TJSONArray.Create);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
   end;
 end;

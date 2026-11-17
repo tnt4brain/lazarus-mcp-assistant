@@ -509,10 +509,7 @@ begin
   Handled := True;
   Run := StartProgram(LaunchError);
   if Run = nil then
-  begin
-    Result := mrCancel;
-    Exit;
-  end;
+    Exit(mrCancel);
   GLock.Enter;
   try
     GRun := Run;

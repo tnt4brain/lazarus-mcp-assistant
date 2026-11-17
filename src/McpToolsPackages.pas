@@ -212,6 +212,8 @@ end;
 { Search the cached catalog; main thread (install state comes from the IDE). }
 function SearchOnlineCatalog(AParams: TJSONObject; out AErr: string): string;
 var
+  Term : string;
+  En : TJSONEnum;
   FileName, Text, Hay, Category : string;
   Words     : TStringArray;
   Root      : TJSONData;
@@ -221,7 +223,7 @@ var
   F         : TJSONObject;
   Res, FArr : TJSONArray;
   Obj, FObj, PObj : TJSONObject;
-  I, J, W, Matches, MaxRes : Integer;
+  I, Matches, MaxRes       : Integer;
   Ok        : Boolean;
   BaseDir, Lpk, Desc : string;
   SL        : TStringList;
@@ -279,14 +281,14 @@ begin
       Hay := Data.Get('Name', '') + ' ' + Data.Get('DisplayName', '') + ' ' +
              Data.Get('Category', '') + ' ' + Data.Get('CommunityDescription', '');
       if Assigned(Files) then
-        for J := 0 to Files.Count - 1 do
-          if Files[J] is TJSONObject then
-            Hay := Hay + ' ' + TJSONObject(Files[J]).Get('Name', '') + ' ' +
-                   TJSONObject(Files[J]).Get('Description', '');
+        for En in Files do
+          if En.Value is TJSONObject then
+            Hay := Hay + ' ' + TJSONObject(En.Value).Get('Name', '') + ' ' +
+                   TJSONObject(En.Value).Get('Description', '');
       Hay := LowerCase(Hay);
       Ok := True;
-      for W := 0 to High(Words) do
-        if Pos(Words[W], Hay) = 0 then
+      for Term in Words do
+        if Pos(Term, Hay) = 0 then
         begin
           Ok := False; Break;
         end;
@@ -304,10 +306,10 @@ begin
       FObj.Add('category',  Data.Get('Category', ''));
       FArr := TJSONArray.Create;
       if Assigned(Files) then
-        for J := 0 to Files.Count - 1 do
+        for En in Files do
         begin
-          if not (Files[J] is TJSONObject) then Continue;
-          F := TJSONObject(Files[J]);
+          if not (En.Value is TJSONObject) then Continue;
+          F := TJSONObject(En.Value);
           if Desc = '' then Desc := F.Get('Description', '');
           Lpk  := F.Get('Name', '');
           PObj := TJSONObject.Create;
@@ -428,12 +430,14 @@ end;
 
 procedure TOpmDownload.Prepare;
 var
+  En : TJSONEnum;
+  Item : string;
   FileName, Text, Rel, Lpk : string;
   SL     : TStringList;
   Root   : TJSONData;
   Cat, Data, F : TJSONObject;
   Files  : TJSONArray;
-  I, J   : Integer;
+  I      : Integer;
   Pkg    : TIDEPackage;
 begin
   Err := '';
@@ -499,10 +503,10 @@ begin
     if Cat.Find('PackageFiles' + IntToStr(I)) is TJSONArray then
     begin
       Files := TJSONArray(Cat.Find('PackageFiles' + IntToStr(I)));
-      for J := 0 to Files.Count - 1 do
-        if Files[J] is TJSONObject then
+      for En in Files do
+        if En.Value is TJSONObject then
         begin
-          F := TJSONObject(Files[J]);
+          F := TJSONObject(En.Value);
           Rel := OpmPath(F.Get('RelativeFilePath', ''));
           Lpk := F.Get('Name', '');
           if ((Rel = '') or SafeRelPath(Rel)) and SafeRelPath(Lpk) then
@@ -520,9 +524,9 @@ begin
       end;
       { new sources under an installed or loaded package would reach the IDE
         at the next rebuild without consent (ADR-013) }
-      for J := 0 to Lpks.Count - 1 do
+      for Item in Lpks do
       begin
-        Pkg := PackageEditingInterface.FindPackageWithName(ExtractFileNameOnly(Lpks[J]));
+        Pkg := PackageEditingInterface.FindPackageWithName(ExtractFileNameOnly(Item));
         if Assigned(Pkg) and (Pos(LowerCase(Target), LowerCase(Pkg.Filename)) = 1) then
         begin
           Err := Pkg.Name + ' is installed or loaded from ' + Target + '; its sources ' +
@@ -655,10 +659,7 @@ begin
   { no TLS library in the IDE: the curl executable brings its own }
   ATransport := 'https (curl)';
   if CurlGet(AUrl, AStream, AErr) then
-  begin
-    Result := True;
-    Exit;
-  end;
+    Exit(True);
   AUrl := 'http://' + Copy(AHttpsUrl, Length('https://') + 1, MaxInt);
   ATransport := 'http';
   Result := Get(AUrl, AErr);
@@ -876,12 +877,12 @@ end;
 
 function ProjectPackagesJSON(Proj: TProject; Recursive: Boolean): string;
 var
+  Ptr : Pointer;
   Obj, PObj : TJSONObject;
   Arr       : TJSONArray;
   Dep       : TPkgDependency;
   List      : TFPList;
   Pkg       : TLazPackage;
-  I         : Integer;
 begin
   Obj := TJSONObject.Create;
   try
@@ -901,10 +902,10 @@ begin
       Obj.Add('compile_order', Arr);
       if Assigned(List) then
       try
-        for I := 0 to List.Count - 1 do
+        for Ptr in List do
         begin
-          if not (TObject(List[I]) is TLazPackage) then Continue;
-          Pkg  := TLazPackage(List[I]);
+          if not (TObject(Ptr) is TLazPackage) then Continue;
+          Pkg  := TLazPackage(Ptr);
           PObj := TJSONObject.Create;
           Arr.Add(PObj);
           PObj.Add('name', Pkg.Name);
@@ -1128,7 +1129,7 @@ begin
   begin
     AErr := 'package_name or lpk_path required'; Exit;
   end;
-  if not AForEdit then begin Result := True; Exit; end;
+  if not AForEdit then Exit(True);
   if APkg.IsVirtual then
   begin AErr := APkg.Name + ' has not been saved yet'; Exit; end;
   if APkg.ReadOnly then
@@ -1249,20 +1250,13 @@ begin
       Other := PackageEditingInterface.GetPackages(I);
       if Other.Modified then Mods.AddObject(Other.Name, Other);
     end;
-    if (Target <> nil) and (Mods.IndexOfObject(Target) < 0) then
+    { nothing to write: the target is not modified, or (no target) nothing is }
+    if (Mods.Count = 0) or ((Target <> nil) and (Mods.IndexOfObject(Target) < 0)) then
     begin
-      Obj.Add('package', Target.Name);
+      if Target <> nil then Obj.Add('package', Target.Name);
       Obj.Add('saved', True);
       Obj.Add('nothing_to_save', True);
-      Result := Obj.AsJSON;
-      Exit;
-    end;
-    if Mods.Count = 0 then
-    begin
-      Obj.Add('saved', True);
-      Obj.Add('nothing_to_save', True);
-      Result := Obj.AsJSON;
-      Exit;
+      Exit(Obj.AsJSON);
     end;
     if not SaveAll then
       for I := 0 to Mods.Count - 1 do
@@ -1459,16 +1453,16 @@ end;
   them. }
 function PackageIsInIDE(const AName: string): Boolean;
 var
+  Ptr : Pointer;
   List : TFPList;
-  I    : Integer;
 begin
   Result := Assigned(PackageEditingInterface.IsPackageInstalled(AName));
   if Result then Exit;
   PackageEditingInterface.GetRequiredPackages(PackageEditingInterface, List);
   if List = nil then Exit;
   try
-    for I := 0 to List.Count - 1 do
-      if (TObject(List[I]) is TIDEPackage) and SameText(TIDEPackage(List[I]).Name, AName) then
+    for Ptr in List do
+      if (TObject(Ptr) is TIDEPackage) and SameText(TIDEPackage(Ptr).Name, AName) then
         Exit(True);
   finally
     List.Free;
@@ -1647,155 +1641,152 @@ end;
 
 function DispatchPackagesTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  Ptr : Pointer;
   PkgName  : string;
   PkgErr   : string;
   FPList   : TFPList;
   RefArr   : TJSONArray;
   Obj      : TJSONObject;
   Proj     : TLazProject;
-  I        : Integer;
 begin
   Result := False;
 
-  if (Name = 'package_add_file') or (Name = 'package_remove_file') or
-     (Name = 'package_add_dependency') or (Name = 'package_remove_dependency') or
-     (Name = 'package_set_info') or (Name = 'package_save') then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) and (Name <> 'package_save') then
+  case Name of
+    'package_add_file', 'package_remove_file', 'package_add_dependency', 'package_remove_dependency', 'package_set_info', 'package_save':
     begin
-      Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
-    end;
-    if Name = 'package_save' then
-      Ctx.Result := PackageSave(Ctx.Params, PkgName)
-    else if Name = 'package_add_file' then
-      Ctx.Result := PackageAddFile(Ctx.Params, PkgName)
-    else if Name = 'package_remove_file' then
-      Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName)
-    else if Name = 'package_add_dependency' then
-      Ctx.Result := PackageAddDependency(Ctx.Params, PkgName)
-    else if Name = 'package_set_info' then
-      Ctx.Result := PackageSetInfo(Ctx.Params, PkgName)
-    else
-      Ctx.Result := PackageRemoveDependency(Ctx.Params, PkgName);
-    if PkgName <> '' then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgName;
-    end;
-    Exit;
-  end;
-
-  if Name = 'package_search_online' then
-  begin
-    Result := True;
-    Ctx.Result := SearchOnlineCatalog(Ctx.Params, PkgName);
-    if PkgName <> '' then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgName;
-    end;
-    Exit;
-  end;
-
-  if Name = 'project_list_packages' then
-  begin
-    Result := True;
-    if not (LazarusIDE.ActiveProject is TProject) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    Ctx.Result := ProjectPackagesJSON(TProject(LazarusIDE.ActiveProject),
-                    Assigned(Ctx.Params) and Ctx.Params.Get('recursive', False));
-  end
-
-  else if Name = 'package_find_unit' then
-  begin
-    Result := True;
-    if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('unit_name', '')) = '') then
-    begin
-      Ctx.Error := True; Ctx.Result := 'unit_name required'; Exit;
-    end;
-    Ctx.Result := FindUnitJSON(Trim(Ctx.Params.Get('unit_name', '')));
-  end
-
-  else if Name = 'project_add_package' then
-  begin
-    Result := True;
-    if not SelectedPackageName(Ctx.Params, True, PkgName, PkgErr) then
-    begin
-      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    { a name the IDE can't resolve leaves a "Broken dependency" dialog that fails
-      every later build silently }
-    if (PackageGraph.FindPackageWithName(PkgName, nil) = nil) and
-       (LazPackageLinks.FindLinkWithPkgName(PkgName) = nil) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'Package not found: ' + PkgName + '. It is neither loaded nor known ' +
-        'to the IDE''s package links (package_download and open its .lpk first)';
+      Result := True;
+      if not Assigned(Ctx.Params) and (Name <> 'package_save') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'package_name or lpk_path required'; Exit;
+      end;
+      case Name of
+        'package_save':              Ctx.Result := PackageSave(Ctx.Params, PkgName);
+        'package_add_file':          Ctx.Result := PackageAddFile(Ctx.Params, PkgName);
+        'package_remove_file':       Ctx.Result := PackageRemoveFile(Ctx.Params, PkgName);
+        'package_add_dependency':    Ctx.Result := PackageAddDependency(Ctx.Params, PkgName);
+        'package_set_info':          Ctx.Result := PackageSetInfo(Ctx.Params, PkgName);
+      else
+        Ctx.Result := PackageRemoveDependency(Ctx.Params, PkgName);
+      end;
+      if PkgName <> '' then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgName;
+      end;
       Exit;
     end;
-    Proj.AddPackageDependency(PkgName);
-    LazarusIDE.DoSaveProject([]);
-    PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
-    Obj := TJSONObject.Create;
-    try
-      RefArr := TJSONArray.Create;
-      if Assigned(FPList) then
-      begin
-        for I := 0 to FPList.Count - 1 do
-          RefArr.Add(TIDEPackage(FPList[I]).Name);
-        FreeAndNil(FPList);
-      end;
-      Obj.Add('package_name',        PkgName);
-      Obj.Add('project_dependencies', RefArr);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
-    end;
-  end
 
-  else if Name = 'project_remove_package' then
-  begin
-    Result := True;
-    if not SelectedPackageName(Ctx.Params, False, PkgName, PkgErr) then
+    'package_search_online':
     begin
-      Ctx.Error := True; Ctx.Result := PkgErr; Exit;
-    end;
-    Proj := LazarusIDE.ActiveProject;
-    Proj := LazarusIDE.ActiveProject;
-    if not Assigned(Proj) then
-    begin
-      Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
-    end;
-    if not Proj.RemovePackageDependency(PkgName) then
-    begin
-      Ctx.Error := True;
-      Ctx.Result := 'Package not found in project: ' + PkgName;
+      Result := True;
+      Ctx.Result := SearchOnlineCatalog(Ctx.Params, PkgName);
+      if PkgName <> '' then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgName;
+      end;
       Exit;
     end;
-    LazarusIDE.DoSaveProject([]);
-    PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
-    Obj := TJSONObject.Create;
-    try
-      RefArr := TJSONArray.Create;
-      if Assigned(FPList) then
+
+    'project_list_packages':
+    begin
+      Result := True;
+      if not (LazarusIDE.ActiveProject is TProject) then
       begin
-        for I := 0 to FPList.Count - 1 do
-          RefArr.Add(TIDEPackage(FPList[I]).Name);
-        FreeAndNil(FPList);
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
       end;
-      Obj.Add('package_name',        PkgName);
-      Obj.Add('project_dependencies', RefArr);
-      Ctx.Result := Obj.AsJSON;
-    finally
-      Obj.Free;
+      Ctx.Result := ProjectPackagesJSON(TProject(LazarusIDE.ActiveProject),
+                      Assigned(Ctx.Params) and Ctx.Params.Get('recursive', False));
     end;
-  end
+
+    'package_find_unit':
+    begin
+      Result := True;
+      if not Assigned(Ctx.Params) or (Trim(Ctx.Params.Get('unit_name', '')) = '') then
+      begin
+        Ctx.Error := True; Ctx.Result := 'unit_name required'; Exit;
+      end;
+      Ctx.Result := FindUnitJSON(Trim(Ctx.Params.Get('unit_name', '')));
+    end;
+
+    'project_add_package':
+    begin
+      Result := True;
+      if not SelectedPackageName(Ctx.Params, True, PkgName, PkgErr) then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+      end;
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      { a name the IDE can't resolve leaves a "Broken dependency" dialog that fails
+        every later build silently }
+      if (PackageGraph.FindPackageWithName(PkgName, nil) = nil) and
+         (LazPackageLinks.FindLinkWithPkgName(PkgName) = nil) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Package not found: ' + PkgName + '. It is neither loaded nor known ' +
+          'to the IDE''s package links (package_download and open its .lpk first)';
+        Exit;
+      end;
+      Proj.AddPackageDependency(PkgName);
+      LazarusIDE.DoSaveProject([]);
+      PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
+      Obj := TJSONObject.Create;
+      try
+        RefArr := TJSONArray.Create;
+        if Assigned(FPList) then
+        begin
+          for Ptr in FPList do
+            RefArr.Add(TIDEPackage(Ptr).Name);
+          FreeAndNil(FPList);
+        end;
+        Obj.Add('package_name',        PkgName);
+        Obj.Add('project_dependencies', RefArr);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+
+    'project_remove_package':
+    begin
+      Result := True;
+      if not SelectedPackageName(Ctx.Params, False, PkgName, PkgErr) then
+      begin
+        Ctx.Error := True; Ctx.Result := PkgErr; Exit;
+      end;
+      Proj := LazarusIDE.ActiveProject;
+      Proj := LazarusIDE.ActiveProject;
+      if not Assigned(Proj) then
+      begin
+        Ctx.Error := True; Ctx.Result := 'No active project'; Exit;
+      end;
+      if not Proj.RemovePackageDependency(PkgName) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'Package not found in project: ' + PkgName;
+        Exit;
+      end;
+      LazarusIDE.DoSaveProject([]);
+      PackageEditingInterface.GetRequiredPackages(Proj, FPList, [pirNotRecursive]);
+      Obj := TJSONObject.Create;
+      try
+        RefArr := TJSONArray.Create;
+        if Assigned(FPList) then
+        begin
+          for Ptr in FPList do
+            RefArr.Add(TIDEPackage(Ptr).Name);
+          FreeAndNil(FPList);
+        end;
+        Obj.Add('package_name',        PkgName);
+        Obj.Add('project_dependencies', RefArr);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end;
+  end;
 
   { package_install, package_uninstall: the rebuild in McpToolsBuild }
 end;

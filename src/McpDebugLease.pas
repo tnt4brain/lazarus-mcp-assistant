@@ -188,6 +188,7 @@ end;
 
 procedure McpForgetTokenSessions(const ATokenId: string);
 var
+  Item : string;
   Ids : TStringList;
   I   : Integer;
 begin
@@ -202,8 +203,8 @@ begin
     finally
       Lock.Leave;
     end;
-    for I := 0 to Ids.Count - 1 do
-      McpForgetSession(Ids[I]);
+    for Item in Ids do
+      McpForgetSession(Item);
   finally
     Ids.Free;
   end;
@@ -263,10 +264,10 @@ end;
 { Read-only tools are those annotated readOnlyHint=true (ADR-010). }
 procedure EnsureReadOnlyListLocked;
 var
+  En : TJSONEnum;
   Tools : TJSONArray;
   T     : TJSONObject;
   Ann   : TJSONObject;
-  I     : Integer;
 begin
   if GReadOnly <> nil then Exit;
   GReadOnly := TStringList.Create;
@@ -274,9 +275,9 @@ begin
   Tools := TJSONArray.Create;
   try
     McpRegisterSchemas(Tools);
-    for I := 0 to Tools.Count - 1 do
+    for En in Tools do
     begin
-      T   := TJSONObject(Tools[I]);
+      T   := TJSONObject(En.Value);
       Ann := T.Get('annotations', TJSONObject(nil));
       if Assigned(Ann) and Ann.Get('readOnlyHint', False) then
         GReadOnly.Add(T.Get('name', ''));

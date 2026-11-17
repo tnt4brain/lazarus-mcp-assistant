@@ -260,19 +260,16 @@ function TMcpDebugGuard.DoFeedback(Sender: TObject; const AText,
   AInfo: String; AType: TDBGFeedbackType;
   AButtons: TDBGFeedbackResults): TDBGFeedbackResult;
 begin
-  if (GMcpDriven and not FShutdown) or not Assigned(FOrigFeedback) then
-  begin
-    GMcpLastFeedback := AText;
-    if AInfo <> '' then
-      GMcpLastFeedback := GMcpLastFeedback + LineEnding + AInfo;
-    AppendCapped(FDbgOutput, '[feedback] ' + AText);
-    if (frOk in AButtons) or (AButtons = []) then
-      Result := frOk
-    else
-      Result := frStop;
-    Exit;
-  end;
-  Result := FOrigFeedback(Sender, AText, AInfo, AType, AButtons);
+  if (not GMcpDriven or FShutdown) and Assigned(FOrigFeedback) then
+    Exit(FOrigFeedback(Sender, AText, AInfo, AType, AButtons));
+  GMcpLastFeedback := AText;
+  if AInfo <> '' then
+    GMcpLastFeedback := GMcpLastFeedback + LineEnding + AInfo;
+  AppendCapped(FDbgOutput, '[feedback] ' + AText);
+  if (frOk in AButtons) or (AButtons = []) then
+    Result := frOk
+  else
+    Result := frStop;
 end;
 
 procedure TMcpDebugGuard.DoConsoleOutput(Sender: TObject; const AText: String);

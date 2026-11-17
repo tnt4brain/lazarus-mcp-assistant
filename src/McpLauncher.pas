@@ -110,17 +110,17 @@ end;
 
 procedure SplitArgs(const S: string; AList: TStrings);
 var
+  Item : string;
   Parts : TStringList;
-  I     : Integer;
 begin
   Parts := TStringList.Create;
   try
     Parts.Delimiter       := ' ';
     Parts.StrictDelimiter := False;
     Parts.DelimitedText   := S;
-    for I := 0 to Parts.Count - 1 do
-      if Trim(Parts[I]) <> '' then
-        AList.Add(Parts[I]);
+    for Item in Parts do
+      if Trim(Item) <> '' then
+        AList.Add(Item);
   finally
     Parts.Free;
   end;
@@ -129,9 +129,9 @@ end;
 function McpBuildLaunchScript(const AReq: TMcpLaunchRequest;
   const AClaudeExe: string): string;
 var
+  Item : string;
   Extra : TStringList;
   Cmd   : string;
-  I     : Integer;
 begin
   Cmd := 'exec ' + McpShellQuote(AClaudeExe) +
          ' --mcp-config ' + McpShellQuote(AReq.McpConfigPath) +
@@ -139,8 +139,8 @@ begin
   Extra := TStringList.Create;
   try
     SplitArgs(AReq.ExtraArgs, Extra);
-    for I := 0 to Extra.Count - 1 do
-      Cmd := Cmd + ' ' + McpShellQuote(Extra[I]);
+    for Item in Extra do
+      Cmd := Cmd + ' ' + McpShellQuote(Item);
   finally
     Extra.Free;
   end;
@@ -214,17 +214,17 @@ end;
 function McpBuildCmdScript(const AReq: TMcpLaunchRequest;
   const AClaudeExe: string): string;
 var
+  Item : string;
   Extra : TStringList;
   Cmd   : string;
-  I     : Integer;
 begin
   Cmd := CmdQuote(AClaudeExe) + ' --mcp-config ' + CmdQuote(AReq.McpConfigPath) +
          ' --strict-mcp-config';
   Extra := TStringList.Create;
   try
     SplitArgs(AReq.ExtraArgs, Extra);
-    for I := 0 to Extra.Count - 1 do
-      Cmd := Cmd + ' ' + CmdQuote(Extra[I]);
+    for Item in Extra do
+      Cmd := Cmd + ' ' + CmdQuote(Item);
   finally
     Extra.Free;
   end;
@@ -240,17 +240,17 @@ end;
 function McpBuildPs1Script(const AReq: TMcpLaunchRequest;
   const AClaudeExe: string): string;
 var
+  Item : string;
   Extra : TStringList;
   Cmd   : string;
-  I     : Integer;
 begin
   Cmd := '& ' + PsQuote(AClaudeExe) + ' ''--mcp-config'' ' +
          PsQuote(AReq.McpConfigPath) + ' ''--strict-mcp-config''';
   Extra := TStringList.Create;
   try
     SplitArgs(AReq.ExtraArgs, Extra);
-    for I := 0 to Extra.Count - 1 do
-      Cmd := Cmd + ' ' + PsQuote(Extra[I]);
+    for Item in Extra do
+      Cmd := Cmd + ' ' + PsQuote(Item);
   finally
     Extra.Free;
   end;

@@ -153,27 +153,27 @@ end;
 
 function DispatchExceptionLog(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
+  Entry : TExcEntry;
   Obj, Item : TJSONObject;
   Arr       : TJSONArray;
-  I         : Integer;
 begin
   Result := Name = 'ide_get_exceptions';
   if not Result then Exit;
   Obj := TJSONObject.Create;
   try
     Arr := TJSONArray.Create;
-    for I := 0 to High(Entries) do
+    for Entry in Entries do
     begin
       Item := TJSONObject.Create;
-      Item.Add('time',    FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Entries[I].At));
-      Item.Add('class',   Entries[I].ExcClass);
-      Item.Add('message', Entries[I].Msg);
-      Item.Add('stack',   Entries[I].Trace);
-      if Entries[I].LastTool <> '' then
+      Item.Add('time',    FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Entry.At));
+      Item.Add('class',   Entry.ExcClass);
+      Item.Add('message', Entry.Msg);
+      Item.Add('stack',   Entry.Trace);
+      if Entry.LastTool <> '' then
       begin
-        Item.Add('last_tool', Entries[I].LastTool);
-        Item.Add('last_tool_ms_before', Entries[I].ToolAgoMs);
-        Item.Add('during_tool_call', Entries[I].DuringCall);
+        Item.Add('last_tool', Entry.LastTool);
+        Item.Add('last_tool_ms_before', Entry.ToolAgoMs);
+        Item.Add('during_tool_call', Entry.DuringCall);
       end;
       Arr.Add(Item);
     end;
