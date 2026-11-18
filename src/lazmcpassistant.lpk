@@ -13,10 +13,10 @@
         <CustomOptions Value="-dUseCThreads"/>
       </Other>
     </CompilerOptions>
-    <Description Value="A completely generic, brand-agnostic Model Context Protocol (MCP) IDE Assistant client for the Lazarus RAD IDE and Free Pascal ecosystem."/>
+    <Description Value="Runs a local Model Context Protocol (MCP) server inside the Lazarus IDE so AI assistants can read and edit code, build, debug, use the form designer, manage packages and use git. Listens on localhost only, protected by a token. Tested with Lazarus 4.x and FPC 3.2.2."/>
     <License Value="BSD-3-Clause"/>
     <Version Major="1" Minor="7"/>
-    <Files Count="56">
+    <Files Count="57">
       <Item1>
         <Filename Value="lazmcpassistant.pas"/>
         <UnitName Value="LazMcpAssistant"/>
@@ -242,6 +242,10 @@
         <Filename Value="McpGitConflicts.pas"/>
         <UnitName Value="McpGitConflicts"/>
       </Item56>
+      <Item57>
+        <Filename Value="McpMarkdownHighlight.pas"/>
+        <UnitName Value="McpMarkdownHighlight"/>
+      </Item57>
     </Files>
     <CompatibilityMode Value="True"/>
     <RequiredPkgs Count="7">

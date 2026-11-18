@@ -24,7 +24,7 @@ implementation
 
 uses
   SysUtils, TypInfo, System.UITypes, fpjson, Forms,
-  IDEDialogs, McpToolContext, McpConsent;
+  IDEDialogs, SrcEditorIntf, SynEdit, McpToolContext, McpConsent;
 
 const
   SHOW_HOOK_NAME  = '__test_show_dialog__';
@@ -32,6 +32,7 @@ const
   LOG_HOOK_NAME   = '__test_get_log__';
   ARM_CONSENT_HOOK_NAME = '__test_arm_consent__';
   GET_CONSENT_HOOK_NAME = '__test_get_consent__';
+  UNDO_HOOK_NAME  = '__test_editor_undo__';
 
 type
   { Screen.AddHandlerActiveFormChanged/AddHandlerFormAdded want a method,
@@ -226,9 +227,40 @@ begin
   Ctx.Result := IntToStr(McpConsentStubCount) + LineEnding + McpConsentStubLastDetails;
 end;
 
+{ file: the editor's file.  Presses Ctrl+Z in that editor until its undo list is empty (the text
+  it was loaded with is not on it); answers how many steps that took.  The one thing a test of
+  "Ctrl+Z works" needs and no tool offers. }
+function DispatchEditorUndo(var Ctx: TMcpToolCall): Boolean;
+var
+  Ed    : TSourceEditorInterface;
+  Syn   : TCustomSynEdit;
+  Steps : Integer;
+begin
+  Result := True;
+  if not HooksEnabled(Ctx, UNDO_HOOK_NAME) then Exit;
+  Ed := nil;
+  if Assigned(Ctx.Params) then
+    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(Ctx.Params.Get('file', ''));
+  if (Ed = nil) or not (Ed.EditorControl is TCustomSynEdit) then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'file is not open in an editor';
+    Exit;
+  end;
+  Syn := TCustomSynEdit(Ed.EditorControl);
+  Steps := 0;
+  while Syn.CanUndo and (Steps < 1000) do
+  begin
+    Syn.Undo;
+    Inc(Steps);
+  end;
+  Ctx.Result := IntToStr(Steps);
+end;
+
 function DispatchTestHooks(const Name: string; var Ctx: TMcpToolCall): Boolean;
 begin
   case Name of
+    UNDO_HOOK_NAME:        Exit(DispatchEditorUndo(Ctx));
     SHOW_HOOK_NAME:        Exit(DispatchShowDialog(Ctx));
     CLOSE_HOOK_NAME:       Exit(DispatchCloseLastDialog(Ctx));
     LOG_HOOK_NAME:         Exit(DispatchGetLog(Ctx));

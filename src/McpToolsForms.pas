@@ -6,7 +6,7 @@ unit McpToolsForms;
   form_arrange, form_get_lfm, form_create_event_handler, form_search_palette,
   form_list_collection_items, form_add_collection_item,
   form_delete_collection_item, form_move_collection_item,
-  form_get_menu, form_add_menu_item, form_move_menu_item, form_undo, form_redo.
+  form_get_menu, form_add_menu_item, form_move_menu_item, form_history (action undo, redo).
 
   Property access goes through the Object Inspector's property editors
   (PropEdits), so values read and write exactly as in the Object Inspector:
@@ -40,19 +40,21 @@ uses
 
 const
   FORM_FILE_PROP =
-    '"form_file":{"type":"string","description":"Absolute path of the .lfm or its .pas"}';
+    '"file":{"type":"string","description":"Absolute path of the .lfm or its .pas"}';
 
   AUTO_SAVE_PROP =
     '"auto_save":{"type":"boolean","description":"Also save the unit (.pas and .lfm) to disk ' +
     '(default false: the change stays in the designer, Ctrl+Z works)"}';
 
-  SCHEMA_FORM_UNDO =
-    '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + '},' +
-    '"required":["form_file"]}';
+  SCHEMA_FORM_HISTORY =
+    '{"type":"object","properties":{"action":{"type":"string","enum":["undo","redo"],' +
+    '"description":"undo = Edit > Undo, redo = Edit > Redo"},' +
+    FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + '},' +
+    '"required":["action","file"]}';
 
   SCHEMA_FORM_LIST_COMPONENTS =
     '{"type":"object","properties":{' + FORM_FILE_PROP + '},' +
-    '"required":["form_file"]}';
+    '"required":["file"]}';
 
   SCHEMA_FORM_GET_PROPERTIES =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
@@ -60,7 +62,7 @@ const
     '"names":{"type":"array","items":{"type":"string"},"description":"Only these properties (dotted paths allowed, e.g. BorderSpacing). ' +
       'When given, enum/set/reference properties also list their allowed values."},' +
     '"include_events":{"type":"boolean","description":"Include OnXxx event properties (default false)"}},' +
-    '"required":["form_file","component_name"]}';
+    '"required":["file","component_name"]}';
 
   SCHEMA_FORM_SET_PROPERTIES =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
@@ -74,24 +76,24 @@ const
       '(Lines, Items) take an array of strings or one text with line breaks. Parent moves the control ' +
       'into another container (for an action, Parent or ActionList names the TActionList it moves to); Name renames it in the source as well; events take a handler name (created if missing). ' +
       'Applied in order Parent, others, Name. Returns one result per property."}},' +
-    '"required":["form_file","component_name","properties"]}';
+    '"required":["file","component_name","properties"]}';
 
   SCHEMA_FORM_ADD_COMPONENT =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
     '"class_name":{"type":"string","description":"Component class to create (e.g. TButton; a component class, not a Pascal class of your code); must be on the IDE palette, or be an action class (TAction, ...)"},' +
     '"parent_name":{"type":"string","description":"Container to put it in; defaults to the form. For an action: the TActionList that gets it"},' +
-    '"name":{"type":"string","description":"Component name; default is the IDE''s (Button1, ...)"},' +
+    '"name":{"type":"string","description":"Name of the new component; default is the IDE''s (Button1, ...)"},' +
     '"left":{"type":"integer","description":"Default 8"},' +
     '"top":{"type":"integer","description":"Default 8"},' +
     '"width":{"type":"integer","description":"Default: the class default size"},' +
     '"height":{"type":"integer","description":"Default: the class default size"},' +
     '"properties":{"type":"object","description":"Properties to set right away, same format as form_set_properties"}},' +
-    '"required":["form_file","class_name"]}';
+    '"required":["file","class_name"]}';
 
   SCHEMA_FORM_DELETE_COMPONENT =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
     '"component_name":{"type":"string","description":"Component to delete (its children are deleted too)"}},' +
-    '"required":["form_file","component_name"]}';
+    '"required":["file","component_name"]}';
 
   SCHEMA_FORM_ARRANGE =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
@@ -103,19 +105,19 @@ const
     '"spacing":{"type":"integer","description":"Gap in pixels for distribute"},' +
     '"align":{"type":"string","enum":["left","right","top","bottom","hcenter","vcenter"],"description":"Align edges or centres"},' +
     '"relative_to":{"type":"string","enum":["first","parent"],"description":"Align to the first control (default) or within the parent''s client area"}},' +
-    '"required":["form_file","components"]}';
+    '"required":["file","components"]}';
 
   SCHEMA_FORM_GET_LFM =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
     '"component_name":{"type":"string","description":"Only this component''s object block (default: whole form)"}},' +
-    '"required":["form_file"]}';
+    '"required":["file"]}';
 
   SCHEMA_FORM_CREATE_EVENT_HANDLER =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
     '"component_name":{"type":"string","description":"Component name (e.g. btnOK)"},' +
     '"event_name":{"type":"string","description":"Event property name (e.g. OnClick)"},' +
     '"handler_name":{"type":"string","description":"Optional custom handler name; defaults to FormName+CompName+EventSuffix"}},' +
-    '"required":["form_file","component_name","event_name"]}';
+    '"required":["file","component_name","event_name"]}';
 
   SCHEMA_FORM_SEARCH_PALETTE =
     '{"type":"object","properties":{' +
@@ -130,47 +132,47 @@ const
   SCHEMA_FORM_LIST_COLLECTION_ITEMS =
     '{"type":"object","properties":{' + COLLECTION_PROPS + ',' +
     '"include_properties":{"type":"boolean","description":"Return each item''s properties (default true)"}},' +
-    '"required":["form_file","component_name"]}';
+    '"required":["file","component_name"]}';
 
   SCHEMA_FORM_ADD_COLLECTION_ITEM =
     '{"type":"object","properties":{' + COLLECTION_PROPS + ',' + AUTO_SAVE_PROP + ',' +
     '"index":{"type":"integer","description":"Position for the new item (default: at the end)"},' +
     '"properties":{"type":"object","description":"Item properties to set, same format as form_set_properties, ' +
       'e.g. {\"Caption\":\"Name\",\"Width\":120}"}},' +
-    '"required":["form_file","component_name","property"]}';
+    '"required":["file","component_name","property"]}';
 
   SCHEMA_FORM_DELETE_COLLECTION_ITEM =
     '{"type":"object","properties":{' + COLLECTION_PROPS + ',' + AUTO_SAVE_PROP + ',' +
     '"index":{"type":"integer","description":"Index of the item to delete"}},' +
-    '"required":["form_file","component_name","property","index"]}';
+    '"required":["file","component_name","property","index"]}';
 
   SCHEMA_FORM_MOVE_COLLECTION_ITEM =
     '{"type":"object","properties":{' + COLLECTION_PROPS + ',' + AUTO_SAVE_PROP + ',' +
     '"index":{"type":"integer","description":"Current index of the item"},' +
     '"new_index":{"type":"integer","description":"Index it should have afterwards"}},' +
-    '"required":["form_file","component_name","property","index","new_index"]}';
+    '"required":["file","component_name","property","index","new_index"]}';
 
   SCHEMA_FORM_GET_MENU =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' +
     '"menu_name":{"type":"string","description":"TMainMenu/TPopupMenu name, or a menu item to get only its submenu. Optional when the form has exactly one menu"}},' +
-    '"required":["form_file"]}';
+    '"required":["file"]}';
 
   SCHEMA_FORM_ADD_MENU_ITEM =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
     '"parent_name":{"type":"string","description":"Menu (TMainMenu/TPopupMenu) for a top-level item, or the menu item to add a submenu entry to"},' +
     '"caption":{"type":"string","description":"Caption; \"-\" makes a separator. Use & for the accelerator key (&File)"},' +
-    '"name":{"type":"string","description":"Component name (default: derived by the IDE, MenuItem1, ...)"},' +
+    '"name":{"type":"string","description":"Name of the new item (default: derived by the IDE, MenuItem1, ...)"},' +
     '"index":{"type":"integer","description":"Position among the parent''s items (default: at the end)"},' +
     '"properties":{"type":"object","description":"More properties, same format as form_set_properties, ' +
       'e.g. {\"ShortCut\":\"Ctrl+S\",\"OnClick\":\"mnuSaveClick\",\"Checked\":true}"}},' +
-    '"required":["form_file","parent_name","caption"]}';
+    '"required":["file","parent_name","caption"]}';
 
   SCHEMA_FORM_MOVE_MENU_ITEM =
     '{"type":"object","properties":{' + FORM_FILE_PROP + ',' + AUTO_SAVE_PROP + ',' +
     '"component_name":{"type":"string","description":"Menu item to move"},' +
     '"parent_name":{"type":"string","description":"New parent menu or menu item (default: keep the parent)"},' +
     '"index":{"type":"integer","description":"Position among the new parent''s items (default: at the end)"}},' +
-    '"required":["form_file","component_name"]}';
+    '"required":["file","component_name"]}';
 
 { ── Property-editor helpers ──────────────────────────────────────────────── }
 
@@ -328,7 +330,7 @@ end;
 
 type
   { The changes of one tool call, recorded in the designer's undo list as one
-    group: what one Edit > Undo (Ctrl+Z, form_undo) takes back. }
+    group: what one Edit > Undo (Ctrl+Z, form_history) takes back. }
   TUndoGroup = record
     Designer : TComponentEditorDesigner;
     Started  : Boolean;
@@ -1538,7 +1540,7 @@ begin
             (Name = 'form_delete_collection_item') or (Name = 'form_move_collection_item') or
             (Name = 'form_get_menu') or (Name = 'form_add_menu_item') or
             (Name = 'form_move_menu_item') or
-            (Name = 'form_undo') or (Name = 'form_redo');
+            (Name = 'form_history');
 end;
 
 { form_*_collection_item and form_list_collection_items. }
@@ -1913,6 +1915,7 @@ var
   NewUnit      : string;
   ActList      : TCustomActionList;
   Query        : string;
+  Value        : string;
   NewCompClass : string;
   ParentComp   : TComponent;
   NewComp      : TComponent;
@@ -1967,11 +1970,11 @@ begin
   Result := True;
 
   { ── Shared preamble: the form's designer ─────────────────────────────── }
-  if not Assigned(Ctx.Params) or (Ctx.Params.Get('form_file', '') = '') then
+  if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
   begin
-    Ctx.Error := True; Ctx.Result := 'form_file argument required'; Exit;
+    Ctx.Error := True; Ctx.Result := 'file argument required'; Exit;
   end;
-  Designer := FindDesigner(Ctx.Params.Get('form_file', ''), Err);
+  Designer := FindDesigner(Ctx.Params.Get('file', ''), Err);
   if Designer = nil then
   begin
     Ctx.Error := True; Ctx.Result := Err; Exit;
@@ -2314,9 +2317,16 @@ begin
         end;
       end;
 
-      'form_undo', 'form_redo':
+      'form_history':
       begin
         { What Edit > Undo / Redo does while the designer is active. }
+        Value := '';
+        if Assigned(Ctx.Params) then Value := Ctx.Params.Get('action', '');
+        if (Value <> 'undo') and (Value <> 'redo') then
+        begin
+          Ctx.Error := True;
+          Ctx.Result := 'action must be "undo" or "redo" (got "' + Value + '")'; Exit;
+        end;
         if not (Designer is TComponentEditorDesigner) then
         begin
           Ctx.Error := True; Ctx.Result := 'Designer does not support undo'; Exit;
@@ -2325,7 +2335,7 @@ begin
         Obj := TJSONObject.Create;
         try
           try
-            if Name = 'form_undo' then
+            if Value = 'undo' then
             begin
               Ok := CEDesigner.CanUndo and CEDesigner.Undo;
               if Ok then Obj.Add('status', 'undone') else Obj.Add('status', 'nothing to undo');
@@ -2468,7 +2478,7 @@ begin
             (Name = 'form_create_event_handler') or (Name = 'form_add_collection_item') or
             (Name = 'form_delete_collection_item') or (Name = 'form_move_collection_item') or
             (Name = 'form_add_menu_item') or (Name = 'form_move_menu_item') or
-            (Name = 'form_undo') or (Name = 'form_redo');
+            (Name = 'form_history');
 end;
 
 { Saves the unit of AFormFile (writes the .pas and the .lfm); '' = saved, else why not. }
@@ -2498,7 +2508,7 @@ begin
   Result := DispatchFormsToolInner(Name, Ctx);
   if not Result or Ctx.Error or not ChangesForm(Name) then Exit;
   if not (Assigned(Ctx.Params) and Ctx.Params.Get('auto_save', False)) then Exit;
-  Why := SaveFormUnit(Ctx.Params.Get('form_file', ''));
+  Why := SaveFormUnit(Ctx.Params.Get('file', ''));
   J := nil;
   try
     try
@@ -2548,7 +2558,7 @@ begin
   Tools.Add(MakeTool('form_delete_component',
     'Delete a component (and its child controls) from a form, as the designer''s ' +
     'Delete command does; its field is removed from the source. Also deletes menu ' +
-    'items with their submenus. form_undo brings it back. Stays unsaved unless auto_save (or editor_save).',
+    'items with their submenus. form_history brings it back. Stays unsaved unless auto_save (or editor_save).',
     SCHEMA_FORM_DELETE_COMPONENT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_arrange',
     'Arrange controls that share a parent: same_size, then distribute, then ' +
@@ -2578,7 +2588,7 @@ begin
     SCHEMA_FORM_ADD_COLLECTION_ITEM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_delete_collection_item',
     'Delete the item at index from a collection property. Later items shift down ' +
-    'by one. form_undo brings it back. Stays unsaved unless auto_save (or editor_save).',
+    'by one. form_history brings it back. Stays unsaved unless auto_save (or editor_save).',
     SCHEMA_FORM_DELETE_COLLECTION_ITEM, MCP_ANN_WRITE));
   Tools.Add(MakeTool('form_move_collection_item',
     'Move a collection item from index to new_index (e.g. reorder grid columns). ' +
@@ -2600,15 +2610,11 @@ begin
     'Search the IDE component palette for classes whose name contains query. ' +
     'Returns class_name, unit_name and palette_page for each match.',
     SCHEMA_FORM_SEARCH_PALETTE, MCP_ANN_RO));
-  Tools.Add(MakeTool('form_undo',
-    'Undo the last change on a form, as Edit > Undo in the designer: one step of ' +
-    'the designer''s undo list, shared with the user and other clients. Returns ' +
-    'can_undo and can_redo.',
-    SCHEMA_FORM_UNDO, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('form_redo',
-    'Redo the last undone change on a form, as Edit > Redo in the designer. ' +
-    'Returns can_undo and can_redo.',
-    SCHEMA_FORM_UNDO, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('form_history',
+    'Undo or redo the last change on a form, as Edit > Undo / Redo in the designer: one step of ' +
+    'the designer''s undo list, shared with the user and other clients. Returns can_undo and ' +
+    'can_redo.',
+    SCHEMA_FORM_HISTORY, MCP_ANN_WRITE));
 end;
 
 initialization

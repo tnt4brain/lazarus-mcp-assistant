@@ -22,7 +22,7 @@ uses
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
   TCodeRename, TWindows, TFindDeclaration, TGitWrite, TGitRemote, TGitHistory, TConflictFiles, TTokens,
-  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks;
+  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks, TToolAliases, TSelfTest;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -188,6 +188,8 @@ begin
     GetTestRegistry.AddTest(TTestProjectTools.Suite);
     GetTestRegistry.AddTest(TTestSession.Suite);
     GetTestRegistry.AddTest(TTestToolSmoke.Suite);
+    GetTestRegistry.AddTest(TTestToolAliasTable.Suite);
+    GetTestRegistry.AddTest(TTestSelfTest.Suite);
     GetTestRegistry.AddTest(TTestConsent.Suite);
     GetTestRegistry.AddTest(TTestConsentDialog.Suite);
     GetTestRegistry.AddTest(TTestPackageEdit.Suite);

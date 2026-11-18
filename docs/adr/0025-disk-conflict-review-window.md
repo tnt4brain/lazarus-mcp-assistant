@@ -1,6 +1,6 @@
 # ADR-025 — A review window for files changed on disk while the editor has unsaved changes
 
-**Status:** Accepted (2026-11-15), implemented on `feat/review-window`  
+**Status:** Accepted and implemented (2026-11-15; released in v1.6.0; extended for git conflicts by ADR-028)
 **Date:** 2026-11-14
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-009 — Debugger Integration
 
-**Status:** Accepted. Implemented in 19bdf1b and 4d4951a (2026-10-06), revised for v0.8.  
+**Status:** Accepted. Implemented in 19bdf1b and 4d4951a (2026-10-06), revised for v0.8; the deferred and planned items (conditions, data and address breakpoints, threads, frames, watches, registers, disassembly) are built, exception breakpoints and remote debugging are not (checked against the code 2026-11-18).
 **Date:** 2026-10-06 (proposal), 2026-10-14 (as built)
 
 > The sections up to *Consequences* are the original proposal, kept as written.
@@ -99,9 +99,14 @@ the main thread.
 
 ## Proposed tools
 
+*The proposal as written. ADR-010 renamed every tool with the `debug_` prefix, and each heading
+below shows the name it has today (`set_breakpoint` is `debug_set_breakpoint`); the text under a
+heading, its parameters and examples are the 2026-10-06 proposal, and "As built" and "v0.9"
+further down say what differs.*
+
 ### Group 1 — Breakpoints (no session required)
 
-#### `set_breakpoint`
+#### `debug_set_breakpoint` (proposed as `set_breakpoint`)
 
 Add a source line breakpoint.
 
@@ -115,7 +120,7 @@ Returns: `{"id": N, "file": "...", "line": N, "enabled": true}`
 
 Implementation: `DebugBoss.BreakPoints.Add(FilePath, Line)`.
 
-#### `remove_breakpoint`
+#### `debug_remove_breakpoint` (proposed as `remove_breakpoint`)
 
 Remove a breakpoint by file + line.
 
@@ -129,7 +134,7 @@ call `.ReleaseReference` / `.Free`.
 
 Returns: `{"removed": true}` or `{"removed": false, "reason": "not found"}`.
 
-#### `list_breakpoints`
+#### `debug_list_breakpoints` (proposed as `list_breakpoints`)
 
 Return all current breakpoints.
 
@@ -145,7 +150,7 @@ Returns:
 
 ### Group 2 — State query (non-blocking, always works)
 
-#### `get_debug_state`
+#### `debug_get_state` (proposed as `get_debug_state`)
 
 Return the current debugger state and location.  Works in **any** debugger state —
 `dsRun`, `dsPause`, `dsStop`, `dsNone`.  No blocking, no event wait.
@@ -180,7 +185,7 @@ a debug state object (same shape as `get_debug_state`).
 
 `state` values in returns: `"paused"`, `"running"`, `"stopped"`, `"error"`, `"timeout"`.
 
-#### `run_debugger`
+#### `debug_run` (proposed as `run_debugger`)
 
 Start or continue a debug session.  Equivalent to F9.
 
@@ -192,7 +197,7 @@ If the session is already `dsPause` (paused), this continues.  If `dsStop`/`dsNo
 starts a new session.  If the program runs to completion without pausing, returns
 `{"state": "stopped"}`.
 
-#### `pause_debugger`
+#### `debug_pause` (proposed as `pause_debugger`)
 
 Pause a running debug session.
 
@@ -201,7 +206,7 @@ No parameters.
 Implementation: `DebugBoss.DoPauseProject`.  Blocks until `dsPause`.
 Returns: debug state.
 
-#### `stop_debugger`
+#### `debug_stop` (proposed as `stop_debugger`)
 
 Stop the debug session.  **Non-blocking** — does not wait for a pause event;
 terminates unconditionally.  Safe to call in any state, including after a timeout.
@@ -210,7 +215,7 @@ No parameters.
 
 Returns: `{"state": "stopped"}`.
 
-#### `step_over`
+#### `debug_step_over` (proposed as `step_over`)
 
 Step over the current line (F8).
 
@@ -220,13 +225,13 @@ Step over the current line (F8).
 
 Returns: debug state at the new line.
 
-#### `step_into`
+#### `debug_step_into` (proposed as `step_into`)
 
 Step into the current call (F7).
 
 Same parameters as `step_over`.
 
-#### `step_out`
+#### `debug_step_out` (proposed as `step_out`)
 
 Step out of the current procedure (Shift+F8).
 
@@ -234,7 +239,7 @@ Step out of the current procedure (Shift+F8).
 |---|---|---|---|
 | `timeout_s` | integer | no | Default 30 |
 
-#### `run_to_line`
+#### `debug_run_to_line` (proposed as `run_to_line`)
 
 Run to a specific line in a file (like F4 but targeting an explicit location).
 
@@ -254,7 +259,7 @@ for `DoRunToCursor`.
 
 All tools return an error if `DebugBoss.State <> dsPause`.
 
-#### `get_call_stack`
+#### `debug_get_call_stack` (proposed as `get_call_stack`)
 
 Return the call stack for the current thread.
 
@@ -270,7 +275,7 @@ Returns:
   "file": "UnitFoo.pas", "line": 88}]
 ```
 
-#### `evaluate_expression`
+#### `debug_evaluate` (proposed as `evaluate_expression`)
 
 Evaluate a Pascal expression in the current debug context.
 
@@ -282,7 +287,7 @@ Implementation: `DebugBoss.Evaluate(Expression, ResultStr, TypeInfo, [defFullTyp
 
 Returns: `{"expression": "Self.FCount", "value": "42", "type": "Integer"}`.
 
-#### `get_local_variables`
+#### `debug_get_locals` (proposed as `get_local_variables`)
 
 Return local variables and parameters in the current stack frame.
 
@@ -302,17 +307,25 @@ Returns:
 
 ## Out of scope for this ADR
 
+*Status of this list, checked against the code on 2026-11-18: the first four items and watch
+management were built after this ADR was written (see "As built" and "v0.9" below); only
+exception breakpoints and remote debugging are still out.*
+
 - **Conditional breakpoints** — `TIDEBreakPoint.Condition` exists; deferred until
-  the basic set is proven in production.
+  the basic set is proven in production. *Built (v0.9): `condition` and `pass_count` on `debug_set_breakpoint`.*
 - **Watchpoints** (data breakpoints) — FpDebug supports them on some platforms;
-  too platform-specific for the first pass.
+  too platform-specific for the first pass. *Built (v0.9): `data` breakpoints.*
 - **Multi-thread debugging** — `DebugBoss.Threads` gives thread list; deferred.
-- **Exception breakpoints** — `DebugBoss.Exceptions` collection; deferred.
+  *Built: `debug_list_threads`, and `thread`/`frame` parameters with `debug_select_frame`.*
+- **Exception breakpoints** — `DebugBoss.Exceptions` collection; deferred. *Still not built:
+  an exception pauses the program and comes back as `reason: "exception"` (`debug_get_exception`),
+  but which exception classes stop it is not configurable through a tool.*
 - **CPUView** — a pure UI layer; no MCP-accessible API surface. Nothing to integrate.
   Its presence in the knowledge base is sufficient for user reference.
 - **Remote debugging** — out of scope entirely.
 - **Watch management** — `TIDEWatches.Add` / persisted watches; lower value than
-  `evaluate_expression` for AI use. Deferred.
+  `evaluate_expression` for AI use. Deferred. *Built (v0.8): `debug_add_watch`,
+  `debug_remove_watch`, `debug_list_watches`.*
 
 ---
 
@@ -422,8 +435,9 @@ Added beyond the proposal:
 
 From the out-of-scope list, watch management and a read-only thread list were
 built. Conditional breakpoints, data breakpoints, address breakpoints, frame/thread
-selection, disassembly, registers and memory are planned for v0.9 (README,
-*Planned*).
+selection, disassembly and registers were planned for v0.9 and are built (see "v0.9"
+below); memory is not planned (decided 2026-10-14, see the end of "v0.9: registers and
+disassembly").
 
 ### Waiting: polling, not an event
 

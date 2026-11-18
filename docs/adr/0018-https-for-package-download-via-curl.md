@@ -1,6 +1,6 @@
 # ADR-018 — HTTPS for package_download through the curl executable
 
-**Status:** Accepted (v1.0)  
+**Status:** Accepted and implemented (v1.0; checked against the code 2026-11-18: `curl -fsSL --max-time 120 --connect-timeout 15` in `McpToolsPackages.pas`, transport `https (curl)`). Not in the automated suite, as the ADR says: it needs the network
 **Date:** 2026-10-18
 
 ## Context

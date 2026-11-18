@@ -1,6 +1,6 @@
 # ADR-017 — Declaration Lookup Through Uses Clauses, and Reference Search Scopes
 
-**Status:** Accepted (v1.0)  
+**Status:** Accepted and implemented (v1.0; checked against the code 2026-11-18: the three-step lookup in `ResolveDeclaration`, the `also` scopes, `search_dir`, `max_files` default 300, `extra_files_searched` and `truncated`; test `TTestFindDeclaration`)
 **Date:** 2026-10-17
 
 ## Context

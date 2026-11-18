@@ -1,6 +1,6 @@
 # ADR-012 — Multiple Clients: Session Identity, Debug Session Lease, Debugger Lock
 
-**Status:** Accepted (v0.8), amended 2026-10-15 (unknown session ids get 404)  
+**Status:** Accepted and implemented (v0.8), amended 2026-10-15 (unknown session ids get 404) and 2026-10-17; checked against the code 2026-11-18, see the note at the end of decision 2
 **Date:** 2026-10-14
 
 ## Context
@@ -60,6 +60,14 @@ read-only tools. A "leaky bucket" would free the lock when its holder goes quiet
 Each request thread builds its own `TMcpMainCall` object (tool name, `Ctx`, log
 text) and passes that object's method to `TThread.Synchronize`. Nothing that
 belongs to one request is stored on the server thread any more.
+
+*Changed since (checked 2026-11-18): the hand-off is not `TThread.Synchronize` any more but
+`Application.QueueAsyncCall` plus an event the request thread waits on, and the "client
+connected" line of `initialize` is queued the same way. `TThread.Queue` was dropped for the call
+itself on 2026-10-19: its entry carries the thread's id, and freeing any `TThread` object that
+reused that id removed it unrun, so on Linux a call waited for ever with the debug lease held
+(found with gdb; the comment in `mcpideserver.pas` says the same). The lease watchdog still
+uses `Queue` from its own long-lived thread.*
 
 ### 3. Debug session lease
 
@@ -243,5 +251,6 @@ The `initialize` line gives the revision the server settled on and, when the cli
 asked for another one (a revision newer than the server implements, or none), adds
 `(client asked for X)`. A client that asks for a newer revision and then behaves by
 another revision's rules (keeping a session id where that revision has none, say) can
-only be told from a plain bug by this. The server speaks revisions up to 2025-06-18;
-newer ones are tracked in #5.
+only be told from a plain bug by this. The server spoke revisions up to 2025-06-18 then;
+it lists 2024-11-05 to 2025-11-25 now (`McpProtocolVersions`, #5: 2025-11-25 changes nothing
+this server uses).

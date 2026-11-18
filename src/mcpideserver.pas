@@ -107,7 +107,7 @@ uses
 
   StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
-  McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
+  McpUtils, McpToolAliases, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
   McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
   McpTokens, McpToolLog, McpMessages, McpReport, LCLVersion, DateUtils;
 
@@ -538,7 +538,7 @@ begin
     Resp.Add('jsonrpc', '2.0');
     Resp.Add('id',     ID.Clone);
     Resp.Add('result', ResultObj); // takes ownership
-    Result := Resp.FormatJSON;
+    Result := Resp.AsJSON;          // compact: a third smaller than FormatJSON (ADR-029)
   finally
     Resp.Free;
   end;
@@ -561,7 +561,7 @@ begin
     else
       Resp.Add('id', TJSONNull.Create);
     Resp.Add('error', Err); // takes ownership of Err
-    Result := Resp.FormatJSON;
+    Result := Resp.AsJSON;
   finally
     Resp.Free;
   end;
@@ -1268,6 +1268,8 @@ function TMcpServerThread.HandleToolsCallCore(ID: TJSONData;
   out AToolText: string): string;
 var
   GateMsg     : string;
+  AliasNotice : string;
+  AliasErr    : string;
   ToolName    : string;
   Args        : TJSONObject;
   Content     : TJSONArray;
@@ -1291,17 +1293,24 @@ begin
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
 
+  { Old tool and parameter names become the current ones, in place, before anything looks at
+    them (ADR-031); the client is told once per session and old name }
+  McpTranslateCall(Params, AClientId, AliasNotice, AliasErr);
   ToolName := Params.Get('name', '');
   Args     := TJSONObject(Params.Find('arguments'));
   { D:/x/f.pas and D:\x\f.pas must name the same file for every tool }
   McpNormalizePathArgs(Args);
-  McpRenameLegacyFileArg(ToolName, Args);
 
   Err  := False;
   Text := '';
   Images := nil;
 
-  if not McpValidateArgs(ToolName, Args, GateMsg) then
+  if AliasErr <> '' then
+  begin
+    Text := AliasErr;
+    Err  := True;
+  end
+  else if not McpValidateArgs(ToolName, Args, GateMsg) then
   begin
     Text := GateMsg;
     Err  := True;
@@ -1344,7 +1353,7 @@ begin
       Text := CallOnMain(ToolName, Args, AClientId, Err);
       if not Err then
         if Assigned(Args) then
-          Text := McpRunFinish(Text, Args.Get('wait_seconds', 10))
+          Text := McpRunFinish(Text, Args.Get('timeout_s', 10))
         else
           Text := McpRunFinish(Text, 10);
     end;
@@ -1443,6 +1452,9 @@ begin
   TextNode.Add('text', Text);
   Content := TJSONArray.Create;
   Content.Add(TextNode);
+  { a second item, never part of the text: tool results are JSON that clients parse }
+  if AliasNotice <> '' then
+    Content.Add(TJSONObject.Create(['type', 'text', 'text', AliasNotice]));
   for I := 0 to High(Images) do
     Content.Add(TJSONObject.Create(['type', 'image', 'data', Images[I],
                                     'mimeType', 'image/png']));
@@ -1660,6 +1672,7 @@ var
   I      : Integer;
   Proj   : Boolean;
   Text   : string;
+  Used   : TStringList;
 
   procedure Add(const APart: TMcpReportPart);
   begin
@@ -1734,6 +1747,19 @@ begin
   else
     Add(McpReportPart('Project and packages', 'No project is open.', False, False));
 
+  { which old names clients still use, to decide what 2.0 may refuse (ADR-031) }
+  Used := TStringList.Create;
+  try
+    McpAliasUsage(Used);
+    if Used.Count = 0 then
+      Add(McpReportPart('Old tool and parameter names used since the IDE started',
+        'None.', False, False))
+    else
+      Add(McpReportPart('Old tool and parameter names used since the IDE started',
+        StringReplace(Trim(Used.Text), '=', ': ', [rfReplaceAll]), True, False));
+  finally
+    Used.Free;
+  end;
   Add(ReportLogPart('mcp-tools.log', McpToolLogPath, McpToolLogEnabled));
   Add(ReportLogPart('mcp-sessions.log', McpSessionLogPath, True));
   Add(ReportLogPart('mcp-exceptions.log', IncludeTrailingPathDelimiter(Cfg) + 'mcp-exceptions.log', True));

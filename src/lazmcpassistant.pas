@@ -20,7 +20,7 @@ uses
   McpReviewPaths, McpReviewGutter, McpToolsCodeNav, McpStatements, 
   McpStatementEdit, McpHeapReport, McpTestHooks, McpNativeDialog, McpGitRun, 
   McpToolsGitRemote, McpToolsGitHistory, McpConflictFiles, McpGitConflicts, 
-  LazarusPackageIntf;
+  McpMarkdownHighlight, LazarusPackageIntf;
 
 implementation
 

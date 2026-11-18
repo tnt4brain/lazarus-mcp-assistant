@@ -1,6 +1,6 @@
 # ADR-028 — Git tools for remotes and for history: consent on the network, safety nets on rewriting, nothing left to git's defaults
 
-**Status:** Accepted (2026-11-17)
+**Status:** Accepted and built (2026-11-17; released in 1.7.0: the tools, the consent gates, the safety nets and the conflict review window)
 **Date:** 2026-11-15
 
 ## Context

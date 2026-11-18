@@ -1,6 +1,6 @@
 # ADR-019 — debug_attach: the IDE's attach path without its dialog
 
-**Status:** Accepted (v1.0)  
+**Status:** Accepted and implemented (v1.0; checked against the code 2026-11-18: `debug_attach`, `TDbgSyncHelper.AttachStart`, `debug_stop {detach}`, SIGKILL of the attached pid on Linux, `MoveToMainThread`; test `TTestProjectRuns.TestAttach`, opt-in with `MCP_DEBUG_TESTS=1`, not run in this check)
 **Date:** 2026-10-17
 
 ## Context

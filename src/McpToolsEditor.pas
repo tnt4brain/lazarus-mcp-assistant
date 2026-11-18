@@ -2,7 +2,7 @@
 unit McpToolsEditor;
 
 { Editor / navigation tools: editor_get_active, editor_read_file, project_list_files,
-  editor_list_open, editor_get_cursor, editor_get_selection, editor_edit_text,
+  editor_list_open, editor_edit_text,
   editor_replace_range, editor_set_cursor, editor_save, editor_close, editor_revert,
   editor_open, editor_create_file. }
 
@@ -23,7 +23,9 @@ uses
 
 const
   SCHEMA_GET_ACTIVE_FILE =
-    '{"type":"object","properties":{}}';
+    '{"type":"object","properties":{"what":{"type":"string","enum":["content","cursor","selection"],' +
+    '"description":"content (default): file name and whole buffer; cursor: file, line, col; ' +
+    'selection: the selected text and its range"}}}';
 
   SCHEMA_GET_FILE_CONTENT =
     '{"type":"object","properties":{"file":{"type":"string",' +
@@ -43,12 +45,6 @@ const
     '"lpk_path":{"type":"string","description":"Or the package''s .lpk, loaded for the call"}}}';
 
   SCHEMA_GET_OPEN_EDITORS =
-    '{"type":"object","properties":{}}';
-
-  SCHEMA_GET_CURSOR_POSITION =
-    '{"type":"object","properties":{}}';
-
-  SCHEMA_GET_SELECTED_TEXT =
     '{"type":"object","properties":{}}';
 
   SCHEMA_SET_CURSOR_POSITION =
@@ -202,6 +198,7 @@ end;
 function DispatchEditorTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
   Ed           : TSourceEditorInterface;
+  What         : string;
   Obj          : TJSONObject;
   Files        : TJSONArray;
   Proj         : TLazProject;
@@ -245,6 +242,51 @@ begin
       if not Assigned(Ed) then
       begin
         Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
+      end;
+      What := 'content';
+      if Assigned(Ctx.Params) then What := Ctx.Params.Get('what', 'content');
+      if What = 'cursor' then
+      begin
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('file', Ed.FileName);
+          Obj.Add('line', Ed.CursorTextXY.Y);
+          Obj.Add('col',  Ed.CursorTextXY.X);
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+        Exit;
+      end;
+      if What = 'selection' then
+      begin
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('file', Ed.FileName);
+          if Ed.SelectionAvailable then
+          begin
+            Obj.Add('text',       Ed.Selection);
+            Obj.Add('start_line', Ed.BlockBegin.Y);
+            Obj.Add('start_col',  Ed.BlockBegin.X);
+            Obj.Add('end_line',   Ed.BlockEnd.Y);
+            Obj.Add('end_col',    Ed.BlockEnd.X);
+          end
+          else
+          begin
+            Obj.Add('text', '');
+            Obj.Add('note', 'No text selected');
+          end;
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+        Exit;
+      end;
+      if What <> 'content' then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'what must be "content", "cursor" or "selection" (got "' + What + '")';
+        Exit;
       end;
       if CompareFileExt(Ed.FileName, '.lfm', False) = 0 then
       begin
@@ -411,55 +453,6 @@ begin
         Ctx.Result := Files.AsJSON;
       finally
         Files.Free;
-      end;
-    end;
-
-    'editor_get_cursor':
-    begin
-      Result := True;
-      Ed := SourceEditorManagerIntf.ActiveEditor;
-      if not Assigned(Ed) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
-      end;
-      Obj := TJSONObject.Create;
-      try
-        Obj.Add('file', Ed.FileName);
-        Obj.Add('line', Ed.CursorTextXY.Y);
-        Obj.Add('col',  Ed.CursorTextXY.X);
-        Ctx.Result := Obj.AsJSON;
-      finally
-        Obj.Free;
-      end;
-    end;
-
-    'editor_get_selection':
-    begin
-      Result := True;
-      Ed := SourceEditorManagerIntf.ActiveEditor;
-      if not Assigned(Ed) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
-      end;
-      Obj := TJSONObject.Create;
-      try
-        Obj.Add('file', Ed.FileName);
-        if Ed.SelectionAvailable then
-        begin
-          Obj.Add('text',       Ed.Selection);
-          Obj.Add('start_line', Ed.BlockBegin.Y);
-          Obj.Add('start_col',  Ed.BlockBegin.X);
-          Obj.Add('end_line',   Ed.BlockEnd.Y);
-          Obj.Add('end_col',    Ed.BlockEnd.X);
-        end
-        else
-        begin
-          Obj.Add('text', '');
-          Obj.Add('note', 'No text selected');
-        end;
-        Ctx.Result := Obj.AsJSON;
-      finally
-        Obj.Free;
       end;
     end;
 
@@ -843,7 +836,8 @@ end;
 procedure RegisterEditorSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('editor_get_active',
-    'Return the active editor file name and its current buffer content.',
+    'Return the active editor: what content (default) is its file name and current buffer, ' +
+    'cursor its file, line and col, selection the selected text and its range.',
     SCHEMA_GET_ACTIVE_FILE, MCP_ANN_RO));
   Tools.Add(MakeTool('editor_read_file',
     'Read a file by its absolute path, or the lines start_line..end_line of it. ' +
@@ -858,12 +852,6 @@ begin
   Tools.Add(MakeTool('editor_list_open',
     'Return the list of all currently open editor tabs (file names).',
     SCHEMA_GET_OPEN_EDITORS, MCP_ANN_RO));
-  Tools.Add(MakeTool('editor_get_cursor',
-    'Return the current cursor position (file, line, col) in the active editor.',
-    SCHEMA_GET_CURSOR_POSITION, MCP_ANN_RO));
-  Tools.Add(MakeTool('editor_get_selection',
-    'Return the currently selected text and its range in the active editor.',
-    SCHEMA_GET_SELECTED_TEXT, MCP_ANN_RO));
   Tools.Add(MakeTool('editor_set_cursor',
     'Move the cursor to a specific line and column in the editor. ' +
     'Opens the file first if it is not already open. ' +

@@ -4,7 +4,7 @@ unit McpRefKeeper;
 { Keeps references to deleted components, and puts them back when the
   component returns.
 
-  The designer's undo of a delete (Ctrl+Z, form_undo) reinserts the component
+  The designer's undo of a delete (Ctrl+Z, form_history) reinserts the component
   from a stream.  The stream holds the component's own references, but the
   references other components held to it (Label1.FocusControl,
   Button1.PopupMenu, Form1.Menu, AnchorSideLeft.Control) were cleared on

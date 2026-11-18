@@ -39,7 +39,7 @@ const
     'start. Without keep_stdin_open, stdin is closed after it"},' +
     '"keep_stdin_open":{"type":"boolean","description":"Leave stdin open, to be fed with ' +
     'project_run_input"},' +
-    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 10; 0 = answer at once, ' +
+    '"timeout_s":{"type":"integer","description":"Seconds to wait (0..300, default 10; 0 = answer at once, ' +
     'the program keeps running) for the program to end before answering"}}}';
 
   SCHEMA_COMPILE_PLUGIN =
@@ -822,7 +822,7 @@ begin
     SCHEMA_BUILD_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_run',
     'Build (if needed) and run the active project without the debugger, ' +
-    'optionally with new command-line arguments. Waits up to wait_seconds (default 10) and ' +
+    'optionally with new command-line arguments. Waits up to timeout_s (default 10) and ' +
     'answers {success, running, pid, exit_code, stdout, stderr}; when the program printed ' +
     'a heaptrc report (project_set_settings heaptrc=true, then rebuild) the answer also ' +
     'has heap_report {unfreed_blocks, unfreed_bytes, leaked, leaks[] with address, size ' +

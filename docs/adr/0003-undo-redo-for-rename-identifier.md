@@ -1,6 +1,6 @@
 # ADR-003 — Undo/Redo Integration for rename_identifier
 
-**Status:** Decided — deferred to v0.8  
+**Status:** Option B built (v0.8); `code_rename_identifier` applies the change through the editors and leaves them unsaved, so Ctrl+Z works per file (checked against the code 2026-11-18; `TestRenameCanBeUndone` in `tests/tcoderename.pas` presses Ctrl+Z in both files through the test hook `__test_editor_undo__` and checks the text and the disk). The "non-undoable" warning of Option A and the first two consequences below are history.
 **Date:** 2026-10-02
 
 ## Context

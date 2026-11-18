@@ -58,13 +58,12 @@ function McpToolNeedsProject(const AToolName: string): Boolean;
 const
   { Parameters of ide_rebuild, package_install and package_uninstall besides their own }
   MCP_REBUILD_FLAGS =
-    '"save_unsaved":{"type":"boolean","description":"Save the editors and the packages that hold ' +
-    'unsaved changes first. Default false: the call is refused (nothing changed) and names them, ' +
-    'because the rebuild closes every editor without asking and stops on a question about an ' +
-    'unsaved package. A package that was never saved, or has a file missing on disk, is never ' +
-    'saved this way and still stops the call"},' +
-    '"skip_compile":{"type":"boolean","description":"Do not compile the package first. Default false: ' +
-    'a package that does not compile stops the call before anything is changed"}';
+    '"save_unsaved":{"type":"boolean","description":"Save unsaved editors and packages first. ' +
+    'Default false: the call is refused, nothing changed, and names them (a rebuild closes every ' +
+    'editor without asking). A package never saved, or with a file missing on disk, still stops ' +
+    'the call"},' +
+    '"skip_compile":{"type":"boolean","description":"Skip the compile check. Default false: a ' +
+    'package that does not compile stops the call, nothing changed"}';
 
 var
   { Set by mcpideserver: stop and start the server again (main thread).  A rebuild
@@ -112,8 +111,8 @@ procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Han
 { MCP tool annotation presets — pass as AAnnotations to MakeTool.
   Everything works on the local IDE/project only, hence openWorldHint=false.
   RO is also used for tools that only move the editor cursor or open a tab.
-  DEST is for changes Ctrl+Z or form_undo can't take back: deletes that
-  form_undo restores are WRITE, as are deletes of editor text.
+  DEST is for changes Ctrl+Z or form_history can't take back: deletes that
+  form_history restores are WRITE, as are deletes of editor text.
   _IDEM: a second call with the same arguments changes nothing more (it may
   report "already" or "not found"); not for relative targets such as HEAD~1. }
 const
@@ -180,12 +179,11 @@ const
     'code_add_uses', 'code_add_to_class', 'code_insert_in_procedure',
     'code_replace_procedure_body', 'code_edit_statement', 'code_complete', 'code_format',
     'code_rename_identifier', 'code_extract_method');
-  { Tools that change the form their `form_file` argument names }
-  FORM_WRITERS : array[0..11] of string = (
+  { Tools that change the form their `file` argument names }
+  FORM_WRITERS : array[0..10] of string = (
     'form_set_properties', 'form_add_component', 'form_delete_component', 'form_arrange',
     'form_create_event_handler', 'form_add_collection_item', 'form_delete_collection_item',
-    'form_move_collection_item', 'form_add_menu_item', 'form_move_menu_item', 'form_undo',
-    'form_redo');
+    'form_move_collection_item', 'form_add_menu_item', 'form_move_menu_item', 'form_history');
 
 function PackageArgAllowed(const AArg: string; out AWhy: string): Boolean;
 begin
@@ -235,7 +233,7 @@ begin
   for I := Low(FILE_WRITERS) to High(FILE_WRITERS) do
     if AName = FILE_WRITERS[I] then Arg := 'file';
   for I := Low(FORM_WRITERS) to High(FORM_WRITERS) do
-    if AName = FORM_WRITERS[I] then Arg := 'form_file';
+    if AName = FORM_WRITERS[I] then Arg := 'file';
   if Arg = '' then Exit;
   if AParams.Get('dry_run', False) then Exit;
   F := AParams.Get(Arg, '');                 { '' = the active editor; the hook resolves it }
@@ -468,6 +466,12 @@ begin
     Ann := TJSONObject(GetJSON(AAnnotations))
   else
     Ann := TJSONObject.Create;
+  { readOnlyHint false is the MCP default: leaving it out says the same in 21 bytes less (ADR-029).
+    The other hints stay explicit: destructiveHint and openWorldHint default to true, and a
+    client that ignores defaults must not read "unsaid" as harmless. }
+  if (Ann.IndexOfName('readOnlyHint') >= 0) and (Ann.Find('readOnlyHint').JSONType = jtBoolean) and
+     not Ann.Booleans['readOnlyHint'] then
+    Ann.Delete('readOnlyHint');
   Ann.Add('title', Title);            { older clients read it here }
   Result.Add('annotations', Ann);
 end;

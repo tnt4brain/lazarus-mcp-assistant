@@ -1,7 +1,23 @@
 # ADR-001 — MCP Server Transport and Lifecycle
 
-**Status:** Accepted  
+**Status:** Accepted; the transport (Streamable HTTP, one `POST /mcp`), the bearer token check, the
+`Origin` rejection and the JSON-RPC rules (decisions 1, 2, 6) still hold. Decisions 3, 4, 5 and 7 and parts
+of 2 and 6 have been replaced since, see "What changed since" (checked against the code 2026-11-18).
 **Date:** 2026-10-01
+
+## What changed since
+
+The text below is the decision as made on 2026-10-01. Where the code differs now:
+
+| Decision | Then | Now |
+|---|---|---|
+| 2, bind address | `127.0.0.1` only | the listen address is a setting, default `127.0.0.1` ([ADR-020](0020-listen-address-is-a-setting.md)) |
+| 2, token | a fresh token on every start | one token, stored in `mcpassistantoptions.xml` and reused ([ADR-004](0004-self-hosted-development.md)); several named tokens ([ADR-021](0021-named-client-tokens.md)) |
+| 3, threading | `Threaded := False`, one connection at a time | `Threaded := True`, one thread per connection, because tools block; the main-thread hand-off is `Application.QueueAsyncCall` plus an event, not `Synchronize` ([ADR-012](0012-multiple-clients.md)) |
+| 4, lifetime | lazy: started only by the menu item | started with the IDE when a token is saved (`TMcpAutoStarter`); the menu item is under Tools → Secondary Tools → MCP Assistant |
+| 5, port | port 0, a new free port each start | the stored port is reused; a busy one falls back for that run only ([ADR-004](0004-self-hosted-development.md), amendment 2026-11-13) |
+| 6, `initialize` | echo the client's `protocolVersion` | the client's revision if the server implements it (2024-11-05 to 2025-11-25), else the newest |
+| 7, tools | `get_active_file`, `get_project_files`, `get_file_content`, `get_compiler_errors` | renamed and many more ([ADR-010](0010-tool-naming-scheme.md)) |
 
 ## Context
 

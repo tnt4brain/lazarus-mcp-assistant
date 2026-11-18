@@ -1,6 +1,6 @@
 # ADR-004 — Self-Hosted Development: Token Persistence, IDE Rebuild, and Session Continuity
 
-**Status:** Decided, amended 2026-11-13 (a fallback port is not saved)  
+**Status:** Decided and implemented, amended 2026-11-13 (a fallback port is not saved); checked against the code 2026-11-18: the persisted token (`Server/Token`), `InheritHandles := False` in the launcher, `McpPortToPersist` and the rebuild flow are in place. The tool names in "New tools" and "Decisions" (`compile_plugin`, `rebuild_ide`, `get_package_info`) are the 2026-10-02 names; ADR-010 renamed them (`package_compile`, `ide_rebuild`, `package_get_info`), and ADR-026 changed what a rebuild checks first
 **Date:** 2026-10-02
 
 ## Context

@@ -34,6 +34,7 @@ type
     procedure TestRenameInEditors;
     procedure TestUnsavedEdits;
     procedure TestAutoSave;
+    procedure TestRenameCanBeUndone;
     procedure TestRefusals;
   end;
 
@@ -245,6 +246,40 @@ begin
   CheckTrue(Pos('"saved":true', T) > 0, 'saved: ' + T);
   CheckTrue(Pos('TBar = class', Disk(FUnitA)) > 0, 'A on disk');
   CheckTrue(Pos('F := TBar.Create;', Disk(FUnitB)) > 0, 'B on disk');
+end;
+
+{ ADR-003: the rename is in the editors' undo lists, so Ctrl+Z takes it back in every file it
+  changed; nothing was on disk before, nothing is after.  Ctrl+Z is pressed through the test
+  hook __test_editor_undo__ (MCP_TEST_HOOKS=1), which no tool offers. }
+procedure TTestCodeRename.TestRenameCanBeUndone;
+var
+  DiskA, DiskB, T, F : string;
+begin
+  DiskA := Disk(FUnitA);
+  DiskB := Disk(FUnitB);
+  T := Rename(FUnitB, LineVar, ColVar, ',"new_name":"TBar"');
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('TBar = class', Buffer(FUnitA)) > 0, 'renamed in A');
+  CheckTrue(Pos('F := TBar.Create;', Buffer(FUnitB)) > 0, 'renamed in B');
+  for F in [FUnitA, FUnitB] do
+  begin
+    T := CallToolText('__test_editor_undo__', '{"file":' + JsonStr(F) + '}', []);
+    if Pos('disabled', T) > 0 then
+    begin
+      Ignore('needs MCP_TEST_HOOKS=1 in the IDE: ' + T);
+      Exit;
+    end;
+    CheckFalse(IsError(T), T);
+    CheckTrue(StrToIntDef(T, 0) >= 1, 'at least one undo step in ' + F + ': ' + T);
+  end;
+  T := Buffer(FUnitA);
+  CheckTrue(Pos('TFoo = class', T) > 0, 'declaration back: ' + T);
+  CheckEquals(0, Pos('TBar', T), 'no TBar left in A: ' + T);
+  T := Buffer(FUnitB);
+  CheckTrue(Pos('F := TFoo.Create;', T) > 0, 'use back: ' + T);
+  CheckEquals(0, Pos('TBar', T), 'no TBar left in B: ' + T);
+  CheckEquals(DiskA, Disk(FUnitA), 'A never touched on disk');
+  CheckEquals(DiskB, Disk(FUnitB), 'B never touched on disk');
 end;
 
 procedure TTestCodeRename.TestRefusals;

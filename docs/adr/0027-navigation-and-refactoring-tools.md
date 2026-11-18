@@ -1,6 +1,6 @@
 # ADR-027 — Navigation and refactoring beyond references and rename
 
-**Status:** Accepted (2026-11-15)  
+**Status:** Accepted and implemented (2026-11-15; all six tools exist in `McpToolsCodeNav.pas`, 11 tests in `tests/tcodenav.pas`; released in v1.6.0)
 **Date:** 2026-11-15
 
 ## Context

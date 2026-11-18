@@ -4,7 +4,7 @@ unit McpToolsDebugger;
 { Debugger tools: debug_set_breakpoint, debug_remove_breakpoint, debug_list_breakpoints,
   debug_get_state,
   debug_run, debug_attach, debug_pause, debug_stop,
-  debug_step_over, debug_step_into, debug_step_out, debug_run_to_line,
+  debug_step (kind over, into, out), debug_run_to_line,
   debug_get_call_stack, debug_evaluate,
   debug_get_locals, debug_set_variable,
   debug_get_registers, debug_disassemble.
@@ -1586,18 +1586,18 @@ begin
     'debug_set_variable':
     begin
       Result := True;
-      if not Assigned(Ctx.Params) or (Ctx.Params.Get('name', '') = '') then
-      begin Ctx.Error := True; Ctx.Result := 'name required'; Exit; end;
+      if not Assigned(Ctx.Params) or (Ctx.Params.Get('variable_name', '') = '') then
+      begin Ctx.Error := True; Ctx.Result := 'variable_name required'; Exit; end;
       if not Assigned(DebugBoss) or (DebugBoss.State <> dsPause) then
       begin Ctx.Error := True; Ctx.Result := 'Debugger is not paused'; Exit; end;
       McpMarkDebugDriven;  { a failed modify reports via a feedback dialog }
       Obj := TJSONObject.Create;
       try
-        if DebugBoss.Modify(Ctx.Params.Get('name', ''),
+        if DebugBoss.Modify(Ctx.Params.Get('variable_name', ''),
                             Ctx.Params.Get('value', '')) then
         begin
           Obj.Add('modified', True);
-          Obj.Add('name',  Ctx.Params.Get('name', ''));
+          Obj.Add('name',  Ctx.Params.Get('variable_name', ''));
           Obj.Add('value', Ctx.Params.Get('value', ''));
         end
         else
@@ -2100,35 +2100,23 @@ begin
         if S = dsPause then AddThreadNote('Attaching');
       end;
 
-      'debug_step_over':
+      'debug_step':
       begin
-        Result    := True;
-        TimeoutMs := 10000;
-        if Assigned(Ctx.Params) then
-          TimeoutMs := Ctx.Params.Get('timeout_s', 10) * 1000;
-        DoIssueCmd(3);
-        S := PollForPause(TimeoutMs, FinalFile, FinalLine);
-        Finish('step');
-      end;
-
-      'debug_step_into':
-      begin
-        Result    := True;
-        TimeoutMs := 10000;
-        if Assigned(Ctx.Params) then
-          TimeoutMs := Ctx.Params.Get('timeout_s', 10) * 1000;
-        DoIssueCmd(4);
-        S := PollForPause(TimeoutMs, FinalFile, FinalLine);
-        Finish('step');
-      end;
-
-      'debug_step_out':
-      begin
-        Result    := True;
-        TimeoutMs := 30000;
-        if Assigned(Ctx.Params) then
-          TimeoutMs := Ctx.Params.Get('timeout_s', 30) * 1000;
-        DoIssueCmd(5);
+        Result := True;
+        Value  := '';
+        if Assigned(Ctx.Params) then Value := Ctx.Params.Get('kind', '');
+        if (Value <> 'over') and (Value <> 'into') and (Value <> 'out') then
+        begin
+          Ctx.Error  := True;
+          Ctx.Result := 'kind must be "over", "into" or "out" (got "' + Value + '")';
+          Exit;
+        end;
+        if Value = 'out' then TimeoutMs := 30000 else TimeoutMs := 10000;
+        if Ctx.Params.IndexOfName('timeout_s') >= 0 then
+          TimeoutMs := Ctx.Params.Get('timeout_s', TimeoutMs div 1000) * 1000;
+        if Value = 'over' then DoIssueCmd(3)
+        else if Value = 'into' then DoIssueCmd(4)
+        else DoIssueCmd(5);
         S := PollForPause(TimeoutMs, FinalFile, FinalLine);
         Finish('step');
       end;
@@ -2501,9 +2489,11 @@ const
   SCHEMA_NO_PARAMS =
     '{"type":"object","properties":{}}';
 
-  SCHEMA_TIMEOUT_ONLY =
+  SCHEMA_STEP =
     '{"type":"object","properties":{' +
-    '"timeout_s":{"type":"integer","description":"Seconds to wait for the program to pause; default 10 (step out: 30)"}}}';
+    '"kind":{"type":"string","enum":["over","into","out"],"description":"over = F8, into = F7, out = Shift+F8"},' +
+    '"timeout_s":{"type":"integer","description":"Seconds to wait for the program to pause; default 10 (out: 30)"}},' +
+    '"required":["kind"]}';
 
   SCHEMA_ATTACH =
     '{"type":"object","properties":{' +
@@ -2575,9 +2565,9 @@ const
 
   SCHEMA_SET_LOCAL_VARIABLE =
     '{"type":"object","properties":{' +
-    '"name":{"type":"string","description":"Variable or parameter name"},' +
+    '"variable_name":{"type":"string","description":"Variable or parameter name"},' +
     '"value":{"type":"string","description":"New value expressed as a string"}},' +
-    '"required":["name","value"]}';
+    '"required":["variable_name","value"]}';
 
   SCHEMA_EXCEPTION_INFO =
     '{"type":"object","properties":{}}';
@@ -2646,18 +2636,10 @@ begin
     'state including after a timed-out step. For a program that debug_attach ' +
     'attached to, stopping ends the program; detach=true lets it keep running.',
     SCHEMA_STOP, MCP_ANN_WRITE_IDEM));
-  Tools.Add(MakeTool('debug_step_over',
-    'Step over the current line (F8). Blocks until the debugger pauses at ' +
-    'the next line.',
-    SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('debug_step_into',
-    'Step into the call at the current line (F7). Blocks until the debugger ' +
-    'pauses.',
-    SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('debug_step_out',
-    'Step out of the current procedure (Shift+F8). Blocks until the debugger ' +
-    'pauses after returning.',
-    SCHEMA_TIMEOUT_ONLY, MCP_ANN_WRITE));
+  Tools.Add(MakeTool('debug_step',
+    'Single-step the paused program: kind "over" the current line (F8), "into" the call on it ' +
+    '(F7) or "out" of the current procedure (Shift+F8). Blocks until the debugger pauses again.',
+    SCHEMA_STEP, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_run_to_line',
     'Run until (file, line) is reached, through a temporary breakpoint ' +
     'removed on pause. A breakpoint already on that line is used and kept, ' +

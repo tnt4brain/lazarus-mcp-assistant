@@ -267,7 +267,7 @@ var
 begin
   Fx := StringReplace(FixtureUnit, '\', '/', [rfReplaceAll]);
   try
-    T := Call('form_list_components', '{"form_file":' + JsonStr(Fx) + '}');
+    T := Call('form_list_components', '{"file":' + JsonStr(Fx) + '}');
     CheckNoError(Self, 'form_list_components', T);
     CheckTrue(Pos('"btnOK"', T) > 0, 'the fixture''s button is listed: ' + T);
     CheckTrue(Pos('"TButton"', T) > 0, 'with its class: ' + T);

@@ -1,6 +1,6 @@
 # ADR-005 — FPCUnit Test Suite
 
-**Status:** Decided  
+**Status:** Decided and implemented; checked 2026-11-18: 24 registered test classes in `tests/`, 492 tests in the last full run, and the "out of scope" list below was overtaken by option C (see "Update (2026-10-14)"). The counts per suite and the tool name `run_tests` in the text below are those of 2026-10-05; the tool is `ide_run_tests` (ADR-010), and test hooks that need `MCP_TEST_HOOKS=1` live in `McpTestHooks.pas` (ADR-011, ADR-028)
 **Date:** 2026-10-05
 
 ## Context

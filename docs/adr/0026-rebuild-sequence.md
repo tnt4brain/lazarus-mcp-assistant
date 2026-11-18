@@ -1,6 +1,6 @@
 # ADR-026 — The IDE rebuild checks first and recovers from a failed build
 
-**Status:** Accepted (2026-11-15)  
+**Status:** Accepted and implemented (2026-11-15; `save_unsaved`, `skip_compile` and `rebuild_failed` are in `McpToolsBuild.pas`, checked 2026-11-18)
 **Date:** 2026-11-15
 
 ## Context

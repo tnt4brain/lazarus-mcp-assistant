@@ -1,6 +1,6 @@
 # ADR-013 — User Consent Before New Code Enters the IDE
 
-**Status:** Accepted (v0.8)  
+**Status:** Accepted and implemented (v0.8; downloads and requirements v0.9, clones v1.1; checked against the code 2026-11-18). The same dialog class later also guards the network git tools (`McpConfirmGitRemote`, ADR-028). The one open note is under "Clones": a first attempt that showed no dialog, cause not found
 **Date:** 2026-10-14
 
 ## Context

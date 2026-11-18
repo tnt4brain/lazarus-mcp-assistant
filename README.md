@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 124 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 150 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows and Linux. The whole test suite, the debugger tests
 > included, passes on Windows and on Debian 12 (Lazarus 4.6, FPC 3.2.2, GTK2).
@@ -30,7 +30,7 @@ Tools are named `<category>_<action>`; `tools/list` returns them sorted, each
 with a human-readable `title` ("Debugger: get call stack") and annotations:
 - `readOnlyHint` for tools that change no file or project. Moving the cursor
   or opening a tab counts as read-only.
-- `destructiveHint` only for changes that neither Ctrl+Z nor `form_undo` can
+- `destructiveHint` only for changes that neither Ctrl+Z nor `form_history` can
   take back: closing or reverting an editor with unsaved changes,
   `git_checkout`, `git_reset`, rebuilds and installs.
 - `idempotentHint` where repeating a call with the same arguments changes
@@ -44,17 +44,21 @@ A tool that works on one source file takes it as `file`, an absolute path;
 is an error of the tool, never the IDE's "File not found" dialog. Files created
 or changed outside the IDE (by the assistant's shell, say) are seen at once.
 
+**Renamed in 1.7.0.** Some tools were fused and some parameters renamed so that one idea
+has one name. The old names work through all of 1.x, with a one-line notice the first time a
+session uses one, and **are refused from 2.0 on**. The list, and what to change in saved
+prompts, skills and permission allow-lists, is in [docs/renamed-tools.md](docs/renamed-tools.md).
+
 ### Editor — `editor_*`
 
 | Tool | Description |
 |---|---|
-| `editor_get_active` | Active editor file path and current buffer content |
+| `editor_get_active` | Active editor file path and buffer (`what` content, default), the cursor position (`cursor`) or the selected text and range (`selection`) |
 | `editor_list_open` | All open editor tabs |
 | `editor_read_file` | Read any file by absolute path; prefers the live editor buffer (unsaved changes) over disk |
 | `editor_open` | Open a file in the editor without moving the cursor; returns `already_open` |
 | `editor_create_file` | Create a new text file on the IDE's machine and open it; only inside the project, a loaded package's folder or the temp folder, never in `.git`, no overwrite unless `overwrite:true` (and not while open) |
-| `editor_get_cursor` / `editor_set_cursor` | Read / move the cursor (opens the file if needed) |
-| `editor_get_selection` | Selected text and its range |
+| `editor_set_cursor` | Move the cursor (opens the file if needed) |
 | `editor_edit_text` | **Preferred edit.** Replace `old_string` with `new_string`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
 | `editor_replace_range` | Replace a range given by start and end, or start and `delete_len` (no end inserts, empty text deletes) — for coordinates from `code_*` tools |
 | `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
@@ -87,8 +91,7 @@ the lever is a consent switch for those tools (like `AllowPackageInstall`), not 
 | `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
 | `code_get_unit_interface` | The interface section of a unit |
 | `code_get_procedure_ast` | Locals (with type) and the statements of one routine as a tree (if/for/while/repeat/try/case/with, calls, assignments) with lines and columns; `depth` sets how many levels ([ADR-008](docs/adr/0008-structural-source-editing.md)) |
-| `code_find_declaration` | Where an identifier is declared, with a context snippet; follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
-| `code_goto_declaration` | Jump the editor cursor to a declaration |
+| `code_find_declaration` | Where an identifier is declared, with a context snippet (`show=true` also jumps the editor cursor there); follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
 | `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
 | `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
 | `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
@@ -152,12 +155,12 @@ as `lines` and set from an array of strings.
 | `form_arrange` | Same size as the first control, distribute with a fixed gap or evenly, align edges/centres to the first control or the parent |
 | `form_create_event_handler` | Create (or show) the handler for a component event |
 | `form_search_palette` | Find palette classes by name: class, unit, palette page |
-| `form_undo` / `form_redo` | One step of the designer's undo list, as Edit > Undo / Redo (Ctrl+Z) in the designer; returns `can_undo` / `can_redo` |
+| `form_history` (`action` undo / redo) | One step of the designer's undo list, as Edit > Undo / Redo (Ctrl+Z) in the designer; returns `can_undo` / `can_redo` |
 
 Designer changes are in memory until `editor_save` on the unit.
 
 **Undo.** Every changing `form_*` call is one step in the designer's own undo
-list, shared with the user's Ctrl+Z and with other clients; `form_undo` takes
+list, shared with the user's Ctrl+Z and with other clients; `form_history` (`action` undo or redo) takes
 back the last step, whoever made it. Simple properties, `Name`, `Parent`, adds,
 deletes and `form_arrange` are recorded property by property. Changes the
 designer cannot replay that way (sub-properties such as `Font.Color`, string
@@ -192,7 +195,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`data` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
 | `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code`; a stop on a breakpoint says `reason: "breakpoint"`; if no session starts (a failed build) the answer is an error saying so |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
-| `debug_step_over` / `debug_step_into` / `debug_step_out` | F8 / F7 / Shift+F8 |
+| `debug_step` (`kind` over / into / out) | F8 / F7 / Shift+F8 |
 | `debug_attach` | Attach the debugger to a running process by id (e.g. the program `project_run` started); it stops with its stack readable. `debug_stop` with `detach: true` lets it go on |
 | `debug_pause` / `debug_stop` | Pause / stop the session (ends an attached program unless `detach`); a pause makes the program's main thread current (not the debugger's break-in thread) |
 | `debug_get_state` | State and source location, in any state |
@@ -224,7 +227,7 @@ debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
 | `project_list_todos` | `TODO` / `FIXME` / `DONE` comments, as the IDE's ToDo List shows them |
 | `project_build` | Incremental build; returns success and errors |
 | `project_get_compiler_errors` | Errors and warnings of the last build |
-| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `wait_seconds`, default 10; a program still running comes back with `running: true`); a heaptrc report in stderr also comes back parsed as `heap_report` (unfreed blocks and bytes, each leak's size and call stack) |
+| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `timeout_s`, default 10; a program still running comes back with `running: true`); a heaptrc report in stderr also comes back parsed as `heap_report` (unfreed blocks and bytes, each leak's size and call stack) |
 | `project_run_output` | The output of that program since the last read, its exit code once it ended; can wait for more, or stop it |
 | `project_run_input` | Sends text to the stdin of that program (`project_run` with `stdin` or `keep_stdin_open`), or closes it; returns the answer |
 | `project_get_windows` | The running program's visible windows (Windows: a tree of windowed controls, `Class "text" x,y wxh`, about 20 tokens a line. Linux (X11): the top-level windows only, found by process id, without the controls inside); `image` adds a PNG of each window (scaled to `max_size`), which also shows controls without a handle such as `TLabel`. Never waits for the program, so it also works while the program is paused in the debugger (the image is then copied from the screen). `ide=true` with `window` looks at the IDE's own windows instead (a form being built, a dialog); `window` is required then, so only the windows you name are shown |
@@ -280,8 +283,8 @@ packages that are already installed never asks. See [ADR-013](docs/adr/0013-user
 branch holds it), `git_checkout` (`create=true` makes a new branch), `git_branch_delete` (a merged local
 branch only, `git branch -d`; no force), `git_cherry_pick` (a commit or a range `a..b`;
 `abort=true` undoes one that stopped on a conflict), `git_archive` (committed files of a ref
-into a new .tar, .tar.gz, .tgz or .zip; never overwrites; the output path is write-checked), `git_stash` (all changes, or
-only `paths`), `git_stash_pop`, `git_reset` (soft/mixed only — no hard reset).
+into a new .tar, .tar.gz, .tgz or .zip; never overwrites; the output path is write-checked), `git_stash` (`action` push: all changes, or
+only `paths`; pop applies a stash entry), `git_reset` (soft/mixed only — no hard reset).
 `work_dir` defaults to the project directory.
 
 `git_init` makes a repository of an existing directory and keeps its files
@@ -357,8 +360,8 @@ with a cookie jar (`curl -b jar -c jar`) gets its own.
 
 ## Requirements
 
-- **Lazarus IDE** (tested with 4.6 on Windows and Linux)
-- **Free Pascal Compiler** (bundled with Lazarus)
+- **Lazarus IDE** 4.6 (the version tested, on Windows 11 and Debian 12 with GTK2); macOS is not tested
+- **Free Pascal Compiler** 3.2.2 (bundled with Lazarus)
 - **Claude Code** (or any MCP client that supports Streamable HTTP transport)
 
 Package dependencies — all bundled with Lazarus: `SynEdit`, `IDEIntf`, `FCL`,
@@ -399,6 +402,7 @@ its settings.
 | Terminal command (Linux/macOS), e.g. `kitty -e` | Detect a terminal |
 | git executable | `git` on `PATH` |
 | Listen address (IPv4) | `127.0.0.1`: this machine only. `0.0.0.0` or a machine address lets other machines connect over plain HTTP with the token: see [ADR-020](docs/adr/0020-listen-address-is-a-setting.md) |
+| *Test the connection* | A button under the listen address: asks the running server what a client asks (the token, `tools/list`, a wrong token, a call into the IDE) and shows one line per check with the reason when one fails ([ADR-032](docs/adr/0032-connection-test-and-port-check.md)). The server listens on a numeric address (`127.0.0.1`), never `localhost`, which can resolve to `::1` first |
 | Client tokens | One named token per client on another machine: **Add token...** shows it once, masked, with an eye button and buttons to copy the token or the whole client config; only a hash is stored, so a lost token is revoked and replaced. **Revoke** cuts a client off at once and ends its sessions. The primary token (what the IDE writes for clients on this machine) is never shown; **Regenerate primary token...** replaces it. See [ADR-021](docs/adr/0021-named-client-tokens.md) |
 | Allow assistants to install packages | Off; see [ADR-013](docs/adr/0013-user-consent-before-new-code.md) |
 | Logging: tool-call log | Off. One `begin` and one `end` line per tool call (tool, caller, time, outcome, argument names and a hash of them; no argument values or results) in `mcp-tools.log`, rotated at 4 MB. See [ADR-022](docs/adr/0022-tool-call-log.md) |
@@ -469,7 +473,7 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestToolSmoke` | 22 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
 | `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
 | `TTestPackageManage` | 3 | MCP server reachable: `package_create`/`get_settings`/`set_settings`/`compile` (IDE and lazbuild) on a package written to a temp directory, `project_list_files`/`project_search` scoped to it |
-| `TTestFormUndo` | 11 | MCP server reachable: `form_undo`/`form_redo` and what the `form_*` tools record, on a temp copy of the fixture form |
+| `TTestFormUndo` | 11 | MCP server reachable: `form_history` and what the `form_*` tools record, on a temp copy of the fixture form |
 | `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
 | `TTestCodeFormat` | 7 | MCP server reachable: `code_format` on temp files (whole file, line range, parse errors, include files, trailing lines) |
 | `TTestCodeRename` | 5 | MCP server reachable: `code_rename_identifier` on two temp units (dry run, rename into unsaved editors, unsaved edits, `auto_save`, refusals) |

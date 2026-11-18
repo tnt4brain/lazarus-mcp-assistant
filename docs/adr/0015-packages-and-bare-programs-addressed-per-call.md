@@ -1,6 +1,6 @@
 # ADR-015 — Packages and Bare Programs: Addressed Per Call, No "Active" State
 
-**Status:** Accepted (v1.0)  
+**Status:** Accepted and implemented (v1.0; checked against the code 2026-11-18: no active package, `package_name`/`lpk_path` per call, `package_create`, two compile engines with `pcfDoNotSaveEditorFiles`; tests `TTestPackageManage`, and `TTestWindows` (opt-in) for the bare `.lpr`)
 **Date:** 2026-10-17
 
 ## Context

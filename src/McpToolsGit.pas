@@ -104,14 +104,10 @@ const
 
   SCHEMA_GIT_STASH =
     '{"type":"object","properties":{' +
+    '"action":{"type":"string","enum":["push","pop"],"description":"push (default) stashes changes; pop applies and removes a stash entry"},' +
+    '"index":{"type":"integer","description":"pop only: stash index (default 0 = most recent)"},' +
     '"message":{"type":"string","description":"Optional stash description"},' +
     '"paths":{"type":"array","items":{"type":"string"},"description":"Stash only the changes in these files or directories (relative to the repository root or absolute); the rest stays in the working tree. Default: everything tracked"},' +
-    '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
-    '"required":[]}';
-
-  SCHEMA_GIT_STASH_POP =
-    '{"type":"object","properties":{' +
-    '"index":{"type":"integer","description":"Stash index to pop (default 0 = most recent)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
@@ -658,6 +654,7 @@ var
   Branch    : string;
   Target    : string;
   Message   : string;
+  Action    : string;
   PathsJSON : TJSONData;
   PathsArr  : TJSONArray;
   Obj       : TJSONObject;
@@ -1077,7 +1074,47 @@ begin
       Result  := True;
       WorkDir := GetGitWorkDir(Ctx);
       Message := '';
-      if Assigned(Ctx.Params) then Message := Ctx.Params.Get('message', '');
+      Action  := 'push';
+      if Assigned(Ctx.Params) then
+      begin
+        Message := Ctx.Params.Get('message', '');
+        Action  := Ctx.Params.Get('action', 'push');
+      end;
+      if (Action <> 'push') and (Action <> 'pop') then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'action must be "push" or "pop" (got "' + Action + '")';
+        Exit;
+      end;
+      if (Action = 'pop') and Assigned(Ctx.Params) and
+         ((Ctx.Params.IndexOfName('message') >= 0) or (Ctx.Params.IndexOfName('paths') >= 0)) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'message and paths are for action "push"; pop takes index only';
+        Exit;
+      end;
+      if (Action = 'push') and Assigned(Ctx.Params) and (Ctx.Params.IndexOfName('index') >= 0) then
+      begin
+        Ctx.Error  := True;
+        Ctx.Result := 'index is for action "pop"; push takes message and paths';
+        Exit;
+      end;
+      if Action = 'pop' then
+      begin
+        I := 0;
+        if Assigned(Ctx.Params) then I := Ctx.Params.Get('index', 0);
+        Ok := RunGit(['stash', 'pop', 'stash@{' + IntToStr(I) + '}'], WorkDir, Output);
+        Obj := TJSONObject.Create;
+        try
+          Obj.Add('output',   Output);
+          Obj.Add('work_dir', WorkDir);
+          if not Ok then Ctx.Error := True;
+          Ctx.Result := Obj.AsJSON;
+        finally
+          Obj.Free;
+        end;
+        Exit;
+      end;
       GitArgs := TStringList.Create;
       try
         GitArgs.Add('stash');
@@ -1102,25 +1139,6 @@ begin
       finally
         GitArgs.Free;
       end;
-      Obj := TJSONObject.Create;
-      try
-        Obj.Add('output',   Output);
-        Obj.Add('work_dir', WorkDir);
-        if not Ok then Ctx.Error := True;
-        Ctx.Result := Obj.AsJSON;
-      finally
-        Obj.Free;
-      end;
-    end;
-
-    'git_stash_pop':
-    begin
-      Result  := True;
-      WorkDir := GetGitWorkDir(Ctx);
-      I := 0;
-      if Assigned(Ctx.Params) then I := Ctx.Params.Get('index', 0);
-      Ok := RunGit(['stash', 'pop', 'stash@{' + IntToStr(I) + '}'],
-                   WorkDir, Output);
       Obj := TJSONObject.Create;
       try
         Obj.Add('output',   Output);
@@ -1287,13 +1305,10 @@ begin
     'existing file is never overwritten.',
     SCHEMA_GIT_ARCHIVE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_stash',
-    'Stash uncommitted changes (staged and unstaged) with an optional message, all of ' +
-    'them or only those of the given paths. ' +
-    'Use git_stash_pop to restore them.',
+    'action push (default): stash uncommitted changes (staged and unstaged) with an optional ' +
+    'message, all of them or only those of the given paths. action pop: apply and remove a ' +
+    'stash entry (index, default 0 = the most recent); message and paths are for push only.',
     SCHEMA_GIT_STASH, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('git_stash_pop',
-    'Apply and remove a stash entry. index defaults to 0 (most recent stash).',
-    SCHEMA_GIT_STASH_POP, MCP_ANN_WRITE));
   Tools.Add(MakeTool('git_init',
     'Make a git repository of an existing directory (git init), keeping its files; ' +
     'nothing is committed. Refused inside an existing repository. ' +

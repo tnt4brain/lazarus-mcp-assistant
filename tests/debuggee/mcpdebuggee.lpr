@@ -3,8 +3,10 @@ program mcpdebuggee;
 
 { Debuggee for the opt-in debugger tests (tests/tdebugger.pas).  Open
   tests/debuggee/mcpdebuggee.lpi as the IDE's project, then run the tests.
-  The tests find their lines by the MARK: comments; a console program, so
-  nothing waits for a click after the exception. }
+  The tests find their lines by the MARK: comments.  A GUI-subsystem program on
+  Windows (no console window to flash and take the focus while the tests run);
+  the last exception is caught, so that no message box waits for a click either:
+  the debugger stops at the raise all the same. }
 
 {$mode objfpc}{$H+}
 
@@ -34,5 +36,8 @@ begin
   Work;
   Sum(5);          // MARK:callsum
   Sleep(3000);     // MARK:sleep - keeps the program running for the lock test
-  raise Exception.Create('mcp debuggee exception');   // MARK:raise
+  try
+    raise Exception.Create('mcp debuggee exception');   // MARK:raise
+  except
+  end;
 end.

@@ -37,6 +37,28 @@ var
 procedure MdDefaultPalette(out APalette: TMdPalette);
 
 type
+  { A stretch of one line of a code block that has its own look: Line is 0-based, Start 1-based,
+    Len in bytes; Color is '#RRGGBB' or '' (the text colour). }
+  TMdRun = record
+    Line, Start, Len : Integer;
+    Color : string;
+    Bold, Italic : Boolean;
+  end;
+  TMdRuns = array of TMdRun;
+
+  { Says where fenced code of language ALang (lower case) is coloured; False: show it plain.
+    Set by the IDE's viewer (McpMarkdownHighlight); nil in the test program unless it sets one.
+    The runs must be in order; the converter checks them and does all the escaping. }
+  TMdHighlightFunc = function(const ALang: string; ACode: TStrings; out ARuns: TMdRuns): Boolean;
+
+var
+  MdHighlighter : TMdHighlightFunc = nil;
+
+const
+  MdHighlightMaxLines = 1500;
+  MdHighlightMaxBytes = 120000;
+
+type
   TMarkdownHtml = class
   private
     FImages : TStrings;
@@ -59,7 +81,7 @@ type
     function Inline(const S: string): string;
     function ImageHtml(const AAlt, AUrl: string): string;
     function Blocks(ALines: TStrings; ATight: Boolean): string;
-    function CodeBlockHtml(ALines: TStrings): string;
+    function CodeBlockHtml(ALines: TStrings; const ALang: string = ''): string;
     function TableHtml(ALines: TStrings; var I: Integer): string;
     function ListHtml(ALines: TStrings; var I: Integer): string;
     function QuoteHtml(ALines: TStrings; var I: Integer): string;
@@ -250,6 +272,21 @@ begin
   { an info string of a backtick fence holds no backtick; else it was inline code }
   if Result and (AChar = '`') and (Pos('`', Copy(T, ALen + 1, MaxInt)) > 0) then
     Result := False;
+end;
+
+{ The language of a fence line: the first word of its info string, lower case, spelled plain,
+  as an attribute with a leading dot in braces, or with a "language-" prefix. }
+function FenceLanguage(const S: string; AFenceLen: Integer): string;
+var
+  T : string;
+  I : Integer;
+begin
+  T := Trim(Copy(TrimLeft(S), AFenceLen + 1, MaxInt));
+  while (T <> '') and (T[1] in ['{', '.', ' ']) do Delete(T, 1, 1);
+  I := 1;
+  while (I <= Length(T)) and not (T[I] in [' ', #9, '{', '}', ',', ';']) do Inc(I);
+  Result := LowerCase(Copy(T, 1, I - 1));
+  if Copy(Result, 1, 9) = 'language-' then Delete(Result, 1, 9);
 end;
 
 function IsFenceEnd(const S: string; AChar: Char; ALen: Integer): Boolean;
@@ -1648,20 +1685,95 @@ begin
   end;
 end;
 
-function TMarkdownHtml.CodeBlockHtml(ALines: TStrings): string;
+{ The runs the highlighter gave for ALines, or none: unknown language, too much code, a hook that
+  fails.  Nothing it returns is trusted, see LineHtml. }
+function HighlightRuns(const ALang: string; ALines: TStrings): TMdRuns;
 var
-  Item : string;
+  Bytes, I : Integer;
+begin
+  Result := nil;
+  if (ALang = '') or not Assigned(MdHighlighter) then Exit;
+  if ALines.Count > MdHighlightMaxLines then Exit;
+  Bytes := 0;
+  for I := 0 to ALines.Count - 1 do Inc(Bytes, Length(ALines[I]) + 1);
+  if Bytes > MdHighlightMaxBytes then Exit;
+  try
+    if not MdHighlighter(ALang, ALines, Result) then Result := nil;
+  except
+    Result := nil;
+  end;
+end;
+
+function ValidColor(const S: string): Boolean;
+var
+  I : Integer;
+begin
+  Result := (Length(S) = 7) and (S[1] = '#');
+  if Result then
+    for I := 2 to 7 do
+      if not (S[I] in ['0'..'9', 'a'..'f', 'A'..'F']) then Exit(False);
+end;
+
+function SpaceKept(const S: string): string;
+begin
+  Result := StringReplace(MdEscape(S), ' ', '&nbsp;', [rfReplaceAll]);
+end;
+
+{ One line of code as HTML.  ARuns[AIdx..] are the runs still to place; AIdx moves past those of
+  this line.  A run that is out of order, outside the line or cuts a multi-byte character is
+  skipped; the text between runs is plain. }
+function LineHtml(const ALine: string; ALineNo: Integer; const ARuns: TMdRuns;
+  var AIdx: Integer): string;
+var
+  Pos0, E : Integer;
+  R : TMdRun;
+  Seg, Open, Close : string;
+begin
+  Result := '';
+  Pos0 := 1;
+  while (AIdx <= High(ARuns)) and (ARuns[AIdx].Line <= ALineNo) do
+  begin
+    R := ARuns[AIdx];
+    Inc(AIdx);
+    E := R.Start + R.Len;                       { first byte after the run }
+    if (R.Line <> ALineNo) or (R.Len <= 0) or (R.Start < Pos0) or (E > Length(ALine) + 1) then
+      Continue;
+    if (R.Start <= Length(ALine)) and (ALine[R.Start] in [#$80..#$BF]) then Continue;
+    if (E <= Length(ALine)) and (ALine[E] in [#$80..#$BF]) then Continue;
+    Result := Result + SpaceKept(Copy(ALine, Pos0, R.Start - Pos0));
+    Seg := SpaceKept(Copy(ALine, R.Start, R.Len));
+    Open := '';
+    Close := '';
+    if ValidColor(R.Color) then
+    begin
+      Open := '<font color="' + R.Color + '">';
+      Close := '</font>';
+    end;
+    if R.Bold then begin Open := Open + '<b>'; Close := '</b>' + Close; end;
+    if R.Italic then begin Open := Open + '<i>'; Close := '</i>' + Close; end;
+    Result := Result + Open + Seg + Close;
+    Pos0 := E;
+  end;
+  Result := Result + SpaceKept(Copy(ALine, Pos0, MaxInt));
+end;
+
+function TMarkdownHtml.CodeBlockHtml(ALines: TStrings; const ALang: string): string;
+var
   B : TStringBuilder;
   L : string;
+  Runs : TMdRuns;
+  N, RunIdx : Integer;
 begin
+  Runs := HighlightRuns(ALang, ALines);
+  RunIdx := 0;
   B := TStringBuilder.Create;
   try
     { the frame's colour comes from the table.md rule of the style block }
     B.Append('<table class="md" width="100%" border="1" cellpadding="12" cellspacing="0">' +
              '<tr><td bgcolor="' + MdPalette.Shade + '">');
-    for Item in ALines do
+    for N := 0 to ALines.Count - 1 do
     begin
-      L := StringReplace(MdEscape(Item), ' ', '&nbsp;', [rfReplaceAll]);
+      L := LineHtml(ALines[N], N, Runs, RunIdx);
       if L = '' then L := '&nbsp;';
       B.Append('<tt>').Append(L).Append('</tt><br>');
     end;
@@ -1947,7 +2059,7 @@ begin
             Inc(I);
           end;
           Inc(I);                      { the closing fence, or past the end }
-          B.Append(CodeBlockHtml(Code)).Append(#10);
+          B.Append(CodeBlockHtml(Code, FenceLanguage(L, Len))).Append(#10);
         finally
           Code.Free;
         end;
