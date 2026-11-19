@@ -17,7 +17,7 @@ uses
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils, Controls,
   fpjson,
   PackageIntf, PackageDefs,
-  McpToolContext, McpToolHelpers, McpToolsPackages, McpUtils;
+  McpToolContext, McpToolHelpers, McpToolsPackages, McpUtils, McpLimitedMode;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -921,6 +921,9 @@ end;
 initialization
   GMcpWriteCheck := @CheckWritableOrActive;
   GMcpPackageCheck := @McpCheckPackageWritable;
+  GMcpFolderCheck := @McpCheckWritableFolder;
+  GMcpReadableRoots := @McpReadableRoots;
+  GMcpBaseDir := @McpBaseDir;
   RegisterMcpGroup(@DispatchEditorTool);
   RegisterMcpSchemas(@RegisterEditorSchemas);
 

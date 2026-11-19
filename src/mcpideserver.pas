@@ -104,12 +104,11 @@ implementation
 uses
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
   LazFileUtils, Sockets, ssockets, fphttpclient,
-
   StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
   McpUtils, McpToolAliases, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
   McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
-  McpTokens, McpToolLog, McpMessages, McpReport, LCLVersion, DateUtils;
+  McpTokens, McpToolLog, McpMessages, McpReport, McpLimitedMode, LCLVersion, DateUtils;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
@@ -1263,6 +1262,49 @@ begin
   end;
 end;
 
+type
+  { McpWriteAllowed reads the IDE's state (the project, the loaded packages, the active editor),
+    which only the main thread may do }
+  TMcpWriteCheckCall = class
+    Tool    : string;
+    Args    : TJSONObject;
+    Why     : string;
+    Allowed : Boolean;
+    procedure Run;
+  end;
+
+procedure TMcpWriteCheckCall.Run;
+begin
+  try
+    Allowed := McpWriteAllowed(Tool, Args, Why);
+  except
+    on E: Exception do
+    begin
+      { a check that cannot be made refuses }
+      Allowed := False;
+      Why := 'Refused: could not check where ' + Tool + ' writes (' + E.ClassName + ': ' + E.Message + ')';
+    end;
+  end;
+end;
+
+{ ADR-034: every guarded tool is checked here, before any route runs it. }
+function MainWriteAllowed(const ATool: string; AArgs: TJSONObject; out AWhy: string): Boolean;
+var
+  C : TMcpWriteCheckCall;
+begin
+  C := TMcpWriteCheckCall.Create;
+  try
+    C.Tool := ATool;
+    C.Args := AArgs;
+    C.Allowed := False;
+    TThread.Synchronize(nil, @C.Run);
+    AWhy   := C.Why;
+    Result := C.Allowed;
+  finally
+    C.Free;
+  end;
+end;
+
 function TMcpServerThread.HandleToolsCallCore(ID: TJSONData;
   Params: TJSONObject; const AClientId: string; out AToolErr: Boolean;
   out AToolText: string): string;
@@ -1311,6 +1353,13 @@ begin
     Err  := True;
   end
   else if not McpValidateArgs(ToolName, Args, GateMsg) then
+  begin
+    Text := GateMsg;
+    Err  := True;
+  end
+  { where a tool may write (ADR-034), for every route: the main-thread tools, the blocking ones
+    (git_fetch, ...) and ide_run_tests do not all pass McpDispatch }
+  else if McpToolIsWriteGuarded(ToolName) and not MainWriteAllowed(ToolName, Args, GateMsg) then
   begin
     Text := GateMsg;
     Err  := True;
@@ -1726,6 +1775,8 @@ begin
           IfThen(GetServerPort = McpSettings.ServerPort, '',
                  ' (saved; this run listens on ' + IntToStr(GetServerPort) + ')') + LineEnding +
           '- assistants may install packages: ' + YesNo(McpSettings.AllowPackageInstall) + LineEnding +
+          '- limited mode (file access of the tools): ' +
+          IfThen(McpLimitedOn, 'on, allowed folders ' + McpLimitFoldersText, 'off') + LineEnding +
           '- tool-call log: ' + YesNo(McpSettings.ToolCallLog) + LineEnding +
           '- tool-call log file: ' + IfThen(McpSettings.ToolLogFile = '',
                                       '(default, in the config folder)', McpSettings.ToolLogFile) + LineEnding +

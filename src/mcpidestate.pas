@@ -41,7 +41,7 @@ function McpPollCommand(const ALpkPath: string = ''): string;
 implementation
 
 uses
-  PackageIntf;
+  PackageIntf, McpLimitedMode;
 
 { TMcpProjectState }
 
@@ -133,6 +133,8 @@ begin
                                'mcpassistantoptions.xml')
     else
       McpSettings.LoadSettings('mcpassistantoptions.xml');
+    { limited mode (ADR-034) is on from the first tool call when folders are stored }
+    McpLimitSetFoldersFrom(McpSettings.AllowedFolders);
   end;
   if not Assigned(McpProject) then
     McpProject := TMcpProjectState.Create;

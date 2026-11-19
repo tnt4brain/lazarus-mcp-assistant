@@ -81,7 +81,7 @@ implementation
 
 uses
   FileUtil,
-  McpIdeState, McpLauncher, McpIdeServer, McpUtils, McpTokensOptions, McpLoggingOptions,
+  McpIdeState, McpLauncher, McpIdeServer, McpUtils, McpTokensOptions, McpLoggingOptions, McpFoldersOptions,
   McpSelfTest;
 
 type
@@ -241,6 +241,7 @@ begin
   FAllowInstall.Caption := 'Allow assistants to install packages';
   Place(FAllowInstall, FSecurityGroup, 2);
   AddLabel(FSecurityGroup, 'Each install is still shown to you for confirmation.');
+  AddLabel(FSecurityGroup, 'Limiting the tools to folders: see the Directories page.');
 
   FFileLabel := TLabel.Create(Self);
   FFileLabel.Align := alTop;
@@ -465,6 +466,7 @@ begin
   RegisterIDEOptionsEditor(McpOptionsGroupIndex, TMcpOptionsFrame, 1);
   RegisterMcpTokensPage(McpOptionsGroupIndex);
   RegisterMcpLoggingPage(McpOptionsGroupIndex);
+  RegisterMcpFoldersPage(McpOptionsGroupIndex);
 end;
 
 procedure McpSyncAllowInstallMenu;

@@ -358,6 +358,32 @@ with a cookie jar (`curl -b jar -c jar`) gets its own.
 
 ---
 
+## What the tools may change
+
+Without a limit a client, local or on another machine, could write anywhere the IDE's user can.
+So a tool changes a file only inside: the open project's folder, the folder of a loaded package
+that is not part of Lazarus, the git working tree holding either, and the temp folder. Never
+inside a `.git` folder, and never in the IDE's settings folder. Links and junctions are followed:
+a path that leads out of a folder through one is outside. The git tools that change a repository
+(`git_commit`, `git_push`, ...), `package_create` and the `junit_out` of `ide_run_tests` follow the
+same rule.
+
+Two things this does **not** do:
+
+- It does not stop a client that may open projects: `project_open` or `project_create` makes the
+  new project's folder one of these folders. For that, use limited mode.
+- It does not limit what a program does that a tool builds or runs (`project_run`,
+  `ide_run_tests`, the debugger, the compiler's own options): the limit is about where the *tools*
+  read and write.
+
+**Limited mode** is off by default. In Tools > Options > MCP Assistant > Directories you list
+folders; with at least one, the tools change files, create or open projects (`project_open`,
+`project_create`, `git_clone`, `git_init`, `package_open`, `project_add_package`) and read files
+only inside them. Besides, they may still read the open project, the loaded packages, the Lazarus and
+FPC sources and the temp folder. Only you can change the list: no tool reads or changes it, and
+`ide_ping` and `ide_report` tell a client that the mode is on. A refusal names the folders. It is a
+limit on the file access of the tools, not a sandbox.
+
 ## Requirements
 
 - **Lazarus IDE** 4.6 (the version tested, on Windows 11 and Debian 12 with GTK2); macOS is not tested

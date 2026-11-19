@@ -70,9 +70,21 @@ function McpCheckFileToOpen(const AFileName: string; out AErr: string): Boolean;
   or on another machine, could write anywhere the IDE's user can. }
 procedure McpWritableRoots(ARoots: TStrings);
 
+{ What limited mode lets a tool read besides the allowed folders: the open project, the loaded
+  packages, the Lazarus folder, the FPC sources, the temp folder (ADR-034). }
+procedure McpReadableRoots(ARoots: TStrings);
+
+{ The open project's folder, '' without one: where limited mode takes a relative path from }
+function McpBaseDir: string;
+
 { True when AFileName (absolute) may be written: inside McpWritableRoots, and not inside a .git
   folder (its hooks run code).  Else False with the reason. }
 function McpCheckWritable(const AFileName: string; out AErr: string): Boolean;
+
+{ The same for a folder a tool changes things in (a git working directory, the folder of a new
+  package): the folder itself counts as inside a root.  '' means the folder the git tools use
+  when work_dir is not given (the project's, else the active editor's). }
+function McpCheckWritableFolder(const ADir: string; out AErr: string): Boolean;
 
 { The same for a package's .lpk, named by AName (a loaded package) or by ALpk.  A name that is not
   loaded passes: the tool reports it. }
@@ -81,7 +93,7 @@ function McpCheckPackageWritable(const AName, ALpk: string; out AErr: string): B
 implementation
 
 uses
-  LazIDEIntf, ProjectIntf, PackageIntf, MacroIntf, McpUtils;
+  LazIDEIntf, ProjectIntf, PackageIntf, MacroIntf, SrcEditorIntf, McpUtils, McpLimitedMode;
 
 procedure AddRoot(ARoots: TStrings; const ADir: string);
 var
@@ -123,12 +135,58 @@ begin
     if (LazDir <> '') and McpPathIsUnder(Dir, LazDir) then Continue;
     AddRoot(ARoots, Dir);
   end;
+  { limited mode: a root counts only inside an allowed folder }
+  if McpLimitedOn then
+    for I := ARoots.Count - 1 downto 0 do
+      if not McpInAllowedFolders(ARoots[I]) then ARoots.Delete(I);
   ARoots.Add(GetTempDir(False));
+end;
+
+procedure McpReadableRoots(ARoots: TStrings);
+var
+  I   : Integer;
+  S   : string;
+  Dir : string;
+begin
+  if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+     (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
+    AddRoot(ARoots, ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile));
+  for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+  begin
+    Dir := PackageEditingInterface.GetPackages(I).DirectoryExpanded;
+    if Dir <> '' then ARoots.Add(Dir);
+  end;
+  S := LazarusDirectory;
+  if S <> '' then ARoots.Add(S);
+  S := '$(FPCSrcDir)';
+  if Assigned(IDEMacros) and IDEMacros.SubstituteMacros(S) and (S <> '') then ARoots.Add(S);
+  ARoots.Add(GetTempDir(False));
+end;
+
+function McpBaseDir: string;
+begin
+  Result := '';
+  if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+     (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
+    Result := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile);
+end;
+
+{ the IDE's own settings folder: the options of the plugin (which hold limited mode), the IDE's
+  (external tools, which run programs) and the tokens' hashes.  No tool writes there, in any
+  mode. }
+function InConfigFolder(const AReal: string): Boolean;
+var
+  Cfg : string;
+begin
+  Result := False;
+  if not Assigned(LazarusIDE) then Exit;
+  Cfg := LazarusIDE.GetPrimaryConfigPath;
+  if Cfg <> '' then Result := McpPathIsUnder(AReal, McpRealPath(Cfg));
 end;
 
 function McpCheckWritable(const AFileName: string; out AErr: string): Boolean;
 var
-  Item : string;
+  Item, Real : string;
   Roots : TStringList;
 begin
   AErr := '';
@@ -137,24 +195,67 @@ begin
     AErr := 'Give an absolute path: ' + AFileName;
     Exit(False);
   end;
-  if McpPathHasSegment(AFileName, '.git') then
+  Real := McpRealPath(AFileName);   { where it really is: links and short names resolved }
+  if McpPathHasSegment(AFileName, '.git') or McpPathHasSegment(Real, '.git') then
   begin
     AErr := 'Refused: nothing is written inside a .git folder (hooks run code)';
+    Exit(False);
+  end;
+  if InConfigFolder(Real) then
+  begin
+    AErr := 'Refused: nothing is written in the IDE''s settings folder (it holds the options, ' +
+            'including what limits the tools, and what the IDE runs)';
     Exit(False);
   end;
   Roots := TStringList.Create;
   try
     McpWritableRoots(Roots);
     for Item in Roots do
-      if McpPathIsUnder(AFileName, Item) then Exit(True);
+      if McpPathIsUnder(Real, McpRealPath(Item)) then Exit(True);
     AErr := 'Refused: ' + AFileName + ' is outside the folders files may be changed in (the project ' +
       'directory, the folder of a loaded package that is not part of Lazarus, the git working tree holding either, the temp folder):';
     for Item in Roots do
       AErr := AErr + ' ' + Item;
+    if McpLimitedOn then
+      AErr := AErr + '. Limited mode is on: only folders inside ' + McpLimitFoldersText +
+              ' count, set by the user in Tools > Options > MCP Assistant';
   finally
     Roots.Free;
   end;
   Result := False;
+end;
+
+function McpCheckWritableFolder(const ADir: string; out AErr: string): Boolean;
+var
+  Dir, Probe : string;
+  Ed         : TSourceEditorInterface;
+begin
+  AErr := '';
+  Dir := ADir;
+  if Dir = '' then
+  begin
+    { the folder the git tools fall back to }
+    if Assigned(LazarusIDE) and Assigned(LazarusIDE.ActiveProject) and
+       (LazarusIDE.ActiveProject.ProjectInfoFile <> '') then
+      Dir := ExtractFilePath(LazarusIDE.ActiveProject.ProjectInfoFile)
+    else if Assigned(SourceEditorManagerIntf) then
+    begin
+      Ed := SourceEditorManagerIntf.ActiveEditor;
+      if (Ed <> nil) and FilenameIsAbsolute(Ed.FileName) then
+        Dir := ExtractFilePath(Ed.FileName);
+    end;
+    if Dir = '' then Exit(True);   { nothing to work in: the tool reports it }
+  end;
+  if not FilenameIsAbsolute(Dir) then
+  begin
+    AErr := 'Give an absolute path: ' + Dir;
+    Exit(False);
+  end;
+  { a file in the folder stands for the folder: the roots contain it, or they do not }
+  Probe := IncludeTrailingPathDelimiter(McpNormalizePath(Dir)) + '_';
+  Result := McpCheckWritable(Probe, AErr);
+  if not Result then
+    AErr := StringReplace(AErr, Probe, ExcludeTrailingPathDelimiter(Dir), [rfReplaceAll]);
 end;
 
 function McpCheckPackageWritable(const AName, ALpk: string; out AErr: string): Boolean;

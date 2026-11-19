@@ -38,3 +38,4 @@ ADR-007 was never assigned; no document is missing.
 | [0031](0031-tool-retirement-and-rename-layer.md) | # ADR-031 — Renaming, fusing and retiring tools: old names keep working through the major version |
 | [0032](0032-connection-test-and-port-check.md) | # ADR-032 — A connection test in Options, and a port check that does not lie on Windows |
 | [0033](0033-launch-tokens-and-two-ides.md) | # ADR-033 — A config file and a token of its own for every launch, and two IDEs side by side |
+| [0034](0034-write-scope-audit.md) | # ADR-034 — Write-scope audit: what every tool may change, and the gaps found |
