@@ -645,6 +645,17 @@ begin
      (Name <> 'package_uninstall') then Exit;
   Result := True;
 
+  { In-flight guard: refuse a concurrent rebuild.  It comes before the first write to
+    GBuildHelper, which one running rebuild uses: a call that is refused must not touch
+    it, and two package_install calls must not fill its strings at the same time. }
+  if InterlockedCompareExchange(GRebuildActive, 1, 0) <> 0 then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'A rebuild of the IDE is already in progress.';
+    Exit;
+  end;
+  try
+
   LpkPath := '';
   if Assigned(Ctx.Params) then
     LpkPath := Ctx.Params.Get('lpk_path', '');
@@ -673,15 +684,6 @@ begin
     Ctx.Result := 'ide_rebuild only rebuilds; install a package with package_install.';
     Exit;
   end;
-
-  { In-flight guard: refuse a concurrent rebuild. }
-  if InterlockedCompareExchange(GRebuildActive, 1, 0) <> 0 then
-  begin
-    Ctx.Error  := True;
-    Ctx.Result := 'A rebuild of the IDE is already in progress.';
-    Exit;
-  end;
-  try
 
   GBuildHelper.LpkPath    := LpkPath;
   GBuildHelper.UninstallName := UninstallName;

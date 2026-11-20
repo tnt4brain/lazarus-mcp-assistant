@@ -18,6 +18,7 @@ type
     procedure TestCreateSettingsCompile;
     procedure TestCreateRefusals;
     procedure TestListAndInfoErrors;
+    procedure TestConcurrentUninstallsKeepTheirOwnNames;
   end;
 
 implementation
@@ -163,6 +164,60 @@ begin
   CheckTrue(Pos('"count":0', T) > 0, 'IDE packages hidden by default: ' + T);
   T := Call('package_list', '{"name_contains":"LazUtils","include_ide":true}');
   CheckTrue(Pos('"name":"LazUtils"', T) > 0, 'and shown on request: ' + T);
+end;
+
+type
+  TUninstallThread = class(TThread)
+  public
+    Index  : Integer;
+    Answer : string;
+    procedure Execute; override;
+  end;
+
+procedure TUninstallThread.Execute;
+begin
+  Answer := Call('package_uninstall', '{"package_name":"McpNoSuchPkg' + IntToStr(Index) + 'X"}');
+end;
+
+{ The package_install, package_uninstall and ide_rebuild calls share one helper object in
+  the plugin.  A call must take the in-flight guard before it writes into it: else a
+  concurrent call overwrites the names of the one running (and, when strings are shared,
+  can crash the IDE: Lazarus 5.0RC1, issue #29).  Every answer names its own package,
+  or says a rebuild is in progress. }
+procedure TTestPackageManage.TestConcurrentUninstallsKeepTheirOwnNames;
+const
+  N      = 8;
+  ROUNDS = 6;
+var
+  Ths    : array[1..N] of TUninstallThread;
+  I, R   : Integer;
+  Own    : string;
+begin
+  for R := 1 to ROUNDS do
+  begin
+    for I := 1 to N do
+    begin
+      Ths[I] := TUninstallThread.Create(True);
+      Ths[I].Index := I;
+    end;
+    for I := 1 to N do Ths[I].Start;
+    for I := 1 to N do Ths[I].WaitFor;
+    try
+      for I := 1 to N do
+      begin
+        Own := 'McpNoSuchPkg' + IntToStr(I) + 'X';
+        CheckTrue((Pos(Own, Ths[I].Answer) > 0) or
+                  (Pos('already in progress', Ths[I].Answer) > 0) or
+                  (Pos('needs an open project', Ths[I].Answer) > 0),
+                  'round ' + IntToStr(R) + ', thread ' + IntToStr(I) + ': ' + Ths[I].Answer);
+        CheckEquals(0, Pos('McpNoSuchPkg', StringReplace(Ths[I].Answer, Own, '', [])),
+                    'another thread''s package name in: ' + Ths[I].Answer);
+      end;
+    finally
+      for I := 1 to N do Ths[I].Free;
+    end;
+  end;
+  CheckFalse(IsError(Call('ide_ping', '{}')), 'the IDE still answers');
 end;
 
 initialization
