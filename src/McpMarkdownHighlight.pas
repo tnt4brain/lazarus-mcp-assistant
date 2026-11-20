@@ -16,12 +16,24 @@ uses
   SynHighlighterSQL, SynHighlighterXML, SynHighlighterHTML, SynHighlighterCss,
   SynHighlighterPython, SynHighlighterJScript, SynHighlighterCPP, SynHighlighterJava,
   SynHighlighterPHP, SynHighlighterPerl, SynHighlighterUNIXShellScript, SynHighlighterIni,
-  SynHighlighterDiff, SynHighlighterBat, IDEOptEditorIntf, McpMarkdown;
+  SynHighlighterDiff, SynHighlighterBat, IDEOptEditorIntf, LCLVersion, McpMarkdown;
 
 { The runs of ACode in language ALang (lower case); False for a language without a highlighter. }
 function McpHighlightCode(const ALang: string; ACode: TStrings; out ARuns: TMdRuns): Boolean;
 
 implementation
+
+{$IF lcl_fullversion >= 4090000}
+uses
+  EditorOptionsIntf, LazEditHighlighter;
+
+type
+  { the type of a highlighter's attribute: Lazarus 5.0 renamed it }
+  TMdAttr = TLazEditHighlighterAttributes;
+{$ELSE}
+type
+  TMdAttr = TSynHighlighterAttributes;
+{$ENDIF}
 
 function NewHighlighter(const ALang: string): TSynCustomHighlighter;
 begin
@@ -104,8 +116,8 @@ end;
 { The attribute of the Pascal scheme that plays the same part as Attr (a keyword, a string, a
   number, a comment, a symbol), or nil.  Highlighters of other languages often come without
   colours of their own, SQL for one: their parts take the colours the user chose for Pascal. }
-function SchemeRole(AHl: TSynCustomHighlighter; AAttr: TSynHighlighterAttributes;
-  ARef: TSynPasSyn): TSynHighlighterAttributes;
+function SchemeRole(AHl: TSynCustomHighlighter; AAttr: TMdAttr;
+  ARef: TSynPasSyn): TMdAttr;
 var
   Name : string;
 begin
@@ -130,7 +142,7 @@ function McpHighlightCode(const ALang: string; ACode: TStrings; out ARuns: TMdRu
 var
   Hl : TSynCustomHighlighter;
   Ref : TSynPasSyn;
-  Attr, Role : TSynHighlighterAttributes;
+  Attr, Role : TMdAttr;
   N, P, Cnt, Len : Integer;
   Color : string;
   Bold, Italic : Boolean;
@@ -165,7 +177,7 @@ begin
       Hl.SetLine(ACode[N], N);
       while not Hl.GetEol do
       begin
-        Attr := Hl.GetTokenAttribute;
+        Attr := TMdAttr(Hl.GetTokenAttribute);
         if Attr <> nil then
         begin
           P := Hl.GetTokenPos + 1;

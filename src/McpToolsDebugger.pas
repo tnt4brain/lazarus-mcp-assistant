@@ -21,6 +21,8 @@ unit McpToolsDebugger;
 
 interface
 
+uses LCLVersion;
+
 implementation
 
 uses
@@ -433,7 +435,12 @@ begin
 end;
 
 const
+{$IF lcl_fullversion >= 4090000}
+  { 5.0 added a kind: stop on a write only when the value changes }
+  WATCH_KINDS : array[TDBGWatchPointKind] of string = ('write', 'writechange', 'read', 'readwrite', 'exec');
+{$ELSE}
   WATCH_KINDS : array[TDBGWatchPointKind] of string = ('write', 'read', 'readwrite', 'exec');
+{$ENDIF}
   WATCH_SCOPES: array[TDBGWatchPointScope] of string = ('local', 'global');
 
 { A number in Pascal ($1F), C (0x1F) or decimal notation. }

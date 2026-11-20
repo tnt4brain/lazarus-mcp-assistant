@@ -199,7 +199,11 @@ begin
       InitializeMcpServer;
   except
     on E: Exception do
+    begin
       DebugLn('[MCP Assistant] Auto-start error: ' + E.ClassName + ': ' + E.Message);
+      { the IDE's debug output is gone in a GUI program: mcp-exceptions.log keeps the reason }
+      McpLogException(E);
+    end;
   end;
   Free;
 end;

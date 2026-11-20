@@ -11,7 +11,7 @@ unit McpToolsProject;
 
 interface
 
-uses McpDebugLease;
+uses McpDebugLease, LCLVersion;
 
 function GetSystemPromptText: string;
 
@@ -25,7 +25,8 @@ uses
   PackageDefs,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpToolsPackages, McpDialogWatch, McpIdeListeners,
-  McpSessionLog, McpToolLog, McpReport, McpConsent, McpNativeDialog, McpLimitedMode;
+  McpSessionLog, McpToolLog, McpReport, McpConsent, McpNativeDialog, McpLimitedMode
+  {$IF lcl_fullversion >= 4090000}, LazVersion, ProjectBuildMode{$ENDIF};   { moved out of LCLPlatformDef and Project in 5.0 }
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 

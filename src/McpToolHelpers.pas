@@ -454,6 +454,10 @@ begin
   Proc   := TProcess.Create(nil);
   try
     Proc.Executable := LazbuildExe;
+    { the config folder this IDE runs with (--pcp), not lazbuild's default: another one mixes
+      the settings and package links of two Lazarus installs }
+    if Assigned(LazarusIDE) and (LazarusIDE.GetPrimaryConfigPath <> '') then
+      Proc.Parameters.Add('--pcp=' + ExcludeTrailingPathDelimiter(LazarusIDE.GetPrimaryConfigPath));
     if AClean then
       Proc.Parameters.Add('-B');   { rebuild everything }
     Proc.Parameters.Add(LpkPath);

@@ -14,7 +14,7 @@ unit McpMarkdownView;
 interface
 
 uses
-  Classes, SysUtils, Graphics, Forms;
+  Classes, SysUtils, Graphics, Forms, LCLVersion;
 
 const
   MCP_MD_MAX_TABS = 8;
@@ -57,7 +57,8 @@ uses
   Controls, ComCtrls, ExtCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
   LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEExternToolIntf,
   SynEdit, SynHighlighterPas, IDEOptEditorIntf, McpMarkdownHighlight,
-  McpMarkdown, McpImageInfo, McpMessages;
+  McpMarkdown, McpImageInfo, McpMessages
+  {$IF lcl_fullversion >= 4090000}, EditorOptionsIntf{$ENDIF};
 
 const
   MD_FORM_ID = 'McpMarkdownFormID';

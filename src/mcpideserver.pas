@@ -1595,7 +1595,10 @@ begin
     try
       Proc.Execute;
       SL.LoadFromStream(Proc.Output);
-      if (SL.Count > 0) and (Trim(SL[0]) <> '') then
+      { only a commit hash: outside a repository (an exported copy, a release zip) git's error
+        text is not one, and "exit code 0" alone is not enough with poStderrToOutPut }
+      if (Proc.ExitStatus = 0) and (SL.Count > 0) and (Trim(SL[0]) <> '') and
+         (Length(Trim(SL[0])) <= 40) and (Pos(' ', Trim(SL[0])) = 0) then
         Result := Trim(SL[0]);
     except
     end;

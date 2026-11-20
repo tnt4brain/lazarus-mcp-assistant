@@ -21,7 +21,7 @@ interface
 
 uses
   Classes, SysUtils, Types, Graphics, Controls, Forms, ExtCtrls, StdCtrls, Dialogs,
-  SynEdit, SynEditTypes, SynEditMiscClasses, McpDiff;
+  SynEdit, SynEditTypes, SynEditMiscClasses, McpDiff, LCLVersion;
 
 type
   { AApplied: "Apply to editor" was pressed and ANewText is the working copy;
@@ -64,7 +64,16 @@ implementation
 
 uses
   Clipbrd, ComCtrls, LazFileUtils, LazUTF8, SynEditMarkup, IDEOptEditorIntf, IDEWindowIntf,
-  McpMarkdownView, McpReviewPaths, McpConflictFiles;
+  McpMarkdownView, McpReviewPaths, McpConflictFiles
+  {$IF lcl_fullversion >= 4090000}, EditorOptionsIntf, LazEditHighlighter{$ENDIF};
+
+type
+  { what a markup returns for a position: Lazarus 5.0 made it a base class of TSynSelectedColor }
+  {$IF lcl_fullversion >= 4090000}
+  TMdMarkupColor = TLazEditHighlighterAttributesModifier;
+  {$ELSE}
+  TMdMarkupColor = TSynSelectedColor;
+  {$ENDIF}
 
 const
   REVIEW_FORM_ID = 'McpReviewFormID';
@@ -83,7 +92,7 @@ type
     procedure Clear;
     function GetMarkupAttributeAtRowCol(const aRow: Integer;
       const aStartCol: TLazSynDisplayTokenBound;
-      const AnRtlInfo: TLazSynDisplayRtlInfo): TSynSelectedColor; override;
+      const AnRtlInfo: TLazSynDisplayRtlInfo): TMdMarkupColor; override;
     procedure GetNextMarkupColAfterRowCol(const aRow: Integer;
       const aStartCol: TLazSynDisplayTokenBound; const AnRtlInfo: TLazSynDisplayRtlInfo;
       out ANextPhys, ANextLog: Integer); override;
@@ -275,7 +284,7 @@ end;
 
 function TWordMarkup.GetMarkupAttributeAtRowCol(const aRow: Integer;
   const aStartCol: TLazSynDisplayTokenBound;
-  const AnRtlInfo: TLazSynDisplayRtlInfo): TSynSelectedColor;
+  const AnRtlInfo: TLazSynDisplayRtlInfo): TMdMarkupColor;
 begin
   Result := nil;
   if (aRow < 1) or (aRow > Length(FFrom)) or (FFrom[aRow - 1] = 0) then Exit;
