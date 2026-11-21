@@ -333,9 +333,12 @@ begin
     ' && git remote add ' + REMOTE_NAME + ' ' + UrlFor(L.Host, L.Port) +
     ' && git config remote.' + REMOTE_NAME + '.fetch ''+' + SNAPSHOT_REF +
     ':refs/remotes/' + REMOTE_NAME + '/snapshot''' +
+    { an empty entry first: it clears the helpers the system or the user configured (Git for
+      Windows lists Git Credential Manager, which would open a window and ask for a password) }
+    ' && git config --unset-all credential.helper; git config credential.helper ""' +
     ' && if command -v instantfpc >/dev/null 2>&1; then' +
-    ' git config credential.helper "!instantfpc ~/.git-credential-mcp.pas ' + ToHex(L.Key) + '";' +
-    ' else git config credential.helper "!sh ~/.git-credential-mcp ' + ToHex(L.Key) + '"; fi';
+    ' git config --add credential.helper "!instantfpc ~/.git-credential-mcp.pas ' + ToHex(L.Key) + '";' +
+    ' else git config --add credential.helper "!sh ~/.git-credential-mcp ' + ToHex(L.Key) + '"; fi';
 end;
 
 const
