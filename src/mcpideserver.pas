@@ -114,6 +114,7 @@ threadvar
   { the token of the request this thread is handling (ADR-021) }
   GAuthTokenId   : string;
   GAuthTokenName : string;
+  GAuthBearer    : string;
 
 var
   { one line per finished tool call in the Messages window (ADR-022, Amendment 1) }
@@ -378,6 +379,7 @@ begin
     AResponse.SetCustomHeader('WWW-Authenticate', 'Bearer realm="lazarus-mcp"');
     Exit;
   end;
+  GAuthBearer := Copy(ARequest.Authorization, 8, MaxInt);
 
   { Who is calling (ADR-012): the Mcp-Session-Id we handed out, else our
     cookie.  Without either the caller is 'anonymous'; offer it a cookie so
@@ -1477,6 +1479,7 @@ begin
     begin
       BCtx.Params := Args; BCtx.Result := ''; BCtx.Error := False; BCtx.Images := nil;
       BCtx.ClientId := AClientId; BCtx.StopServer := @Self.StopServer;
+      BCtx.Bearer := GAuthBearer;
       McpBlockingDispatch(ToolName, BCtx, BHandled);
       if BHandled then
       begin

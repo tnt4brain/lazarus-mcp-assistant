@@ -36,7 +36,10 @@ type
     FReviewPolicy: string;          { a file with unsaved edits changed on disk: ask, editor or disk (ADR-025) }
     FClientTokens: TMcpTokenStore;  { named tokens, as hashes (ADR-021) }
     FAllowedFolders: TStringList;   { limited mode (ADR-034): empty = off }
+    FGitLinks: TStringList;         { git_serve links (ADR-035): peer|host|port|key as hex }
     procedure LoadDefaultSettings;
+    procedure LoadGitLinks;
+    procedure SaveGitLinks;
     procedure LoadAllowedFolders;
     procedure SaveAllowedFolders;
     procedure LoadTokens;
@@ -74,6 +77,9 @@ type
     { limited mode (ADR-034): absolute folders the tools may work in; none = off.  Only the user
       edits this (Options page); no tool reads or changes it. }
     property AllowedFolders: TStringList read FAllowedFolders;
+    { git_serve links (ADR-035), one line each: peer|host|port|key (hex).  The key is a secret:
+      it stays in this file and is shown only in the setup text for the linked machine. }
+    property GitLinks: TStringList read FGitLinks;
   end;
 
 implementation
@@ -85,10 +91,12 @@ begin
   FXmlConfig := TXMLConfig.Create(nil);
   FClientTokens := TMcpTokenStore.Create;
   FAllowedFolders := TStringList.Create;
+  FGitLinks := TStringList.Create;
 end;
 
 destructor TMcpIdeSettings.Destroy;
 begin
+  FGitLinks.Free;
   FAllowedFolders.Free;
   FClientTokens.Free;
   FXmlConfig.Free;
@@ -111,6 +119,7 @@ begin
   FToolLogPane         := False;
   FReviewPolicy        := 'ask';
   FAllowedFolders.Clear;
+  FGitLinks.Clear;
 end;
 
 procedure TMcpIdeSettings.LoadAllowedFolders;
@@ -137,6 +146,32 @@ begin
   FXmlConfig.SetValue('Security/AllowedFolders/Count', FAllowedFolders.Count);
   for I := 0 to FAllowedFolders.Count - 1 do
     FXmlConfig.SetValue('Security/AllowedFolders/Item' + IntToStr(I + 1), FAllowedFolders[I]);
+end;
+
+procedure TMcpIdeSettings.LoadGitLinks;
+var
+  I, N : Integer;
+  S    : string;
+begin
+  FGitLinks.Clear;
+  N := FXmlConfig.GetValue('GitServe/Links/Count', 0);
+  if N > 16 then N := 16;
+  for I := 1 to N do
+  begin
+    S := FXmlConfig.GetValue('GitServe/Links/Item' + IntToStr(I), '');
+    if S <> '' then FGitLinks.Add(S);
+  end;
+end;
+
+procedure TMcpIdeSettings.SaveGitLinks;
+var
+  I : Integer;
+begin
+  FXmlConfig.DeletePath('GitServe/Links');
+  if FGitLinks.Count = 0 then Exit;
+  FXmlConfig.SetValue('GitServe/Links/Count', FGitLinks.Count);
+  for I := 0 to FGitLinks.Count - 1 do
+    FXmlConfig.SetValue('GitServe/Links/Item' + IntToStr(I + 1), FGitLinks[I]);
 end;
 
 procedure TMcpIdeSettings.LoadTokens;
@@ -226,6 +261,7 @@ begin
     if (FReviewPolicy <> 'editor') and (FReviewPolicy <> 'disk') then FReviewPolicy := 'ask';
     LoadTokens;
     LoadAllowedFolders;
+    LoadGitLinks;
   except
     LoadDefaultSettings;
   end;
@@ -254,6 +290,7 @@ begin
     FXmlConfig.DeleteValue('Tools/ToolCallLog');
     SaveTokens;
     SaveAllowedFolders;
+    SaveGitLinks;
     { settings of the removed API client; ApiKey was stored in plain text }
     FXmlConfig.DeleteValue('Server/ExecutablePath');
     FXmlConfig.DeleteValue('Server/Arguments');

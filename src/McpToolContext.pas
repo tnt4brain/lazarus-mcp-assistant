@@ -23,6 +23,7 @@ type
     Error           : Boolean;
     Images          : TStringArray; { base64 PNGs, sent as image content after Result }
     ClientId        : string;       { Mcp-Session-Id / cookie, or 'anonymous' (ADR-012) }
+    Bearer          : string;       { the bearer token of this request (blocking tools only, ADR-035) }
     StopServer      : TMcpStopServerProc;  { set by SyncCallTool before dispatch }
   end;
 
@@ -212,7 +213,7 @@ const
     'git_merge', 'git_merge_abort', 'git_pull', 'git_push', 'git_rebase', 'git_rebase_abort',
     'git_rebase_continue', 'git_reset', 'git_resolve', 'git_squash', 'git_stash');
   { ... and these when their action is not "list" }
-  GIT_LIST_OR_CHANGE : array[0..1] of string = ('git_remote', 'git_tag');
+  GIT_LIST_OR_CHANGE : array[0..2] of string = ('git_remote', 'git_tag', 'git_serve');
 
 function PackageArgAllowed(const AArg: string; out AWhy: string): Boolean;
 begin
