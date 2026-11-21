@@ -16,7 +16,7 @@
     <Description Value="Runs a local Model Context Protocol (MCP) server inside the Lazarus IDE so AI assistants can read and edit code, build, debug, use the form designer, manage packages and use git. Listens on localhost only, protected by a token. Tested with Lazarus 4.x and FPC 3.2.2."/>
     <License Value="BSD-3-Clause"/>
     <Version Major="1" Minor="7"/>
-    <Files Count="60">
+    <Files Count="61">
       <Item1>
         <Filename Value="lazmcpassistant.pas"/>
         <UnitName Value="LazMcpAssistant"/>
@@ -258,6 +258,10 @@
         <Filename Value="McpFoldersOptions.pas"/>
         <UnitName Value="McpFoldersOptions"/>
       </Item60>
+      <Item61>
+        <Filename Value="McpToolsStatus.pas"/>
+        <UnitName Value="McpToolsStatus"/>
+      </Item61>
     </Files>
     <CompatibilityMode Value="True"/>
     <RequiredPkgs Count="7">
