@@ -60,6 +60,15 @@ function McpNormalizePath(const S: string): string;
   nothing: a project there must not open the whole disk. }
 function McpPathIsUnder(const APath, ARoot: string): Boolean;
 
+{ Where APath really is: the deepest part of it that exists, with every symbolic link, junction
+  and short (8.3) name resolved, and the rest (which may not exist yet) appended.  A path that
+  cannot be resolved at all comes back normalised.  ADR-034. }
+function McpRealPath(const APath: string): string;
+
+{ McpPathIsUnder for where both really are: a link inside ARoot that points out of it does not
+  make what is behind it part of ARoot. }
+function McpPathIsUnderReal(const APath, ARoot: string): Boolean;
+
 { Some segment of APath is AName, whatever the case (.git, say). }
 function McpPathHasSegment(const APath, AName: string): Boolean;
 
@@ -71,15 +80,16 @@ function McpRepoRoot(const ADir: string): string;
   form_file, lpk_path, work_dir, ...), in place.  AArgs may be nil. }
 procedure McpNormalizePathArgs(AArgs: TJSONObject);
 
-{ Tools that named their one file argument file_path, path or filename take
-  "file" since v1.0, as all other tools do; the old name is still accepted
-  and renamed to "file" here, in place.  AArgs may be nil. }
-procedure McpRenameLegacyFileArg(const ATool: string; AArgs: TJSONObject);
-
 implementation
 
 uses
-  SysUtils, Sockets, LazFileUtils, McpTokens;
+  SysUtils, Sockets, LazFileUtils, McpTokens
+  {$IFDEF WINDOWS}, Windows{$ENDIF};
+
+{$IFDEF WINDOWS}
+function GetFinalPathNameByHandleW(hFile: THandle; lpszFilePath: PWideChar;
+  cchFilePath, dwFlags: DWORD): DWORD; stdcall; external 'kernel32' name 'GetFinalPathNameByHandleW';
+{$ENDIF}
 
 const
   { argument names that hold file or directory paths; output_dir is not one
@@ -107,6 +117,68 @@ begin
   if (ExtractFilePath(Bare) = '') or (ExtractFilePath(Bare) = Bare) then Exit;   { a root }
   R := Bare + PathDelim;
   Result := (Length(P) > Length(R)) and (CompareFilenames(Copy(P, 1, Length(R)), R) = 0);
+end;
+
+{ The real name of a path that exists, or '' }
+function RealOfExisting(const AExisting: string): string;
+{$IFDEF WINDOWS}
+var
+  H   : THandle;
+  Buf : array[0..32767] of WideChar;
+  N   : DWORD;
+  S   : string;
+begin
+  Result := '';
+  H := CreateFileW(PWideChar(UTF8Decode(AExisting)), 0,
+         FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE, nil, OPEN_EXISTING,
+         FILE_FLAG_BACKUP_SEMANTICS, 0);
+  if H = INVALID_HANDLE_VALUE then Exit;
+  try
+    N := GetFinalPathNameByHandleW(H, @Buf[0], Length(Buf), 0);
+    if (N = 0) or (N >= Length(Buf)) then Exit;
+    S := UTF8Encode(WideString(PWideChar(@Buf[0])));
+  finally
+    CloseHandle(H);
+  end;
+  if Copy(S, 1, 8) = '\\?\UNC\' then S := '\\' + Copy(S, 9, MaxInt)
+  else if Copy(S, 1, 4) = '\\?\' then S := Copy(S, 5, MaxInt);
+  Result := S;
+end;
+{$ELSE}
+begin
+  Result := GetPhysicalFilename(AExisting, pfeEmpty);
+end;
+{$ENDIF}
+
+function McpRealPath(const APath: string): string;
+var
+  P, Existing, Tail, Real, Up : string;
+begin
+  P := McpNormalizePath(APath);
+  if not FilenameIsAbsolute(P) then Exit(P);
+  Existing := ExcludeTrailingPathDelimiter(P);
+  Tail := '';
+  while Existing <> '' do
+  begin
+    Real := RealOfExisting(Existing);
+    if Real <> '' then
+    begin
+      Result := ExcludeTrailingPathDelimiter(Real);
+      if Tail <> '' then Result := Result + PathDelim + Tail;
+      Exit;
+    end;
+    Up := ExtractFileDir(Existing);
+    if (Up = '') or (Up = Existing) then Break;
+    if Tail = '' then Tail := ExtractFileName(Existing)
+    else Tail := ExtractFileName(Existing) + PathDelim + Tail;
+    Existing := Up;
+  end;
+  Result := P;
+end;
+
+function McpPathIsUnderReal(const APath, ARoot: string): Boolean;
+begin
+  Result := McpPathIsUnder(McpRealPath(APath), McpRealPath(ARoot));
 end;
 
 function McpPathHasSegment(const APath, AName: string): Boolean;
@@ -152,27 +224,6 @@ begin
     if Assigned(D) and (D.JSONType = jtString) then
       D.AsString := McpNormalizePath(D.AsString);
   end;
-end;
-
-procedure McpRenameLegacyFileArg(const ATool: string; AArgs: TJSONObject);
-var
-  Old : string;
-  I   : Integer;
-begin
-  if not Assigned(AArgs) or (AArgs.IndexOfName('file') >= 0) then Exit;
-  case ATool of
-    'debug_set_breakpoint', 'debug_remove_breakpoint', 'debug_run_to_line',
-    'editor_open', 'project_add_file', 'project_remove_file', 'project_open':
-      Old := 'file_path';
-    'editor_read_file':    Old := 'path';
-    'project_create_unit': Old := 'filename';
-  else
-    Exit;
-  end;
-  I := AArgs.IndexOfName(Old);
-  if I < 0 then Exit;
-  AArgs.Add('file', AArgs.Items[I].Clone);
-  AArgs.Delete(I);
 end;
 
 function Swap16(v: Word): Word;
@@ -284,7 +335,12 @@ begin
   S := fpSocket(AF_INET, SOCK_STREAM, 0);
   if S < 0 then Exit;
   Enable := 1;
+  { Unix: a port in TIME_WAIT counts as free, a listening one still blocks the bind.  Windows:
+    the option lets this bind succeed on a port another program listens on (when that one set
+    it too), so a busy port would look free (ADR-032). }
+  {$IFNDEF MSWINDOWS}
   fpSetSockOpt(S, SOL_SOCKET, SO_REUSEADDR, @Enable, SizeOf(Enable));
+  {$ENDIF}
   FillAddr(Addr, AAddr, APort);
   Result := fpBind(S, @Addr, SizeOf(Addr)) = 0;
   CloseSocket(S);

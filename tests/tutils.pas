@@ -26,7 +26,6 @@ type
     procedure TestNormalizePathAbsolute;
     procedure TestNormalizePathRelativeUnchanged;
     procedure TestNormalizePathArgs;
-    procedure TestRenameLegacyFileArg;
     procedure TestPathIsUnder;
     procedure TestPathHasSegment;
     procedure TestRepoRoot;
@@ -179,10 +178,9 @@ var
   Addr   : TInetSockAddr;
   Enable : LongInt;
 begin
-  // Confirm that a port released from a listening socket registers as free.
-  // Note: on Windows, SO_REUSEADDR allows rebinding an already-bound port, so
-  // we only test the "freed" direction (free after close), not the "occupied"
-  // direction (which would require SO_EXCLUSIVEADDRUSE on Windows).
+  // A port held by a listening socket is not free, even when that socket set SO_REUSEADDR (on
+  // Windows a bind with the option would succeed against it: ADR-032); once the socket is
+  // closed the port is free again.
   P := FindFreePort;
   CheckTrue(P > 0, 'FindFreePort returned 0');
 
@@ -199,6 +197,7 @@ begin
   Addr.sin_addr.s_bytes[4] := 1;
   CheckEquals(0, fpBind(S, @Addr, SizeOf(Addr)), 'Could not bind test socket');
   CheckEquals(0, fpListen(S, 1), 'Could not listen on test socket');
+  CheckFalse(IsPortFree(P), 'A port a socket listens on is not free');
   CloseSocket(S);
   CheckTrue(IsPortFree(P), 'Port must register as free immediately after the listening socket is closed');
 end;
@@ -257,45 +256,6 @@ begin
     Args.Free;
   end;
   McpNormalizePathArgs(nil);   { no arguments at all }
-end;
-
-procedure TTestUtils.TestRenameLegacyFileArg;
-var
-  Args : TJSONObject;
-begin
-  Args := TJSONObject(GetJSON('{"path":"a.pas"}'));
-  try
-    McpRenameLegacyFileArg('editor_read_file', Args);
-    CheckEquals('a.pas', Args.Get('file', ''), 'path is file');
-    CheckEquals(-1, Args.IndexOfName('path'), 'old name gone');
-  finally
-    Args.Free;
-  end;
-  Args := TJSONObject(GetJSON('{"file_path":"a.pas","line":3}'));
-  try
-    McpRenameLegacyFileArg('debug_set_breakpoint', Args);
-    CheckEquals('a.pas', Args.Get('file', ''), 'file_path is file');
-    CheckEquals(3, Args.Get('line', 0));
-  finally
-    Args.Free;
-  end;
-  Args := TJSONObject(GetJSON('{"file":"new.pas","filename":"old.pas"}'));
-  try
-    McpRenameLegacyFileArg('project_create_unit', Args);
-    CheckEquals('new.pas', Args.Get('file', ''), 'file wins');
-  finally
-    Args.Free;
-  end;
-  { git_diff's path may be a directory: not renamed }
-  Args := TJSONObject(GetJSON('{"path":"src"}'));
-  try
-    McpRenameLegacyFileArg('git_diff', Args);
-    CheckEquals('src', Args.Get('path', ''));
-    CheckEquals(-1, Args.IndexOfName('file'));
-  finally
-    Args.Free;
-  end;
-  McpRenameLegacyFileArg('editor_open', nil);
 end;
 
 initialization

@@ -11,7 +11,7 @@ unit McpOptions;
 interface
 
 uses
-  Classes, SysUtils, Controls, StdCtrls, EditBtn, Forms,
+  Classes, SysUtils, Controls, StdCtrls, ExtCtrls, EditBtn, Forms,
   IDEOptionsIntf, IDEOptEditorIntf, MenuIntf;
 
 type
@@ -42,7 +42,13 @@ type
     FListen          : TEdit;
     FListenNote      : TLabel;
     FFileLabel       : TLabel;
+    FTestBtn         : TButton;    { Server: the connection test (ADR-032) }
+    FTestOut         : TMemo;
+    FTestTimer       : TTimer;
+    FTestThread      : TThread;
     procedure ListenChanged(Sender: TObject);
+    procedure TestClicked(Sender: TObject);
+    procedure TestTick(Sender: TObject);
     procedure WinChoiceChanged(Sender: TObject);
     procedure FillWinChoices;
     function AddGroup(const ACaption: string): TGroupBox;
@@ -75,7 +81,39 @@ implementation
 
 uses
   FileUtil,
-  McpIdeState, McpLauncher, McpIdeServer, McpUtils, McpTokensOptions, McpLoggingOptions;
+  McpIdeState, McpLauncher, McpIdeServer, McpUtils, McpTokensOptions, McpLoggingOptions, McpFoldersOptions,
+  McpSelfTest;
+
+type
+  { Runs the connection test off the main thread: check 5 needs the main thread free.  Holds
+    copies only, so the page may close while it runs. }
+  TMcpTestThread = class(TThread)
+  private
+    FHost  : string;
+    FPort  : Word;
+    FToken : string;
+  public
+    Text : string;
+    constructor Create(const AHost: string; APort: Word; const AToken: string);
+    procedure Execute; override;
+  end;
+
+constructor TMcpTestThread.Create(const AHost: string; APort: Word; const AToken: string);
+begin
+  FHost  := AHost;
+  FPort  := APort;
+  FToken := AToken;
+  inherited Create(False);
+end;
+
+procedure TMcpTestThread.Execute;
+begin
+  try
+    Text := McpSelfTestText(McpRunSelfTest(FHost, FPort, FToken));
+  except
+    on E: Exception do Text := 'The test itself failed: ' + E.Message;
+  end;
+end;
 
 { TMcpOptionsGroup }
 
@@ -178,12 +216,32 @@ begin
   FListen.OnChange := @ListenChanged;
   Place(FListen, FServerGroup);
   FListenNote := AddLabel(FServerGroup, '');
+  FTestBtn := TButton.Create(Self);
+  FTestBtn.Caption := 'Test the connection';
+  FTestBtn.Align   := alTop;
+  FTestBtn.AutoSize := True;
+  FTestBtn.OnClick := @TestClicked;
+  FTestBtn.BorderSpacing.Top := 6;
+  Place(FTestBtn, FServerGroup, 4);
+  FTestOut := TMemo.Create(Self);
+  FTestOut.ReadOnly   := True;
+  FTestOut.ScrollBars := ssAutoVertical;
+  FTestOut.WordWrap   := True;
+  FTestOut.Height     := 120;
+  FTestOut.Text       := 'Asks the running server what a client asks: initialize with the token, ' +
+                         'tools/list, a wrong token, a call into the IDE.';
+  Place(FTestOut, FServerGroup);
+  FTestTimer := TTimer.Create(Self);
+  FTestTimer.Enabled  := False;
+  FTestTimer.Interval := 200;
+  FTestTimer.OnTimer  := @TestTick;
 
   FSecurityGroup := AddGroup('Security');
   FAllowInstall := TCheckBox.Create(Self);
   FAllowInstall.Caption := 'Allow assistants to install packages';
   Place(FAllowInstall, FSecurityGroup, 2);
   AddLabel(FSecurityGroup, 'Each install is still shown to you for confirmation.');
+  AddLabel(FSecurityGroup, 'Limiting the tools to folders: see the Directories page.');
 
   FFileLabel := TLabel.Create(Self);
   FFileLabel.Align := alTop;
@@ -235,8 +293,41 @@ begin
       'use it on a network you trust, or tunnel it (ssh -L). Applied when OK is pressed.';
 end;
 
+procedure TMcpOptionsFrame.TestClicked(Sender: TObject);
+begin
+  if Assigned(FTestThread) then Exit;
+  if not IsServerRunning then
+  begin
+    FTestOut.Text := 'FAILED  The server is not running in this IDE. Start it from the ' +
+                     'Tools > MCP Assistant menu, or look at the Messages window.';
+    Exit;
+  end;
+  FTestBtn.Enabled := False;
+  FTestBtn.Caption := 'Testing...';
+  FTestOut.Text := 'Testing ' + GetServerHost + ':' + IntToStr(GetServerPort) + ' ...';
+  FTestThread := TMcpTestThread.Create(GetServerHost, GetServerPort, GetServerToken);
+  FTestTimer.Enabled := True;
+end;
+
+procedure TMcpOptionsFrame.TestTick(Sender: TObject);
+begin
+  if not Assigned(FTestThread) or not FTestThread.Finished then Exit;
+  FTestTimer.Enabled := False;
+  FTestOut.Text := TMcpTestThread(FTestThread).Text;
+  FreeAndNil(FTestThread);
+  FTestBtn.Caption := 'Test the connection';
+  FTestBtn.Enabled := True;
+end;
+
 destructor TMcpOptionsFrame.Destroy;
 begin
+  { a test still running finishes and frees itself: it holds no reference to this page }
+  if Assigned(FTestThread) then
+  begin
+    if FTestThread.Finished then FTestThread.Free
+    else FTestThread.FreeOnTerminate := True;
+    FTestThread := nil;
+  end;
   FWinIds.Free;
   inherited Destroy;
 end;
@@ -375,6 +466,7 @@ begin
   RegisterIDEOptionsEditor(McpOptionsGroupIndex, TMcpOptionsFrame, 1);
   RegisterMcpTokensPage(McpOptionsGroupIndex);
   RegisterMcpLoggingPage(McpOptionsGroupIndex);
+  RegisterMcpFoldersPage(McpOptionsGroupIndex);
 end;
 
 procedure McpSyncAllowInstallMenu;

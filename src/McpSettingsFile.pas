@@ -35,7 +35,10 @@ type
     FToolLogPane: Boolean;          { one line per call in the Messages window (ADR-022, Amendment 1) }
     FReviewPolicy: string;          { a file with unsaved edits changed on disk: ask, editor or disk (ADR-025) }
     FClientTokens: TMcpTokenStore;  { named tokens, as hashes (ADR-021) }
+    FAllowedFolders: TStringList;   { limited mode (ADR-034): empty = off }
     procedure LoadDefaultSettings;
+    procedure LoadAllowedFolders;
+    procedure SaveAllowedFolders;
     procedure LoadTokens;
     procedure SaveTokens;
     function GetConfigFileName: string;
@@ -68,6 +71,9 @@ type
     property ReviewPolicy: string read FReviewPolicy write FReviewPolicy;
     { the named client tokens; saved with the other settings }
     property ClientTokens: TMcpTokenStore read FClientTokens;
+    { limited mode (ADR-034): absolute folders the tools may work in; none = off.  Only the user
+      edits this (Options page); no tool reads or changes it. }
+    property AllowedFolders: TStringList read FAllowedFolders;
   end;
 
 implementation
@@ -78,10 +84,12 @@ begin
   FListenAddress := '127.0.0.1';
   FXmlConfig := TXMLConfig.Create(nil);
   FClientTokens := TMcpTokenStore.Create;
+  FAllowedFolders := TStringList.Create;
 end;
 
 destructor TMcpIdeSettings.Destroy;
 begin
+  FAllowedFolders.Free;
   FClientTokens.Free;
   FXmlConfig.Free;
   inherited Destroy;
@@ -102,6 +110,33 @@ begin
   FToolLogFile         := '';
   FToolLogPane         := False;
   FReviewPolicy        := 'ask';
+  FAllowedFolders.Clear;
+end;
+
+procedure TMcpIdeSettings.LoadAllowedFolders;
+var
+  I, N : Integer;
+  S    : string;
+begin
+  FAllowedFolders.Clear;
+  N := FXmlConfig.GetValue('Security/AllowedFolders/Count', 0);
+  if N > 64 then N := 64;
+  for I := 1 to N do
+  begin
+    S := FXmlConfig.GetValue('Security/AllowedFolders/Item' + IntToStr(I), '');
+    if S <> '' then FAllowedFolders.Add(S);
+  end;
+end;
+
+procedure TMcpIdeSettings.SaveAllowedFolders;
+var
+  I : Integer;
+begin
+  FXmlConfig.DeletePath('Security/AllowedFolders');
+  if FAllowedFolders.Count = 0 then Exit;
+  FXmlConfig.SetValue('Security/AllowedFolders/Count', FAllowedFolders.Count);
+  for I := 0 to FAllowedFolders.Count - 1 do
+    FXmlConfig.SetValue('Security/AllowedFolders/Item' + IntToStr(I + 1), FAllowedFolders[I]);
 end;
 
 procedure TMcpIdeSettings.LoadTokens;
@@ -190,6 +225,7 @@ begin
     FReviewPolicy        := FXmlConfig.GetValue('Review/Policy', 'ask');
     if (FReviewPolicy <> 'editor') and (FReviewPolicy <> 'disk') then FReviewPolicy := 'ask';
     LoadTokens;
+    LoadAllowedFolders;
   except
     LoadDefaultSettings;
   end;
@@ -217,6 +253,7 @@ begin
     FXmlConfig.SetValue('Review/Policy',           FReviewPolicy);
     FXmlConfig.DeleteValue('Tools/ToolCallLog');
     SaveTokens;
+    SaveAllowedFolders;
     { settings of the removed API client; ApiKey was stored in plain text }
     FXmlConfig.DeleteValue('Server/ExecutablePath');
     FXmlConfig.DeleteValue('Server/Arguments');

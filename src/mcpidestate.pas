@@ -7,7 +7,7 @@ interface
 
 uses
   Classes, SysUtils, IDEIntf, Controls, LazFileUtils, FileUtil,
-  LazIDEIntf, McpSettingsFile;
+  LazIDEIntf, LazDebuggerIntfBaseTypes, McpSettingsFile;
 
 type
   { Everything stored in mcpassistantoptions.xml in the primary config
@@ -32,6 +32,9 @@ procedure FinalizeMcpState;
 { git executable: the configured path, else git on PATH; '' if neither. }
 function McpGitExecutable: string;
 
+{ The debugger state as the word every tool reports: idle, stopped, paused, running or error. }
+function McpDbgStateStr(S: TDBGState): string;
+
 { Shell command that waits until the restarted IDE answers: instantfpc runs
   wait_for_restart.pas from the parent of ALpkPath's directory, or of the
   installed plugin's when ALpkPath is ''.  '' if the script is not found.
@@ -41,7 +44,7 @@ function McpPollCommand(const ALpkPath: string = ''): string;
 implementation
 
 uses
-  PackageIntf;
+  PackageIntf, McpLimitedMode;
 
 { TMcpProjectState }
 
@@ -68,6 +71,20 @@ begin
 end;
 
 { Helpers }
+
+function McpDbgStateStr(S: TDBGState): string;
+begin
+  case S of
+    dsNone, dsIdle           : Result := 'idle';
+    dsStop                   : Result := 'stopped';
+    dsPause                  : Result := 'paused';
+    dsInternalPause          : Result := 'running';  { internal pause; IDE auto-continues }
+    dsInit, dsRun            : Result := 'running';
+    dsError                  : Result := 'error';
+    dsDestroying             : Result := 'stopped';
+  else                         Result := 'idle';
+  end;
+end;
 
 function McpGitExecutable: string;
 begin
@@ -133,6 +150,8 @@ begin
                                'mcpassistantoptions.xml')
     else
       McpSettings.LoadSettings('mcpassistantoptions.xml');
+    { limited mode (ADR-034) is on from the first tool call when folders are stored }
+    McpLimitSetFoldersFrom(McpSettings.AllowedFolders);
   end;
   if not Assigned(McpProject) then
     McpProject := TMcpProjectState.Create;

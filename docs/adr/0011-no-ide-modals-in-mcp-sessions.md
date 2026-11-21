@@ -1,6 +1,6 @@
 # ADR-011 — No IDE Modals in MCP-Driven Sessions
 
-**Status:** Accepted (v0.8)  
+**Status:** Accepted (v0.8). Three behaviours are not verified live yet, see "Not yet verified live": the exception-dialog fallback, the disk-diffs auto-answer and console capture for a console debuggee  
 **Date:** 2026-10-14
 
 ## Context

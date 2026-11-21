@@ -1,6 +1,6 @@
 # ADR-020 — The listen address is a setting, the loopback is the default
 
-**Status:** Accepted (v1.0)  
+**Status:** Accepted and implemented (v1.0; checked against the code 2026-11-18: `Server/ListenAddress`, `McpValidListenAddress`, `McpClientHost`, `McpPrimaryAddress`, the warning on the options page and in the Messages window, the restart on a change, the fallback to `127.0.0.1`; tests in `tsettings.pas` and `TTestUtils.TestListenAddresses`)
 **Date:** 2026-10-17
 
 ## Context

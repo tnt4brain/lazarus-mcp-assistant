@@ -11,7 +11,7 @@ unit McpToolsProject;
 
 interface
 
-uses McpDebugLease;
+uses McpDebugLease, LCLVersion;
 
 function GetSystemPromptText: string;
 
@@ -25,7 +25,8 @@ uses
   PackageDefs,
   fpjson, jsonparser,
   McpToolContext, McpToolHelpers, McpToolsPackages, McpDialogWatch, McpIdeListeners,
-  McpSessionLog, McpToolLog, McpReport, McpConsent, McpNativeDialog;
+  McpSessionLog, McpToolLog, McpReport, McpConsent, McpNativeDialog, McpLimitedMode
+  {$IF lcl_fullversion >= 4090000}, LazVersion, ProjectBuildMode{$ENDIF};   { moved out of LCLPlatformDef and Project in 5.0 }
 
 { ── Compiled-in reference knowledge & system prompt ─────────────────────── }
 
@@ -1353,6 +1354,12 @@ begin
         Logs.Add('tools', McpToolLogPath);
         Logs.Add('tools_enabled', McpToolLogEnabled);
         Obj.Add('logs', Logs);
+        { limited mode (ADR-034): the client learns the limit here, not from its first refusal }
+        if McpLimitedOn then
+        begin
+          Obj.Add('limited_mode', True);
+          Obj.Add('allowed_folders', McpLimitFoldersText);
+        end;
         Ctx.Result := Obj.AsJSON;
       finally
         Obj.Free;

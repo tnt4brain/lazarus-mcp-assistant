@@ -24,12 +24,15 @@ implementation
 
 uses
   SysUtils, TypInfo, System.UITypes, fpjson, Forms,
-  IDEDialogs, McpToolContext;
+  IDEDialogs, SrcEditorIntf, SynEdit, McpToolContext, McpConsent;
 
 const
   SHOW_HOOK_NAME  = '__test_show_dialog__';
   CLOSE_HOOK_NAME = '__test_close_last_dialog__';
   LOG_HOOK_NAME   = '__test_get_log__';
+  ARM_CONSENT_HOOK_NAME = '__test_arm_consent__';
+  GET_CONSENT_HOOK_NAME = '__test_get_consent__';
+  UNDO_HOOK_NAME  = '__test_editor_undo__';
 
 type
   { Screen.AddHandlerActiveFormChanged/AddHandlerFormAdded want a method,
@@ -191,11 +194,79 @@ begin
      BoolToStr(GCapturing, True), GFormAddedLog, Screen.CustomFormCount]);
 end;
 
+{ answer: "yes" or "no" for the next git_push / git_pull / git_remote consent dialog (once);
+  a "yes" counts only for an address that is a folder under the temp directory (McpConsent). }
+function DispatchArmConsent(var Ctx: TMcpToolCall): Boolean;
+var
+  Answer  : string;
+  Dialogs : Integer;
+begin
+  Result := True;
+  if not HooksEnabled(Ctx, ARM_CONSENT_HOOK_NAME) then Exit;
+  Answer  := '';
+  Dialogs := 1;
+  if Assigned(Ctx.Params) then
+  begin
+    Answer  := LowerCase(Ctx.Params.Get('answer', ''));
+    Dialogs := Ctx.Params.Get('dialogs', 1);
+  end;
+  if ((Answer <> 'yes') and (Answer <> 'no')) or (Dialogs < 1) or (Dialogs > 2) then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'answer must be "yes" or "no", dialogs 1 or 2';
+    Exit;
+  end;
+  McpConsentStubArm(Answer = 'yes', Dialogs);
+  Ctx.Result := Format('the next %d remote consent dialog(s) are answered "%s"', [Dialogs, Answer]);
+end;
+
+function DispatchGetConsent(var Ctx: TMcpToolCall): Boolean;
+begin
+  Result := True;
+  if not HooksEnabled(Ctx, GET_CONSENT_HOOK_NAME) then Exit;
+  Ctx.Result := IntToStr(McpConsentStubCount) + LineEnding + McpConsentStubLastDetails;
+end;
+
+{ file: the editor's file.  Presses Ctrl+Z in that editor until its undo list is empty (the text
+  it was loaded with is not on it); answers how many steps that took.  The one thing a test of
+  "Ctrl+Z works" needs and no tool offers. }
+function DispatchEditorUndo(var Ctx: TMcpToolCall): Boolean;
+var
+  Ed    : TSourceEditorInterface;
+  Syn   : TCustomSynEdit;
+  Steps : Integer;
+begin
+  Result := True;
+  if not HooksEnabled(Ctx, UNDO_HOOK_NAME) then Exit;
+  Ed := nil;
+  if Assigned(Ctx.Params) then
+    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(Ctx.Params.Get('file', ''));
+  if (Ed = nil) or not (Ed.EditorControl is TCustomSynEdit) then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'file is not open in an editor';
+    Exit;
+  end;
+  Syn := TCustomSynEdit(Ed.EditorControl);
+  Steps := 0;
+  while Syn.CanUndo and (Steps < 1000) do
+  begin
+    Syn.Undo;
+    Inc(Steps);
+  end;
+  Ctx.Result := IntToStr(Steps);
+end;
+
 function DispatchTestHooks(const Name: string; var Ctx: TMcpToolCall): Boolean;
 begin
-  if Name = SHOW_HOOK_NAME then Exit(DispatchShowDialog(Ctx));
-  if Name = CLOSE_HOOK_NAME then Exit(DispatchCloseLastDialog(Ctx));
-  if Name = LOG_HOOK_NAME then Exit(DispatchGetLog(Ctx));
+  case Name of
+    UNDO_HOOK_NAME:        Exit(DispatchEditorUndo(Ctx));
+    SHOW_HOOK_NAME:        Exit(DispatchShowDialog(Ctx));
+    CLOSE_HOOK_NAME:       Exit(DispatchCloseLastDialog(Ctx));
+    LOG_HOOK_NAME:         Exit(DispatchGetLog(Ctx));
+    ARM_CONSENT_HOOK_NAME: Exit(DispatchArmConsent(Ctx));
+    GET_CONSENT_HOOK_NAME: Exit(DispatchGetConsent(Ctx));
+  end;
   Result := False;
 end;
 

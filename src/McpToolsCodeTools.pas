@@ -3,7 +3,7 @@ unit McpToolsCodeTools;
 
 { Codetools / search tools: code_find_declaration, code_get_unit_interface,
   code_get_identifier_info, code_get_outline, code_find_references, code_rename_identifier,
-  code_goto_declaration, project_search, project_create_unit, code_add_uses,
+  project_search, project_create_unit, code_add_uses,
   code_insert_in_procedure, code_replace_procedure_body, code_add_to_class, code_complete,
   code_get_procedure_ast, code_edit_statement.
   All edit tools work through the editor buffer with an optional auto_save flag. }
@@ -91,7 +91,8 @@ const
     '{"type":"object","properties":{' +
     '"symbol":{"type":"string","description":"Identifier name to look up"},' +
     '"file":{"type":"string","description":"Absolute path of the file containing the identifier"}' +
-    ',"line":{"type":"integer","description":"Optional: line of a use of the name in file (1-based); with col, the declaration is resolved from that position"},"col":{"type":"integer","description":"Optional: column of that use (1-based)"}},' +
+    ',"line":{"type":"integer","description":"Optional: line of a use of the name in file (1-based); with col, the declaration is resolved from that position"},"col":{"type":"integer","description":"Optional: column of that use (1-based)"},' +
+    '"show":{"type":"boolean","description":"Also open the declaration file and jump the editor cursor there (default false: the user''s editor does not move)"}},' +
     '"required":["symbol","file"]}';
 
   SCHEMA_GET_UNIT_INTERFACE =
@@ -132,13 +133,6 @@ const
     '"auto_save":{"type":"boolean","description":"Save the changed files after renaming (default false: they stay unsaved, Ctrl+Z works)"},' +
     PKG_SCOPE_PROPS + '},' +
     '"required":["file","line","col"]}';
-
-  SCHEMA_GOTO_DECLARATION =
-    '{"type":"object","properties":{' +
-    '"symbol":{"type":"string","description":"Identifier name to look up"},' +
-    '"file":{"type":"string","description":"Absolute path of the file that contains (or imports) the identifier"}' +
-    ',"line":{"type":"integer","description":"Optional: line of a use of the name in file (1-based); with col, the declaration is resolved from that position"},"col":{"type":"integer","description":"Optional: column of that use (1-based)"}},' +
-    '"required":["symbol","file"]}';
 
   SCHEMA_SEARCH_IN_PROJECT =
     '{"type":"object","properties":{' +
@@ -804,8 +798,8 @@ end;
 
 { ── Declaration lookup ───────────────────────────────────────────────────── }
 
-{ Where Symbol is declared, as seen from Code (code_find_declaration and
-  code_goto_declaration).  In order:
+{ Where Symbol is declared, as seen from Code (code_find_declaration, also with
+  show=true).  In order:
     1. at Line/Col, when the caller gives a position of a use;
     2. the unit's own interface (fast, but it never follows a uses clause and
        a program has no interface);
@@ -1427,6 +1421,20 @@ begin
       if ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
            Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
       begin
+        if Ctx.Params.Get('show', False) then
+        begin
+          DeclPt := Point(NewX, NewY);
+          if (SourceEditorManagerIntf.SourceEditorIntfWithFilename(NewCode.Filename) = nil) and
+             not McpCheckFileToOpen(NewCode.Filename, Symbol) then
+          begin
+            Ctx.Error := True; Ctx.Result := Symbol; Exit;
+          end;
+          if LazarusIDE.DoOpenFileAndJumpToPos(NewCode.Filename, DeclPt,
+               NewTopLine, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
+          begin
+            Ctx.Error := True; Ctx.Result := 'Could not open: ' + NewCode.Filename; Exit;
+          end;
+        end;
         Obj := TJSONObject.Create;
         try
           Obj.Add('declaration_file', NewCode.Filename);
@@ -1634,55 +1642,6 @@ begin
     begin
       Result := True;
       DoRenameIdentifier(Ctx);
-    end;
-
-    'code_goto_declaration':
-    begin
-      Result := True;
-      if not Assigned(Ctx.Params) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'symbol and file required'; Exit;
-      end;
-      Symbol   := Ctx.Params.Get('symbol', '');
-      FilePath := Ctx.Params.Get('file',   '');
-      if (Symbol = '') or (FilePath = '') then
-      begin
-        Ctx.Error := True; Ctx.Result := 'symbol and file required'; Exit;
-      end;
-      CodeBuf := McpLoadCode(FilePath, False);
-      if not Assigned(CodeBuf) then
-      begin
-        Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
-      end;
-      if not ResolveDeclaration(CodeBuf, Symbol, Ctx.Params.Get('line', 0),
-               Ctx.Params.Get('col', 0), NewCode, NewX, NewY, NewTopLine, Why) then
-      begin
-        Ctx.Error  := True;
-        Ctx.Result := 'Declaration not found for: ' + Symbol + ' (' + Why + ')';
-        Exit;
-      end;
-      DeclPt := Point(NewX, NewY);
-      if (SourceEditorManagerIntf.SourceEditorIntfWithFilename(NewCode.Filename) = nil) and
-         not McpCheckFileToOpen(NewCode.Filename, Symbol) then
-      begin
-        Ctx.Error := True; Ctx.Result := Symbol; Exit;
-      end;
-      if LazarusIDE.DoOpenFileAndJumpToPos(NewCode.Filename, DeclPt,
-           NewTopLine, -1, -1, [ofOnlyIfExists, ofRegularFile]) <> mrOK then
-      begin
-        Ctx.Error := True; Ctx.Result := 'Could not open: ' + NewCode.Filename; Exit;
-      end;
-      Obj := TJSONObject.Create;
-      try
-        Obj.Add('declaration_file', NewCode.Filename);
-        Obj.Add('line', NewY);
-        Obj.Add('col',  NewX);
-        if NewY >= 1 then
-          Obj.Add('context', Trim(NewCode.GetLine(NewY - 1, False)));
-        Ctx.Result := Obj.AsJSON;
-      finally
-        Obj.Free;
-      end;
     end;
 
     'project_create_unit':
@@ -2253,8 +2212,8 @@ begin
     'Returns declaration file, line, column and a short context snippet. Resolves through ' +
     'the unit''s uses clauses (a type from Classes or a sibling unit) from a use of the ' +
     'name in file, so it also works in a program (.lpr); line and col, both optional, pick a ' +
-    'particular USE of the name. Only reports the place; code_goto_declaration also moves the ' +
-    'editor there.',
+    'particular USE of the name. Only reports the place; show=true also opens the file and ' +
+    'moves the editor cursor there.',
     SCHEMA_GET_SYMBOL_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('code_get_unit_interface',
     'Return only the interface section of a Pascal unit ' +
@@ -2284,12 +2243,6 @@ begin
     'Unit names are refused (rename the file instead). .lfm files are not ' +
     'changed.',
     SCHEMA_RENAME_IDENTIFIER, MCP_ANN_WRITE));
-  Tools.Add(MakeTool('code_goto_declaration',
-    'Find where an identifier is declared and jump the editor cursor there. ' +
-    'Opens the declaration file if needed. Resolves like code_find_declaration, ' +
-    'including names from the uses clauses; use that one when you only need the position ' +
-    'and do not want the user''s editor to move.',
-    SCHEMA_GOTO_DECLARATION, MCP_ANN_RO));
   Tools.Add(MakeTool('project_search',
     'Search for a text substring (case-insensitive) across the project''s source ' +
     'files, or across a directory such as a package''s sources. Open files are ' +
@@ -2333,20 +2286,16 @@ begin
     'Uses the editor undo stack (Ctrl+Z works).',
     SCHEMA_ADD_TO_CLASS_SECTION, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_complete',
-    'Code completion as the IDE''s Ctrl+Shift+C does it, at (file, line, col), ' +
-    'without its dialogs. What it completes depends on where the position is: ' +
-    'inside a class declaration, everything missing in that class at once ' +
-    '(bodies for declared methods, a field and setter for a property such as ' +
-    '"property Size: Integer read FSize write SetSize;", declarations for ' +
-    'method bodies without one); on a forward procedure header, its body; on ' +
-    'an undeclared identifier in a body, a local variable for it ("x := 5", ' +
-    '"for x in List", or an argument of a call); on an event assignment ' +
-    '("OnClick := @Clicked"), the method; on a call to an undeclared ' +
-    'procedure, the procedure; inside a method body with no declaration, the ' +
-    'declaration. New methods go in the default class section. Returns the ' +
-    'changed lines as hunks (line numbers in the new text) and the position ' +
-    'the IDE would jump to. Edits land in the editor buffers (Ctrl+Z works); ' +
-    'use auto_save=true or editor_save to persist to disk.',
+    'Code completion as the IDE''s Ctrl+Shift+C does it, at (file, line, col), without its ' +
+    'dialogs. By position: inside a class declaration, everything missing in that class at once ' +
+    '(bodies for declared methods, a field and setter for "property Size: Integer read FSize ' +
+    'write SetSize;", declarations for method bodies without one); on a forward procedure ' +
+    'header, its body; on an undeclared identifier in a body ("x := 5", "for x in List", an ' +
+    'argument), a local variable; on an event assignment ("OnClick := @Clicked") or a call to an ' +
+    'undeclared procedure, that method or procedure; in a method body with no declaration, the ' +
+    'declaration. New methods go in the default class section. Returns the changed lines as hunks ' +
+    '(line numbers in the new text) and the position the IDE would jump to. Edits land in the ' +
+    'editor buffers (Ctrl+Z works); auto_save=true or editor_save writes them to disk.',
     SCHEMA_COMPLETE_CODE, MCP_ANN_WRITE));
   Tools.Add(MakeTool('code_get_procedure_ast',
     'Return a routine''s local variables (name, type, line) and its statements as a tree: ' +

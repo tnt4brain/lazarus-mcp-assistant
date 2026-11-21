@@ -25,6 +25,8 @@ type
     procedure TearDown; override;
   published
     procedure TestBreakpointStepEvaluate;
+    procedure TestStepIntoAndOut;
+    procedure TestSetVariable;
     procedure TestExceptionWithoutDialog;
     procedure TestLeaseRefusesOtherClient;
     procedure TestLockSerialisesDebugCalls;
@@ -253,7 +255,7 @@ begin
   CheckEquals(IntToStr(MarkLine('work')), JPath(T, 'line'), 'stops at the breakpoint: ' + T);
   CheckEquals('breakpoint', JPath(T, 'reason'), 'a breakpoint, not a plain run: ' + T);
 
-  T := Call(GSessA, 'debug_step_over', '{}');
+  T := Call(GSessA, 'debug_step', '{"kind":"over"}');
   CheckEquals(IntToStr(MarkLine('inc')), JPath(T, 'line'), 'step over: ' + T);
   CheckEquals('step', JPath(T, 'reason'), T);
 
@@ -264,6 +266,78 @@ begin
   CheckEquals('42', JPath(T, 'value'), T);
   CheckEquals(0, Pos('"type"', T), 'a computed value has no type, not an empty one: ' + T);
 
+  T := Call(GSessA, 'debug_stop', '{}');
+  CheckFalse(IsError(T), 'stop: ' + T);
+end;
+
+procedure TTestDebugger.TestStepIntoAndOut;
+var
+  T    : string;
+  Line : Integer;
+begin
+  T := Call(GSessA, 'debug_set_breakpoint', BpArgs(MarkLine('callsum')));
+  CheckFalse(IsError(T), 'set breakpoint: ' + T);
+  T := Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  CheckEquals(IntToStr(MarkLine('callsum')), JPath(T, 'line'), 'at the call: ' + T);
+
+  T := Call(GSessA, 'debug_step', '{"kind":"into"}');
+  CheckEquals('step', JPath(T, 'reason'), T);
+  Line := StrToIntDef(JPath(T, 'line'), 0);
+  CheckTrue((Line > MarkLine('inc')) and (Line <= MarkLine('loop')),
+            'into: inside Sum, at line ' + IntToStr(Line) + ': ' + T);
+
+  T := Call(GSessA, 'debug_step', '{"kind":"out","timeout_s":30}');
+  CheckEquals('step', JPath(T, 'reason'), T);
+  Line := StrToIntDef(JPath(T, 'line'), 0);
+  CheckTrue((Line >= MarkLine('callsum')) and (Line <= MarkLine('sleep')),
+            'out: back in the main block, at line ' + IntToStr(Line) + ': ' + T);
+
+  T := Call(GSessA, 'debug_step', '{"kind":"sideways"}');
+  CheckTrue(IsError(T), 'a wrong kind is refused: ' + T);
+  T := Call(GSessA, 'debug_step', '{}');
+  CheckTrue(IsError(T), 'kind is required: ' + T);
+
+  { the old names work through 1.x (ADR-031) }
+  T := Call(GSessA, 'debug_step_over', '{}');
+  CheckEquals('step', JPath(T, 'reason'), 'old debug_step_over: ' + T);
+  T := Call(GSessA, 'debug_stop', '{}');
+  CheckFalse(IsError(T), 'stop: ' + T);
+end;
+
+procedure TTestDebugger.TestSetVariable;
+var
+  T : string;
+begin
+  { not paused: refused, and nothing is changed }
+  T := Call(GSessA, 'debug_set_variable', '{"variable_name":"Counter","value":"1"}');
+  CheckTrue(IsError(T), 'not paused is refused: ' + T);
+
+  T := Call(GSessA, 'debug_set_breakpoint', BpArgs(MarkLine('inc')));
+  CheckFalse(IsError(T), 'set breakpoint: ' + T);
+  T := Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');
+  CheckEquals(IntToStr(MarkLine('inc')), JPath(T, 'line'), 'at Inc(Counter): ' + T);
+  CheckEquals('41', JPath(Call(GSessA, 'debug_evaluate', '{"expression":"Counter"}'), 'value'),
+              'Counter before');
+
+  T := Call(GSessA, 'debug_set_variable', '{"variable_name":"Counter","value":"100"}');
+  CheckFalse(IsError(T), 'set: ' + T);
+  CheckEquals('Counter', JPath(T, 'name'), T);
+  CheckEquals('100', JPath(Call(GSessA, 'debug_evaluate', '{"expression":"Counter"}'), 'value'),
+              'Counter after the change');
+
+  { the program goes on with the new value: Inc makes it 101 }
+  Call(GSessA, 'debug_step', '{"kind":"over"}');
+  CheckEquals('101', JPath(Call(GSessA, 'debug_evaluate', '{"expression":"Counter"}'), 'value'),
+              'the running program used the new value');
+
+  { the old parameter name works through 1.x (ADR-031) }
+  T := Call(GSessA, 'debug_set_variable', '{"name":"Counter","value":"7"}');
+  CheckFalse(IsError(T), 'old name: ' + T);
+  CheckEquals('7', JPath(Call(GSessA, 'debug_evaluate', '{"expression":"Counter"}'), 'value'),
+              'Counter after the old-name call');
+
+  T := Call(GSessA, 'debug_set_variable', '{"value":"7"}');
+  CheckTrue(IsError(T), 'variable_name is required: ' + T);
   T := Call(GSessA, 'debug_stop', '{}');
   CheckFalse(IsError(T), 'stop: ' + T);
 end;
@@ -290,7 +364,7 @@ begin
   CheckEquals('paused', JPath(T, 'state'), 'A runs to the breakpoint: ' + T);
 
   { B may not drive or disturb A's session ... }
-  T := Call(GSessB, 'debug_step_over', '{}');
+  T := Call(GSessB, 'debug_step', '{"kind":"over"}');
   CheckEquals(1, Pos('TOOL ERROR: Refused: the debug session belongs to', T), 'B steps: ' + T);
   T := Call(GSessB, 'project_build', '{}');
   CheckEquals(1, Pos('TOOL ERROR: Refused', T), 'B builds: ' + T);

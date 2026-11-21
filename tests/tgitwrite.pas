@@ -2,7 +2,7 @@
 unit TGitWrite;
 
 { TTestGitWrite — the git tools that change a repository: git_checkout, git_reset,
-  git_stash, git_stash_pop, with git_branches and git_log.  Each test works in a throwaway
+  git_stash (push, pop), with git_branches and git_log.  Each test works in a throwaway
   repository in the temp folder (two commits, a.txt "one" then "two"); the results are
   checked with git itself.  Requires a running MCP server and git.
   Needs nothing from the IDE's project. }
@@ -207,10 +207,20 @@ begin
   CheckFalse(IsError(T), T);
   CheckEquals('two', ReadA, 'the change is stashed away');
   CheckTrue(Pos('wip', Git(['stash', 'list'])) > 0, 'with its message');
-  T := Tool('git_stash_pop', '');
+  T := Tool('git_stash', '"action":"pop","message":"x"');
+  CheckTrue(IsError(T), 'push-only argument with pop is refused: ' + T);
+  T := Tool('git_stash', '"action":"pop"');
   CheckFalse(IsError(T), T);
   CheckEquals('dirty', ReadA, 'and back');
   CheckEquals('', Trim(Git(['stash', 'list'])), 'the stash is used up');
+  { the old name works through 1.x (ADR-031) }
+  T := Tool('git_stash', '"message":"again"');
+  CheckFalse(IsError(T), T);
+  T := Tool('git_stash', '"action":"push","index":1');
+  CheckTrue(IsError(T), 'pop-only argument with push is refused: ' + T);
+  T := Tool('git_stash_pop', '');
+  CheckFalse(IsError(T), T);
+  CheckEquals('dirty', ReadA, 'old git_stash_pop');
 end;
 
 procedure TTestGitWrite.TestStashPaths;

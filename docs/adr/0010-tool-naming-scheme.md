@@ -1,6 +1,6 @@
 # ADR-010 — Tool Naming Scheme
 
-**Status:** Accepted (v0.8)  
+**Status:** Accepted (v0.8). Since 1.7.0 some names below are old names: `debug_step_over/into/out`, `form_undo/redo`, `git_stash_pop`, `code_goto_declaration`, `editor_get_cursor/selection`, the `form_file` parameter, `wait_seconds` (now `timeout_s`), `project_run_input`'s `text` (now `stdin`) and `debug_set_variable`'s `name` (now `variable_name`) were fused or renamed and still work through 1.x (ADR-031); the naming rules here apply unchanged to the new names.  
 **Date:** 2026-10-14
 
 ## Context

@@ -104,12 +104,11 @@ implementation
 uses
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
   LazFileUtils, Sockets, ssockets, fphttpclient,
-
   StrUtils, Forms,
   IDEExternToolIntf, IDEMsgIntf,
-  McpUtils, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
+  McpUtils, McpToolAliases, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
   McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
-  McpTokens, McpToolLog, McpMessages, McpReport, LCLVersion, DateUtils;
+  McpTokens, McpToolLog, McpMessages, McpReport, McpLimitedMode, LCLVersion, DateUtils;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
@@ -538,7 +537,7 @@ begin
     Resp.Add('jsonrpc', '2.0');
     Resp.Add('id',     ID.Clone);
     Resp.Add('result', ResultObj); // takes ownership
-    Result := Resp.FormatJSON;
+    Result := Resp.AsJSON;          // compact: a third smaller than FormatJSON (ADR-029)
   finally
     Resp.Free;
   end;
@@ -561,7 +560,7 @@ begin
     else
       Resp.Add('id', TJSONNull.Create);
     Resp.Add('error', Err); // takes ownership of Err
-    Result := Resp.FormatJSON;
+    Result := Resp.AsJSON;
   finally
     Resp.Free;
   end;
@@ -1263,11 +1262,56 @@ begin
   end;
 end;
 
+type
+  { McpWriteAllowed reads the IDE's state (the project, the loaded packages, the active editor),
+    which only the main thread may do }
+  TMcpWriteCheckCall = class
+    Tool    : string;
+    Args    : TJSONObject;
+    Why     : string;
+    Allowed : Boolean;
+    procedure Run;
+  end;
+
+procedure TMcpWriteCheckCall.Run;
+begin
+  try
+    Allowed := McpWriteAllowed(Tool, Args, Why);
+  except
+    on E: Exception do
+    begin
+      { a check that cannot be made refuses }
+      Allowed := False;
+      Why := 'Refused: could not check where ' + Tool + ' writes (' + E.ClassName + ': ' + E.Message + ')';
+    end;
+  end;
+end;
+
+{ ADR-034: every guarded tool is checked here, before any route runs it. }
+function MainWriteAllowed(const ATool: string; AArgs: TJSONObject; out AWhy: string): Boolean;
+var
+  C : TMcpWriteCheckCall;
+begin
+  C := TMcpWriteCheckCall.Create;
+  try
+    C.Tool := ATool;
+    C.Args := AArgs;
+    C.Allowed := False;
+    TThread.Synchronize(nil, @C.Run);
+    AWhy   := C.Why;
+    Result := C.Allowed;
+  finally
+    C.Free;
+  end;
+end;
+
 function TMcpServerThread.HandleToolsCallCore(ID: TJSONData;
   Params: TJSONObject; const AClientId: string; out AToolErr: Boolean;
   out AToolText: string): string;
 var
   GateMsg     : string;
+  AliasNotice : string;
+  AliasErr    : string;
   ToolName    : string;
   Args        : TJSONObject;
   Content     : TJSONArray;
@@ -1291,17 +1335,31 @@ begin
   if not Assigned(Params) then
     Exit(RPCError(ID, -32602, 'Missing params'));
 
+  { Old tool and parameter names become the current ones, in place, before anything looks at
+    them (ADR-031); the client is told once per session and old name }
+  McpTranslateCall(Params, AClientId, AliasNotice, AliasErr);
   ToolName := Params.Get('name', '');
   Args     := TJSONObject(Params.Find('arguments'));
   { D:/x/f.pas and D:\x\f.pas must name the same file for every tool }
   McpNormalizePathArgs(Args);
-  McpRenameLegacyFileArg(ToolName, Args);
 
   Err  := False;
   Text := '';
   Images := nil;
 
-  if not McpValidateArgs(ToolName, Args, GateMsg) then
+  if AliasErr <> '' then
+  begin
+    Text := AliasErr;
+    Err  := True;
+  end
+  else if not McpValidateArgs(ToolName, Args, GateMsg) then
+  begin
+    Text := GateMsg;
+    Err  := True;
+  end
+  { where a tool may write (ADR-034), for every route: the main-thread tools, the blocking ones
+    (git_fetch, ...) and ide_run_tests do not all pass McpDispatch }
+  else if McpToolIsWriteGuarded(ToolName) and not MainWriteAllowed(ToolName, Args, GateMsg) then
   begin
     Text := GateMsg;
     Err  := True;
@@ -1344,7 +1402,7 @@ begin
       Text := CallOnMain(ToolName, Args, AClientId, Err);
       if not Err then
         if Assigned(Args) then
-          Text := McpRunFinish(Text, Args.Get('wait_seconds', 10))
+          Text := McpRunFinish(Text, Args.Get('timeout_s', 10))
         else
           Text := McpRunFinish(Text, 10);
     end;
@@ -1443,6 +1501,9 @@ begin
   TextNode.Add('text', Text);
   Content := TJSONArray.Create;
   Content.Add(TextNode);
+  { a second item, never part of the text: tool results are JSON that clients parse }
+  if AliasNotice <> '' then
+    Content.Add(TJSONObject.Create(['type', 'text', 'text', AliasNotice]));
   for I := 0 to High(Images) do
     Content.Add(TJSONObject.Create(['type', 'image', 'data', Images[I],
                                     'mimeType', 'image/png']));
@@ -1534,7 +1595,10 @@ begin
     try
       Proc.Execute;
       SL.LoadFromStream(Proc.Output);
-      if (SL.Count > 0) and (Trim(SL[0]) <> '') then
+      { only a commit hash: outside a repository (an exported copy, a release zip) git's error
+        text is not one, and "exit code 0" alone is not enough with poStderrToOutPut }
+      if (Proc.ExitStatus = 0) and (SL.Count > 0) and (Trim(SL[0]) <> '') and
+         (Length(Trim(SL[0])) <= 40) and (Pos(' ', Trim(SL[0])) = 0) then
         Result := Trim(SL[0]);
     except
     end;
@@ -1660,6 +1724,7 @@ var
   I      : Integer;
   Proj   : Boolean;
   Text   : string;
+  Used   : TStringList;
 
   procedure Add(const APart: TMcpReportPart);
   begin
@@ -1713,6 +1778,8 @@ begin
           IfThen(GetServerPort = McpSettings.ServerPort, '',
                  ' (saved; this run listens on ' + IntToStr(GetServerPort) + ')') + LineEnding +
           '- assistants may install packages: ' + YesNo(McpSettings.AllowPackageInstall) + LineEnding +
+          '- limited mode (file access of the tools): ' +
+          IfThen(McpLimitedOn, 'on, allowed folders ' + McpLimitFoldersText, 'off') + LineEnding +
           '- tool-call log: ' + YesNo(McpSettings.ToolCallLog) + LineEnding +
           '- tool-call log file: ' + IfThen(McpSettings.ToolLogFile = '',
                                       '(default, in the config folder)', McpSettings.ToolLogFile) + LineEnding +
@@ -1734,6 +1801,19 @@ begin
   else
     Add(McpReportPart('Project and packages', 'No project is open.', False, False));
 
+  { which old names clients still use, to decide what 2.0 may refuse (ADR-031) }
+  Used := TStringList.Create;
+  try
+    McpAliasUsage(Used);
+    if Used.Count = 0 then
+      Add(McpReportPart('Old tool and parameter names used since the IDE started',
+        'None.', False, False))
+    else
+      Add(McpReportPart('Old tool and parameter names used since the IDE started',
+        StringReplace(Trim(Used.Text), '=', ': ', [rfReplaceAll]), True, False));
+  finally
+    Used.Free;
+  end;
   Add(ReportLogPart('mcp-tools.log', McpToolLogPath, McpToolLogEnabled));
   Add(ReportLogPart('mcp-sessions.log', McpSessionLogPath, True));
   Add(ReportLogPart('mcp-exceptions.log', IncludeTrailingPathDelimiter(Cfg) + 'mcp-exceptions.log', True));

@@ -693,18 +693,18 @@ end;
 const
   SCHEMA_RUN_OUTPUT =
     '{"type":"object","properties":{' +
-    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 0 = do not wait) ' +
+    '"timeout_s":{"type":"integer","description":"Seconds to wait (0..300, default 0 = do not wait) ' +
     'for the program to end or write something"},' +
     '"stop":{"type":"boolean","description":"Terminate the program first"}}}';
 
 const
   SCHEMA_RUN_INPUT =
     '{"type":"object","properties":{' +
-    '"text":{"type":"string","description":"Written to the program''s stdin as it is: ' +
+    '"stdin":{"type":"string","description":"Written to the program''s stdin as it is: ' +
     'end a line with \n"},' +
     '"close":{"type":"boolean","description":"Close stdin after the text: the program ' +
     'then reads end of file"},' +
-    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 0 = do not wait) ' +
+    '"timeout_s":{"type":"integer","description":"Seconds to wait (0..300, default 0 = do not wait) ' +
     'for the program to end or answer"}}}';
 
 function DispatchRunOutputTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
@@ -727,13 +727,13 @@ begin
   if IsInput then
   begin
     if not Assigned(Ctx.Params) or
-       ((Ctx.Params.Get('text', '') = '') and not Ctx.Params.Get('close', False)) then
+       ((Ctx.Params.Get('stdin', '') = '') and not Ctx.Params.Get('close', False)) then
     begin
       Ctx.Error  := True;
       Ctx.Result := 'Give text to send, or close=true';
       Exit;
     end;
-    if not Run.QueueInput(Ctx.Params.Get('text', ''), Ctx.Params.Get('close', False), Err) then
+    if not Run.QueueInput(Ctx.Params.Get('stdin', ''), Ctx.Params.Get('close', False), Err) then
     begin
       Ctx.Error  := True;
       Ctx.Result := Err;
@@ -747,7 +747,7 @@ begin
   end;
   Wait := 0;
   if Assigned(Ctx.Params) then
-    Wait := ClampWait(Ctx.Params.Get('wait_seconds', 0)) * 1000;
+    Wait := ClampWait(Ctx.Params.Get('timeout_s', 0)) * 1000;
   Waited := 0;
   while (Waited < Wait) and not Run.WaitDone(0) and not Run.Pending do
   begin
@@ -769,13 +769,13 @@ procedure RegisterRunSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('project_run_output',
     'Output of the program started by project_run: what it wrote to stdout and stderr ' +
-    'since the last read, and its exit_code once it has ended. wait_seconds waits for the ' +
+    'since the last read, and its exit_code once it has ended. timeout_s waits for the ' +
     'end of the program or for new output; stop=true terminates it. The last run is ' +
     'kept until the next project_run.',
     SCHEMA_RUN_OUTPUT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_run_input',
     'Sends text to the stdin of the program started by project_run (which must have been ' +
-    'started with stdin or keep_stdin_open=true), then, with wait_seconds, returns what it ' +
+    'started with stdin or keep_stdin_open=true), then, with timeout_s, returns what it ' +
     'wrote in answer, as project_run_output does. close=true ends its input. The text goes ' +
     'out as given: add the line ending yourself. A program that is waiting for input ' +
     'shows stdin_open: true and no exit_code.',

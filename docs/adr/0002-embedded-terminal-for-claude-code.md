@@ -1,6 +1,6 @@
 # ADR-002 — Embedded Terminal for Claude Code
 
-**Status:** Decided — deferred to v1.x  
+**Status:** Decided — the embedded terminal is deferred and not built (checked 2026-11-18); Amendment 1 (ADR-023, v1.3.0) delivered the cheap alternative: an external terminal of the user's choice
 **Date:** 2026-10-02
 
 ## Context

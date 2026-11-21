@@ -137,13 +137,11 @@ begin
     'returned tab replaces that tab''s document; without it a new tab opens (at most 8). ' +
     'For a document that lives in a file give file instead of the text: one tab per file, kept ' +
     'up to date as the file or its editor changes, and no text to send each time. ' +
-    'Supported: headings, emphasis, strikethrough, inline and fenced code, lists and task ' +
-    'lists, block quotes (also > [!note] alerts and >>> blocks), GFM tables, http(s) links ' +
-    '(also reference links and bare addresses), footnotes, description lists, rules, ' +
-    '[[_TOC_]] and #heading links, :emoji:, <kbd>, <sub>, <sup>, <br>; <!-- comments --> are ' +
-    'hidden. Other raw HTML is shown as text. Images: a ' +
-    'local path (relative to the project directory; png, jpg, gif, bmp, at most 8 MB) or a ' +
-    'data:image/(png|jpeg|gif|bmp);base64 URI (at most 4 MB decoded; the way to show a ' +
+    'Beyond plain GFM: > [!note] alerts, footnotes, [[_TOC_]], :emoji:, <kbd>, <sub>, <sup>, ' +
+    '<br>; <!-- comments --> are hidden and other raw HTML is shown as text. A fenced block ' +
+    'with a language (pascal, sql, diff, xml, python, ...) is coloured in the IDE''s scheme. ' +
+    'Images: a local path (relative to the project directory; png, jpg, gif, bmp, at most 8 MB) ' +
+    'or a data:image/(png|jpeg|gif|bmp);base64 URI (at most 4 MB decoded; the way to show a ' +
     'picture when the assistant runs on another machine); http(s) images are not fetched and ' +
     'show as their alt text.',
     SCHEMA_SHOW_MARKDOWN, MCP_ANN_RO));

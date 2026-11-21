@@ -1,6 +1,6 @@
 # ADR-014 — Designer Undo
 
-**Status:** Accepted (v1.0)  
+**Status:** Accepted and implemented (v1.0; `form_undo`, `form_redo`, tests in `tests/tformundo.pas`; checked 2026-11-18). Open, see "Not done": the Object Inspector's own entries (needs a Lazarus patch) and checkpoints across sessions (an idea, deferred).
 **Date:** 2026-10-14
 
 ## Context
@@ -55,7 +55,8 @@ No other MCP server with designer undo was found.
 There is no separate MCP stack: a second history would not fix the stale
 entries above, and it would compete with the user's Ctrl+Z.
 
-**2. `form_undo` and `form_redo`.** They do what Edit > Undo and Redo do while
+**2. `form_undo` and `form_redo`** (one tool since 1.7.0: `form_history` with `action` `undo` or
+`redo`, ADR-031; the old names still work through 1.x). They do what Edit > Undo and Redo do while
 the designer is active (`TMainIDE.mnuEditUndoClicked`): `Undo` or `Redo` on the
 form's designer. They return `status`, `can_undo` and `can_redo`, or an error
 when there is nothing to undo or redo.

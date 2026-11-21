@@ -39,7 +39,7 @@ const
     'start. Without keep_stdin_open, stdin is closed after it"},' +
     '"keep_stdin_open":{"type":"boolean","description":"Leave stdin open, to be fed with ' +
     'project_run_input"},' +
-    '"wait_seconds":{"type":"integer","description":"Seconds to wait (0..300, default 10; 0 = answer at once, ' +
+    '"timeout_s":{"type":"integer","description":"Seconds to wait (0..300, default 10; 0 = answer at once, ' +
     'the program keeps running) for the program to end before answering"}}}';
 
   SCHEMA_COMPILE_PLUGIN =
@@ -645,6 +645,17 @@ begin
      (Name <> 'package_uninstall') then Exit;
   Result := True;
 
+  { In-flight guard: refuse a concurrent rebuild.  It comes before the first write to
+    GBuildHelper, which one running rebuild uses: a call that is refused must not touch
+    it, and two package_install calls must not fill its strings at the same time. }
+  if InterlockedCompareExchange(GRebuildActive, 1, 0) <> 0 then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := 'A rebuild of the IDE is already in progress.';
+    Exit;
+  end;
+  try
+
   LpkPath := '';
   if Assigned(Ctx.Params) then
     LpkPath := Ctx.Params.Get('lpk_path', '');
@@ -673,15 +684,6 @@ begin
     Ctx.Result := 'ide_rebuild only rebuilds; install a package with package_install.';
     Exit;
   end;
-
-  { In-flight guard: refuse a concurrent rebuild. }
-  if InterlockedCompareExchange(GRebuildActive, 1, 0) <> 0 then
-  begin
-    Ctx.Error  := True;
-    Ctx.Result := 'A rebuild of the IDE is already in progress.';
-    Exit;
-  end;
-  try
 
   GBuildHelper.LpkPath    := LpkPath;
   GBuildHelper.UninstallName := UninstallName;
@@ -822,7 +824,7 @@ begin
     SCHEMA_BUILD_PROJECT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('project_run',
     'Build (if needed) and run the active project without the debugger, ' +
-    'optionally with new command-line arguments. Waits up to wait_seconds (default 10) and ' +
+    'optionally with new command-line arguments. Waits up to timeout_s (default 10) and ' +
     'answers {success, running, pid, exit_code, stdout, stderr}; when the program printed ' +
     'a heaptrc report (project_set_settings heaptrc=true, then rebuild) the answer also ' +
     'has heap_report {unfreed_blocks, unfreed_bytes, leaked, leaks[] with address, size ' +

@@ -297,10 +297,10 @@ var
 begin
   if not FileExists(SystemFile) then Ignore('no ' + SystemFile);
   F := JsonStr(SystemFile);
-  Args[0][0] := 'form_add_component';    Args[0][1] := '{"form_file":' + F + ',"class_name":"TButton"}';
-  Args[1][0] := 'form_set_properties';   Args[1][1] := '{"form_file":' + F + ',"component_name":"Form1","properties":{"Caption":"x"}}';
-  Args[2][0] := 'form_delete_component'; Args[2][1] := '{"form_file":' + F + ',"component_name":"Button1"}';
-  Args[3][0] := 'form_undo';             Args[3][1] := '{"form_file":' + F + '}';
+  Args[0][0] := 'form_add_component';    Args[0][1] := '{"file":' + F + ',"class_name":"TButton"}';
+  Args[1][0] := 'form_set_properties';   Args[1][1] := '{"file":' + F + ',"component_name":"Form1","properties":{"Caption":"x"}}';
+  Args[2][0] := 'form_delete_component'; Args[2][1] := '{"file":' + F + ',"component_name":"Button1"}';
+  Args[3][0] := 'form_history';          Args[3][1] := '{"action":"undo","file":' + F + '}';
   for I := 0 to 3 do
   begin
     T := CallToolText(Args[I][0], Args[I][1], []);
@@ -308,7 +308,7 @@ begin
     CheckTrue(Pos('Refused', T) > 0, Args[I][0] + ' was not refused by the folder rule: ' + T);
   end;
   { reading a form is not writing }
-  T := CallToolText('form_get_lfm', '{"form_file":' + F + '}', []);
+  T := CallToolText('form_get_lfm', '{"file":' + F + '}', []);
   CheckTrue(Pos('Refused', T) = 0, 'form_get_lfm only reads: ' + T);
 end;
 

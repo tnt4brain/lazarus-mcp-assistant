@@ -21,7 +21,7 @@ interface
 
 uses
   Classes, SysUtils, Types, Graphics, Controls, Forms, ExtCtrls, StdCtrls, Dialogs,
-  SynEdit, SynEditTypes, SynEditMiscClasses, McpDiff;
+  SynEdit, SynEditTypes, SynEditMiscClasses, McpDiff, LCLVersion;
 
 type
   { AApplied: "Apply to editor" was pressed and ANewText is the working copy;
@@ -38,7 +38,13 @@ var
   the text both started from, when AHasBase.  A file that is in the window already is
   replaced by the new state. }
 procedure McpReviewShow(const AFile, ALeftTitle, ARightTitle: string;
-  const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean; ADone: TReviewDone);
+  const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean; ADone: TReviewDone;
+  AConflict: Boolean = False);
+
+{ AConflict (a git merge conflict, ADR-028): the page says "Resolve (write and stage)" and
+  "Leave unresolved"; Apply stays disabled until every conflicting change is decided (an
+  arrow, "keep" with the right click, or an edit of the result) and while the result still
+  holds a conflict block; "Leave unresolved" asks nothing. }
 
 { The file's editor was closed: its page is removed from the window, unanswered. }
 procedure McpReviewDrop(const AFile: string);
@@ -57,12 +63,23 @@ function BlendColor(ABack, AColor: TColor; APercent: Integer): TColor;
 implementation
 
 uses
-  Clipbrd, ComCtrls, LazFileUtils, SynEditMarkup, IDEOptEditorIntf, IDEWindowIntf,
-  McpMarkdownView, McpReviewPaths;
+  Clipbrd, ComCtrls, LazFileUtils, LazUTF8, SynEditMarkup, IDEOptEditorIntf, IDEWindowIntf,
+  McpMarkdownView, McpReviewPaths, McpConflictFiles
+  {$IF lcl_fullversion >= 4090000}, EditorOptionsIntf, LazEditHighlighter{$ENDIF};
+
+type
+  { what a markup returns for a position: Lazarus 5.0 made it a base class of TSynSelectedColor }
+  {$IF lcl_fullversion >= 4090000}
+  TMdMarkupColor = TLazEditHighlighterAttributesModifier;
+  {$ELSE}
+  TMdMarkupColor = TSynSelectedColor;
+  {$ENDIF}
 
 const
   REVIEW_FORM_ID = 'McpReviewFormID';
   ArrowWidth = 28;                    { the column of arrows between two panes }
+  GutterWidth = 58;                   { the same for a git conflict: up to two buttons }
+  GutterBtnWidth = 24;                { one of them }
 
 type
   { The part of a changed line that differs from the other side, drawn stronger than
@@ -75,11 +92,22 @@ type
     procedure Clear;
     function GetMarkupAttributeAtRowCol(const aRow: Integer;
       const aStartCol: TLazSynDisplayTokenBound;
-      const AnRtlInfo: TLazSynDisplayRtlInfo): TSynSelectedColor; override;
+      const AnRtlInfo: TLazSynDisplayRtlInfo): TMdMarkupColor; override;
     procedure GetNextMarkupColAfterRowCol(const aRow: Integer;
       const aStartCol: TLazSynDisplayTokenBound; const AnRtlInfo: TLazSynDisplayRtlInfo;
       out ANextPhys, ANextLog: Integer); override;
   end;
+
+  { What a button in the gutter of a conflict's change does: drop the change (keep the
+    result as it is), take it (the side's lines replace the result's), or put the side's
+    lines below the result's (both stay). }
+  TGutterAct = (gaDrop, gaTake, gaBeside, gaReset);   { gaReset: Hunk is a conflict, not a change }
+  TGutterCtl = record
+    Act  : TGutterAct;
+    Hunk : Integer;        { the index among the side's changes }
+    Rect : TRect;
+  end;
+  TGutterCtls = array of TGutterCtl;
 
   { One file of the review: the three panes (the editor's text, the result, the disk's
     text) and their buttons.  The window shows one page at a time and keeps the others
@@ -87,6 +115,14 @@ type
   TReviewPage = class(TPanel)
   private
     FConflicts    : Integer;       { after the automatic merge; -1: no base, unknown }
+    FConflictMode : Boolean;       { a git conflict: Apply writes and stages (ADR-028) }
+    { the conflicts of a git merge, in order (FConflictMode): their lines in the result
+      follow it through every arrow, "keep" and edit, and one is settled when one of those
+      touched its lines (McpConflictFiles) }
+    FSpans        : TConflictSpans;
+    FStripW       : Integer;       { the width of a column of arrows or gutter buttons }
+    FBeforeEdit   : TDiffLines;    { the result when editing began, to see what was changed }
+    FStatus       : TLabel;
     FFinished     : Boolean;
     FState        : string;        { what was done: 'applied' or 'kept' }
     FOnChange     : TNotifyEvent;  { the number of differences or the state changed }
@@ -96,6 +132,9 @@ type
     FMergedTheirs : TLineFlags;    { the disk's lines the automatic merge took, by their place there }
     FMergedRow    : array of Boolean;    { the same, by row of the aligned view }
     FNav          : TDiffRowArray;     { the rows of all changes, in order }
+    { a git conflict: the rows of the result that a change still to be dealt with covers,
+      by side; what has been taken or dropped is no longer coloured }
+    FLive         : array[0..1] of array of Boolean;
     FFile         : string;
     FEdL, FEdM, FEdR : TSynEdit;   { editor's text, result (the one that can be edited), disk }
     FStripL, FStripR : TPaintBox;  { the arrows: editor-result and result-disk }
@@ -132,6 +171,25 @@ type
     procedure NextChange(Sender: TObject);
     procedure ApplyClick(Sender: TObject);
     procedure DiscardClick(Sender: TObject);
+    function ApplyBlocker: string;
+    procedure UpdateApplyState;
+    procedure InitSpans(const Base, Mine, Theirs: TDiffLines; AHasBase: Boolean);
+    procedure MoveSpans(AStart, ALen, ABLen: Integer; ASettle, AEdges: Boolean);
+    function Unsettled: Integer;
+    function HunkSpan(ASide, AHunk: Integer): Integer;
+    function HunkOffered(ASide, AHunk: Integer): Boolean;
+    procedure MarkDone(ASpan, ASide: Integer; ATook: Boolean);
+    procedure FindLiveRows;
+    function GutterControls(ASide: Integer): TGutterCtls;
+    procedure GutterPaint(ASide: Integer; C: TCanvas; AWidth, AHeight: Integer);
+    procedure GutterMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+    procedure TakeBeside(ASide, AHunk: Integer);
+    function TintConflict(AEdit: TSynEdit; ARow: Integer; out ATint: TColor): Boolean;
+    function RowLive(ASide, ARow: Integer): Boolean;
+    function SpanRow(ASpan: Integer): Integer;
+    procedure DecideAgain(ASpan: Integer);
+    function PlaceRow(AEdit: TSynEdit; ARow: Integer; out AColor: TColor): Boolean;
+    function LineBelow(AEdit: TSynEdit; ARow: Integer; out AColor: TColor): Boolean;
     procedure ReadWorkingCopy;
     function Changed: Boolean;
     function WorkingText: string;
@@ -142,7 +200,8 @@ type
     function GetDifferences: Integer;
   public
     constructor CreateReview(AOwner: TComponent; const AFile, ALeftTitle, ARightTitle: string;
-      const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean; ADone: TReviewDone);
+      const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean; ADone: TReviewDone;
+      AConflict: Boolean = False);
     destructor Destroy; override;
     procedure Apply;                       { "Apply to editor" }
     procedure Keep(AAsk: Boolean);         { "Keep mine"; AAsk: confirm when edited }
@@ -150,7 +209,9 @@ type
     property Finished: Boolean read FFinished;
     property State: string read FState;
     property Conflicts: Integer read FConflicts;
+    property ConflictMode: Boolean read FConflictMode;
     property Differences: Integer read GetDifferences;
+    function TreeNote: string;
     property OnChange: TNotifyEvent read FOnChange write FOnChange;
   end;
 
@@ -161,6 +222,7 @@ type
   private
     FTree    : TTreeView;
     FHost    : TPanel;
+    FAllApplyBtn, FAllKeepBtn : TButton;   { the actions on all files; worded for the page shown }
     FPages   : TList;           { of TReviewPage }
     FRoot    : string;
     FCurrent : TReviewPage;
@@ -172,6 +234,7 @@ type
     procedure KeepAllClick(Sender: TObject);
     procedure WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
     procedure ShowPage(APage: TReviewPage);
+    procedure WordAllButtons(AConflict: Boolean);
     procedure RefreshTree;
     function Pending: Integer;
     function NextPending: TReviewPage;
@@ -182,7 +245,7 @@ type
     destructor Destroy; override;
     function Add(const AFile, ALeftTitle, ARightTitle: string;
       const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean;
-      ADone: TReviewDone): TReviewPage;
+      ADone: TReviewDone; AConflict: Boolean = False): TReviewPage;
     procedure Focus(const AFile: string);
     procedure Drop(const AFile: string);
   end;
@@ -221,7 +284,7 @@ end;
 
 function TWordMarkup.GetMarkupAttributeAtRowCol(const aRow: Integer;
   const aStartCol: TLazSynDisplayTokenBound;
-  const AnRtlInfo: TLazSynDisplayRtlInfo): TSynSelectedColor;
+  const AnRtlInfo: TLazSynDisplayRtlInfo): TMdMarkupColor;
 begin
   Result := nil;
   if (aRow < 1) or (aRow > Length(FFrom)) or (FFrom[aRow - 1] = 0) then Exit;
@@ -342,6 +405,8 @@ begin
   Result.Tag := ASide;
   Result.OnPaint := @StripPaint;
   Result.OnMouseDown := @StripMouseDown;
+  Result.OnMouseMove := @GutterMouseMove;
+  Result.ShowHint := True;
 end;
 
 procedure TReviewPage.Buttons(AParent: TWinControl);
@@ -371,6 +436,15 @@ begin
   FEditBtn := Btn('Edit', 82, 84, @ToggleEdit, False);
   FEditBtn.Hint := 'Edit the result in the middle';
   FEditBtn.ShowHint := True;
+  if FConflictMode then
+  begin
+    FEditBtn.Hint := 'Write your own version of a conflict: edit the result, then press Done editing. ' +
+      'The buttons beside each change take it (>> or <<), drop it (X) or put it below what is there';
+    FStatus := TLabel.Create(Self);
+    FStatus.Parent := AParent;
+    FStatus.Left := 180;
+    FStatus.Top := 11;
+  end;
   with Btn('Explain', 172, 84, @ExplainClick, False) do
   begin
     Hint := 'Copy a prompt with the differences, to ask an assistant about them';
@@ -384,6 +458,16 @@ begin
   FApplyBtn.Font.Style := [fsBold];                           { the main action }
   FApplyBtn.Hint := 'Put the result into the editor (Ctrl+Z undoes it)';
   FApplyBtn.ShowHint := True;
+  if FConflictMode then
+  begin
+    FKeepBtn.Caption := 'Leave unresolved';
+    FKeepBtn.Hint := 'The conflict markers stay in the file and nothing is staged';
+    FApplyBtn.Caption := 'Resolve (write and stage)';
+    FApplyBtn.Width := 180;
+    FKeepBtn.Width := 120;
+    FApplyBtn.Hint := 'Write the result to the file and stage it. Not an editor undo step: ' +
+      'git_merge_abort or git_rebase_abort is the way back';
+  end;
   AParent.OnResize := @PositionButtons;
   PositionButtons(AParent);
 end;
@@ -391,8 +475,8 @@ end;
 procedure TReviewPage.PositionButtons(Sender: TObject);
 begin
   if FBottom = nil then Exit;
-  FApplyBtn.Left := FBottom.Width - 136;
-  FKeepBtn.Left := FApplyBtn.Left - 118;
+  FApplyBtn.Left := FBottom.Width - FApplyBtn.Width - 6;
+  FKeepBtn.Left := FApplyBtn.Left - FKeepBtn.Width - 8;
 end;
 
 { The five columns, in this order: editor, arrows, result, arrows, disk.  The three texts
@@ -404,25 +488,25 @@ var
 begin
   if (FPanL = nil) or (FPanM = nil) or (FPanR = nil) or (FBottom = nil) or
      (FStripPanL = nil) or (FStripPanR = nil) then Exit;
-  W := (ClientWidth - 2 * ArrowWidth) div 3;
+  W := (ClientWidth - 2 * FStripW) div 3;
   if W < 60 then W := 60;
   H := ClientHeight - FBottom.Height;
   if H < 0 then H := 0;
   X := 0;
   FPanL.SetBounds(X, 0, W, H);
   Inc(X, W);
-  FStripPanL.SetBounds(X, 0, ArrowWidth, H);
-  Inc(X, ArrowWidth);
+  FStripPanL.SetBounds(X, 0, FStripW, H);
+  Inc(X, FStripW);
   FPanM.SetBounds(X, 0, W, H);
   Inc(X, W);
-  FStripPanR.SetBounds(X, 0, ArrowWidth, H);
-  Inc(X, ArrowWidth);
+  FStripPanR.SetBounds(X, 0, FStripW, H);
+  Inc(X, FStripW);
   FPanR.SetBounds(X, 0, ClientWidth - X, H);
 end;
 
 constructor TReviewPage.CreateReview(AOwner: TComponent; const AFile, ALeftTitle,
   ARightTitle: string; const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean;
-  ADone: TReviewDone);
+  ADone: TReviewDone; AConflict: Boolean);
 var
   BottomBar : TPanel;
   Applied, NConflicts, NRemoved : Integer;
@@ -433,6 +517,8 @@ begin
   Caption := '';
   FFile := AFile;
   FDone := ADone;
+  FConflictMode := AConflict;
+  if FConflictMode then FStripW := GutterWidth else FStripW := ArrowWidth;
   FIgnored := TStringList.Create;
   FTheirs := Copy(Theirs, 0, Length(Theirs));
   FEditor := Copy(Mine, 0, Length(Mine));
@@ -448,6 +534,13 @@ begin
   begin
     FResult := Copy(Mine, 0, Length(Mine));
     Info := 'no common base known: every difference is shown';
+  end;
+  if FConflictMode then
+  begin
+    { each conflict starts as the common lines: both sides stand against them (ADR-028) }
+    FResult := ConflictStart(Base, Mine, Theirs, AHasBase);
+    InitSpans(Base, Mine, Theirs, AHasBase);
+    Info := 'each conflict shows the common lines: take, drop or write your own';
   end;
   FInitial := Copy(FResult, 0, Length(FResult));
   OnResize := @PageResize;
@@ -482,6 +575,26 @@ end;
 procedure TReviewPage.Rebuild;
 var
   I, J, N, KeepTop, KeepNav : Integer;
+  NavL, NavR : TDiffRowArray;       { the rows Next and Previous stop at, by side }
+
+  { a git conflict stops only at what has buttons: the changes nobody has dealt with }
+  procedure OfferedRows(ASide: Integer; var ARows: TDiffRowArray);
+  var
+    K, Cnt : Integer;
+    Src : TDiffRowArray;
+  begin
+    if ASide = 0 then Src := FRows.LeftHunkRow else Src := FRows.RightHunkRow;
+    ARows := nil;
+    SetLength(ARows, Length(Src));
+    Cnt := 0;
+    for K := 0 to High(Src) do
+      if HunkOffered(ASide, K) then
+      begin
+        ARows[Cnt] := Src[K];
+        Inc(Cnt);
+      end;
+    SetLength(ARows, Cnt);
+  end;
 
   { the changes marked "keep" get no arrow and are skipped by Next/Previous }
   procedure DropIgnored(ASide: Integer; var AHunks: TDiffHunks; var ARows: TDiffRowArray);
@@ -526,21 +639,28 @@ begin
       DropIgnored(1, FRows.RightHunks, FRows.RightHunkRow);
       { the rows of all changes, in order, once each, for Next and Previous
         (both lists are sorted: merge them) }
-      SetLength(FNav, Length(FRows.LeftHunkRow) + Length(FRows.RightHunkRow));
+      NavL := FRows.LeftHunkRow;
+      NavR := FRows.RightHunkRow;
+      if FConflictMode then
+      begin
+        FindLiveRows;
+        OfferedRows(0, NavL);
+        OfferedRows(1, NavR);
+      end;
+      SetLength(FNav, Length(NavL) + Length(NavR));
       N := 0;
       I := 0;
       J := 0;
-      while (I <= High(FRows.LeftHunkRow)) or (J <= High(FRows.RightHunkRow)) do
+      while (I <= High(NavL)) or (J <= High(NavR)) do
       begin
-        if (J > High(FRows.RightHunkRow)) or
-           ((I <= High(FRows.LeftHunkRow)) and (FRows.LeftHunkRow[I] <= FRows.RightHunkRow[J])) then
+        if (J > High(NavR)) or ((I <= High(NavL)) and (NavL[I] <= NavR[J])) then
         begin
-          KeepNav := FRows.LeftHunkRow[I];
+          KeepNav := NavL[I];
           Inc(I);
         end
         else
         begin
-          KeepNav := FRows.RightHunkRow[J];
+          KeepNav := NavR[J];
           Inc(J);
         end;
         if (N = 0) or (FNav[N - 1] <> KeepNav) then
@@ -585,7 +705,495 @@ begin
   FStripL.Invalidate;
   FStripR.Invalidate;
   if FEditing then FEditBtn.Caption := 'Done editing' else FEditBtn.Caption := 'Edit';
+  UpdateApplyState;
   if Assigned(FOnChange) then FOnChange(Self);      { the tree shows the count }
+end;
+
+{ Why Apply is not possible yet; '' when it is.  Only a git conflict has reasons. }
+function TReviewPage.ApplyBlocker: string;
+var
+  N : Integer;
+begin
+  Result := '';
+  if not FConflictMode then Exit;
+  if FEditing then
+    Exit('Press "Done editing" first: what is typed settles a conflict only then.');
+  if HasConflictBlock(FResult) then
+    Exit('The result still has a conflict block (<<<<<<< ... >>>>>>>): edit it away.');
+  { the automatic merge put each conflict as the left version, but a conflict is settled
+    only when the user has done something to its lines: an arrow, a "keep", one of the
+    Take buttons, or typing over them (a third version) }
+  N := Unsettled;
+  if N > 0 then
+    Result := IntToStr(N) + ' conflict(s) still to decide: use the buttons beside a change ' +
+      '(take, drop, or put it below), or edit the result.';
+end;
+
+procedure TReviewPage.UpdateApplyState;
+begin
+  if FStatus <> nil then
+    if Length(FSpans) = 0 then
+      FStatus.Caption := 'No conflicting changes'
+    else if Unsettled = 0 then
+      FStatus.Caption := Format('All %d conflict(s) decided', [Length(FSpans)])
+    else
+      FStatus.Caption := Format('%d of %d conflict(s) to decide', [Unsettled, Length(FSpans)]);
+  if FFinished or (FApplyBtn = nil) then Exit;
+  FApplyBtn.Enabled := ApplyBlocker = '';
+  if FConflictMode and not FApplyBtn.Enabled then
+    FApplyBtn.Hint := ApplyBlocker;
+end;
+
+{ ── The conflicts of a git merge ─────────────────────────────────────────── }
+
+{ Where each conflict's lines are in the result the automatic merge made: it takes the
+  left (Mine) version of a conflict, the right one of a change only the right made. }
+procedure TReviewPage.InitSpans(const Base, Mine, Theirs: TDiffLines; AHasBase: Boolean);
+begin
+  FSpans := InitConflictSpans(Base, Mine, Theirs, AHasBase);
+end;
+
+procedure TReviewPage.MoveSpans(AStart, ALen, ABLen: Integer; ASettle, AEdges: Boolean);
+begin
+  MoveConflictSpans(FSpans, AStart, ALen, ABLen, ASettle, AEdges);
+end;
+
+function TReviewPage.Unsettled: Integer;
+begin
+  Result := UnsettledSpans(FSpans);
+end;
+
+{ The conflict a change of one side belongs to, or -1 (no conflict touches it). }
+function TReviewPage.HunkSpan(ASide, AHunk: Integer): Integer;
+begin
+  if ASide = 0 then
+    Result := SpanOfHunk(FSpans, FRows.LeftHunks[AHunk].AStart, FRows.LeftHunks[AHunk].ALen)
+  else
+    Result := SpanOfHunk(FSpans, FRows.RightHunks[AHunk].AStart, FRows.RightHunks[AHunk].ALen);
+end;
+
+{ A change that has buttons: it belongs to a conflict and this side has not dealt with it.
+  Only those are coloured and stopped at: a change the automatic merge took has no buttons,
+  and what the other side's lines look like to a side that has taken its own is no news. }
+function TReviewPage.HunkOffered(ASide, AHunk: Integer): Boolean;
+var
+  Span : Integer;
+begin
+  Span := HunkSpan(ASide, AHunk);
+  Result := (Span >= 0) and not FSpans[Span].Done[ASide];
+end;
+
+procedure TReviewPage.MarkDone(ASpan, ASide: Integer; ATook: Boolean);
+begin
+  if (ASpan < 0) or (ASpan > High(FSpans)) then Exit;
+  FSpans[ASpan].Done[ASide] := True;
+  if ATook then FSpans[ASpan].Took[ASide] := True;
+end;
+
+{ The rows each side's live changes cover, for the colours. }
+procedure TReviewPage.FindLiveRows;
+var
+  Side, I, K, N : Integer;
+  Hunks : TDiffHunks;
+  Rows  : TDiffRowArray;
+begin
+  for Side := 0 to 1 do
+  begin
+    FLive[Side] := nil;
+    SetLength(FLive[Side], Length(FRows.M));
+    if Side = 0 then
+    begin
+      Hunks := FRows.LeftHunks;
+      Rows  := FRows.LeftHunkRow;
+    end
+    else
+    begin
+      Hunks := FRows.RightHunks;
+      Rows  := FRows.RightHunkRow;
+    end;
+    for I := 0 to High(Hunks) do
+    begin
+      if not HunkOffered(Side, I) then Continue;
+      N := Hunks[I].ALen;
+      if Hunks[I].BLen > N then N := Hunks[I].BLen;
+      for K := Rows[I] to Rows[I] + N - 1 do
+        if K < Length(FLive[Side]) then FLive[Side][K] := True;
+    end;
+  end;
+end;
+
+{ The buttons beside the changes of one side that touch a conflict, in the order of the
+  gutter: drop, take, put below.  The left gutter reads [drop] [take] [below], the right one
+  the other way round, so that "take" points at the result in both.  "Put below" is offered
+  only once the conflict has been settled (something else sits there now) and the side has
+  lines to put there.  A change that belongs to no conflict (the automatic merge took the
+  other side's or the same change) gets nothing. }
+function TReviewPage.GutterControls(ASide: Integer): TGutterCtls;
+var
+  Hunks : TDiffHunks;
+  Rows  : TDiffRowArray;
+  I, N, H, Span, K : Integer;
+
+  procedure Add(AAct: TGutterAct; ASlot: Integer);
+  var
+    X, Y : Integer;
+  begin
+    if ASide = 0 then
+      X := 3 + ASlot * (GutterBtnWidth + 2)
+    else
+      X := 3 + (1 - ASlot) * (GutterBtnWidth + 2);
+    Y := (Rows[I] + 1 - FEdM.TopLine) * H;
+    SetLength(Result, N + 1);
+    Result[N].Act  := AAct;
+    Result[N].Hunk := I;
+    Result[N].Rect := Rect(X, Y + 1, X + GutterBtnWidth, Y + H - 1);
+    Inc(N);
+  end;
+
+begin
+  Result := nil;
+  if FEditing or not FConflictMode then Exit;
+  if ASide = 0 then
+  begin
+    Hunks := FRows.LeftHunks;
+    Rows  := FRows.LeftHunkRow;
+  end
+  else
+  begin
+    Hunks := FRows.RightHunks;
+    Rows  := FRows.RightHunkRow;
+  end;
+  H := FEdM.LineHeight;
+  N := 0;
+  for I := 0 to High(Hunks) do
+  begin
+    Span := SpanOfHunk(FSpans, Hunks[I].AStart, Hunks[I].ALen);
+    if (Span < 0) or FSpans[Span].Done[ASide] then Continue;
+    Add(gaDrop, 0);
+    { "below" needs lines of the other side to go below and lines of this side to put there;
+      in any other case (nothing taken yet, or the other side's change left no lines, as a
+      deletion does) the change simply goes in }
+    if FSpans[Span].Took[1 - ASide] and (Hunks[I].ALen > 0) and (Hunks[I].BLen > 0) then
+      Add(gaBeside, 1)
+    else
+      Add(gaTake, 1);
+  end;
+  { a conflict something was done to can be decided again: a button on the row of its
+    first line in the gutter of each side that was dealt with; both do the same }
+  for I := 0 to High(FSpans) do
+  begin
+    { each side that was dealt with has its own button; typed text, which no side did, has
+      one on the left }
+    if not (FSpans[I].Done[ASide] or
+            ((ASide = 0) and FSpans[I].Settled and not FSpans[I].Done[1])) then Continue;
+    N := Length(Result);
+    SetLength(Result, N + 1);
+    Result[N].Act  := gaReset;
+    Result[N].Hunk := I;
+    Span := SpanRow(I);
+    if Span < 0 then Span := 0;
+    { the slot next to the pane's edge, as "drop" has it }
+    K := 3 + ASide * (GutterBtnWidth + 2);
+    Result[N].Rect := Rect(K, (Span + 1 - FEdM.TopLine) * H + 1,
+      K + GutterBtnWidth, (Span + 1 - FEdM.TopLine) * H + H - 1);
+  end;
+end;
+
+{ The row of a conflict's first line in the result (a conflict with no lines: the row after
+  the line above it), or -1. }
+function TReviewPage.SpanRow(ASpan: Integer): Integer;
+var
+  I, N, Line : Integer;
+  After : Boolean;
+begin
+  Result := -1;
+  Line := FSpans[ASpan].Start;
+  After := FSpans[ASpan].Len = 0;
+  if After then Dec(Line);
+  if Line < 0 then Exit(0);
+  N := -1;
+  for I := 0 to High(FRows.MK) do
+    if FRows.MK[I] <> rkFiller then
+    begin
+      Inc(N);
+      if N = Line then
+      begin
+        if After then Exit(I + 1);
+        Exit(I);
+      end;
+    end;
+end;
+
+{ The conflict goes back to the common lines and its changes are offered again.  Text
+  typed over it is lost, so that is asked first. }
+procedure TReviewPage.DecideAgain(ASpan: Integer);
+var
+  Side, K : Integer;
+  Hunks : TDiffHunks;
+  Idx : Integer;
+begin
+  if FEditing or (ASpan < 0) or (ASpan > High(FSpans)) then Exit;
+  if FSpans[ASpan].Settled and not (FSpans[ASpan].Done[0] or FSpans[ASpan].Done[1]) and
+     (MessageDlg('Decide this conflict again? The lines you typed there are replaced by ' +
+                 'the common lines.', mtConfirmation, [mbYes, mbNo], 0) <> mrYes) then Exit;
+  ResetConflict(FSpans, ASpan, FResult);
+  { the changes of this conflict were marked "keep" by their text: forget those marks }
+  for Side := 0 to 1 do
+  begin
+    if Side = 0 then Hunks := DiffLines(FResult, FEditor)
+    else Hunks := DiffLines(FResult, FTheirs);
+    for K := 0 to High(Hunks) do
+      if SpanOfHunk(FSpans, Hunks[K].AStart, Hunks[K].ALen) = ASpan then
+      begin
+        Idx := FIgnored.IndexOf(HunkKey(Side, Hunks[K]));
+        while Idx >= 0 do
+        begin
+          FIgnored.Delete(Idx);
+          Idx := FIgnored.IndexOf(HunkKey(Side, Hunks[K]));
+        end;
+      end;
+  end;
+  Rebuild;
+end;
+
+{ The font the symbols of the gutter come from, and whether this machine has it. }
+function SymbolFont: string;
+begin
+  {$IFDEF MSWINDOWS}
+  Result := 'Segoe UI Symbol';
+  {$ELSE}
+  Result := 'DejaVu Sans';
+  {$ENDIF}
+end;
+
+function HasSymbols: Boolean;
+begin
+  Result := Screen.Fonts.IndexOf(SymbolFont) >= 0;
+end;
+
+var
+  GInkCache : TStringList = nil;
+
+{ Where the ink of a glyph is, relative to the point it is drawn at: the middle of what
+  shows, not of the text cell around it (a symbol sits high or low and to one side in its
+  cell, which is why centring the cell looks off).  Measured once per glyph and size by
+  drawing it in a small bitmap and looking for the pixels. }
+procedure GlyphInkCentre(AFont: TFont; const AGlyph: string; out ADX, ADY: Integer);
+const
+  Pad = 12;
+var
+  Key, Hit : string;
+  Bmp : TBitmap;
+  X, Y, MinX, MaxX, MinY, MaxY : Integer;
+begin
+  if GInkCache = nil then GInkCache := TStringList.Create;
+  Key := AFont.Name + '|' + IntToStr(AFont.Size) + '|' + AGlyph;
+  Hit := GInkCache.Values[Key];
+  if Hit <> '' then
+  begin
+    ADX := StrToIntDef(Copy(Hit, 1, Pos(',', Hit) - 1), 0);
+    ADY := StrToIntDef(Copy(Hit, Pos(',', Hit) + 1, MaxInt), 0);
+    Exit;
+  end;
+  ADX := 0;
+  ADY := 0;
+  Bmp := TBitmap.Create;
+  try
+    Bmp.SetSize(96, 96);
+    Bmp.Canvas.Brush.Color := clWhite;
+    Bmp.Canvas.FillRect(0, 0, 96, 96);
+    Bmp.Canvas.Font.Assign(AFont);
+    Bmp.Canvas.Font.Color := clBlack;
+    Bmp.Canvas.Brush.Style := bsClear;
+    Bmp.Canvas.TextOut(Pad, Pad, AGlyph);
+    MinX := 96; MaxX := -1; MinY := 96; MaxY := -1;
+    for Y := 0 to 95 do
+      for X := 0 to 95 do
+        if Bmp.Canvas.Pixels[X, Y] <> clWhite then
+        begin
+          if X < MinX then MinX := X;
+          if X > MaxX then MaxX := X;
+          if Y < MinY then MinY := Y;
+          if Y > MaxY then MaxY := Y;
+        end;
+    if MaxX >= MinX then
+    begin
+      ADX := (MinX + MaxX + 1) div 2 - Pad;
+      ADY := (MinY + MaxY + 1) div 2 - Pad;
+    end;
+  finally
+    Bmp.Free;
+  end;
+  GInkCache.Values[Key] := IntToStr(ADX) + ',' + IntToStr(ADY);
+end;
+
+procedure TReviewPage.GutterPaint(ASide: Integer; C: TCanvas; AWidth, AHeight: Integer);
+var
+  Ctl  : TGutterCtl;
+  Hunk : TDiffHunk;
+  Back, Tone : TColor;
+  Glyph : string;
+  CX, CY, TW, TH : Integer;
+begin
+  Back := FEdM.Color;
+  C.Brush.Color := Back;
+  C.FillRect(0, 0, AWidth, AHeight);
+  C.Font.Assign(FEdM.Font);
+  for Ctl in GutterControls(ASide) do
+  begin
+    if (Ctl.Rect.Bottom < 0) or (Ctl.Rect.Top > AHeight) then Continue;
+    if Ctl.Act = gaReset then
+      Tone := RGBToColor(128, 128, 128)                             { not about one change }
+    else
+    begin
+      if ASide = 0 then Hunk := FRows.LeftHunks[Ctl.Hunk] else Hunk := FRows.RightHunks[Ctl.Hunk];
+      if Hunk.ALen = 0 then Tone := RGBToColor(60, 180, 90)          { lines added }
+      else if Hunk.BLen = 0 then Tone := RGBToColor(215, 80, 80)      { lines deleted }
+      else Tone := RGBToColor(70, 130, 220);                          { lines changed }
+    end;
+    C.Brush.Color := BlendColor(Back, Tone, 35);
+    C.Pen.Color := BlendColor(Back, Tone, 70);
+    C.RoundRect(Ctl.Rect.Left, Ctl.Rect.Top, Ctl.Rect.Right, Ctl.Rect.Bottom, 4, 4);
+    C.Font.Color := FEdM.Font.Color;
+    CX := (Ctl.Rect.Left + Ctl.Rect.Right) div 2;
+    CY := (Ctl.Rect.Top + Ctl.Rect.Bottom) div 2;
+    { "put below" and "again" are symbols: a font that has them draws them, and a machine
+      without one gets a letter }
+    C.Font.Name := FEdM.Font.Name;
+    C.Font.Style := [];
+    case Ctl.Act of
+      gaDrop:
+        if HasSymbols then
+        begin
+          C.Font.Name := SymbolFont;
+          Glyph := UnicodeToUTF8($2716);                       { a heavy cross; DejaVu Sans
+                                                                  draws no U+274C }
+        end
+        else
+          Glyph := 'X';
+      gaTake:
+        if HasSymbols then
+        begin
+          C.Font.Name := SymbolFont;
+          if ASide = 0 then Glyph := UnicodeToUTF8($27A1)      { arrow towards the result }
+          else Glyph := UnicodeToUTF8($2B05);
+        end
+        else if ASide = 0 then Glyph := '>>'
+        else Glyph := '<<';
+      gaBeside:
+      begin
+        if HasSymbols then
+        begin
+          C.Font.Name := SymbolFont;
+          if ASide = 0 then Glyph := UnicodeToUTF8($2B0A)      { arrow down and right }
+          else Glyph := UnicodeToUTF8($2B0B);                  { down and left }
+        end
+        else
+          Glyph := 'v';
+      end;
+    else
+      if HasSymbols then
+      begin
+        C.Font.Name := SymbolFont;
+        Glyph := UnicodeToUTF8($21BA);                         { anticlockwise open circle arrow }
+      end
+      else
+        Glyph := 'r';
+    end;
+    { symbols are small for their size: a few points more than the text }
+    if C.Font.Name = SymbolFont then
+    begin
+      TW := FEdM.Font.Size;
+      if TW <= 0 then TW := 10;
+      { the cross is a big glyph, the arrows are small ones }
+      case Ctl.Act of
+        gaDrop:  C.Font.Size := TW;
+        gaReset:
+        begin
+          C.Font.Size := TW + 2;             { tall glyph: more would leave the button }
+          C.Font.Style := [fsBold];
+        end;
+      else
+        C.Font.Size := TW + 4;               { the arrows are flat }
+      end;
+    end;
+    GlyphInkCentre(C.Font, Glyph, TW, TH);
+    C.Brush.Style := bsClear;               { the glyph's cell is taller than the button }
+    C.TextOut(CX - TW, CY - TH, Glyph);     { the middle of the ink on the button's middle }
+    C.Brush.Style := bsSolid;
+  end;
+end;
+
+procedure TReviewPage.GutterMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+var
+  Ctl  : TGutterCtl;
+  Side : Integer;
+  Tip  : string;
+begin
+  if not FConflictMode then Exit;
+  Side := TPaintBox(Sender).Tag;
+  Tip := '';
+  for Ctl in GutterControls(Side) do
+    if PtInRect(Ctl.Rect, Point(X, Y)) then
+    begin
+      case Ctl.Act of
+        gaDrop:   Tip := 'Drop this change: the result keeps what it has';
+        gaTake:   Tip := 'Take this change: these lines go into the result';
+        gaBeside: Tip := 'Put these lines below the ones in the result: both stay';
+        gaReset:  Tip := 'Decide again: back to the common lines, both changes offered';
+      end;
+      Break;
+    end;
+  if Tip <> TPaintBox(Sender).Hint then
+  begin
+    TPaintBox(Sender).Hint := Tip;
+    Application.CancelHint;
+  end;
+end;
+
+{ The side's lines of one change go below the result's lines there, which stay.  What the
+  change is part of counts as decided. }
+procedure TReviewPage.TakeBeside(ASide, AHunk: Integer);
+var
+  Hunk : TDiffHunk;
+  Side, Fresh, Joined : TDiffLines;
+  At, I, N, Span : Integer;
+begin
+  if FEditing then Exit;
+  if ASide = 0 then
+  begin
+    Hunk := FRows.LeftHunks[AHunk];
+    Side := FEditor;
+  end
+  else
+  begin
+    Hunk := FRows.RightHunks[AHunk];
+    Side := FTheirs;
+  end;
+  Fresh := Slice(Side, Hunk.BStart, Hunk.BLen);
+  At := Hunk.AStart + Hunk.ALen;
+  SetLength(Joined, Length(FResult) + Length(Fresh));
+  N := 0;
+  for I := 0 to At - 1 do
+  begin
+    Joined[N] := FResult[I];
+    Inc(N);
+  end;
+  for I := 0 to High(Fresh) do
+  begin
+    Joined[N] := Fresh[I];
+    Inc(N);
+  end;
+  for I := At to High(FResult) do
+  begin
+    Joined[N] := FResult[I];
+    Inc(N);
+  end;
+  Span := HunkSpan(ASide, AHunk);
+  MoveSpans(At, 0, Length(Fresh), True, True);
+  MarkDone(Span, ASide, True);
+  FResult := Joined;
+  Rebuild;
 end;
 
 { In every changed row, the part that differs gets a stronger blue than the row's tint. }
@@ -608,19 +1216,88 @@ begin
   for I := 0 to High(FRows.M) do
   begin
     if FRows.MK[I] <> rkChanged then Continue;
-    if FRows.LK[I] = rkChanged then
+    { a git conflict: what a side has dealt with is no longer marked }
+    if FConflictMode and not (RowLive(0, I) or RowLive(1, I)) then Continue;
+    if (FRows.LK[I] = rkChanged) and (not FConflictMode or RowLive(0, I)) then
     begin
       DifferingSpan(FRows.M[I], FRows.L[I], MF, MT, OF_, OT);
       if OT > OF_ then FWordL.SetRange(I + 1, OF_, OT);
       if MT > MF then FWordM.SetRange(I + 1, MF, MT);
     end;
-    if FRows.RK[I] = rkChanged then
+    if (FRows.RK[I] = rkChanged) and (not FConflictMode or RowLive(1, I)) then
     begin
       DifferingSpan(FRows.M[I], FRows.R[I], MF, MT, OF_, OT);
       if OT > OF_ then FWordR.SetRange(I + 1, OF_, OT);
       if MT > MF then FWordM.SetRange(I + 1, MF, MT);   { the disk's difference wins }
     end;
   end;
+end;
+
+{ The tints of a git conflict, by what a change would do to the result.  A side's lines the
+  result lacks are an addition: pale green, and the result's empty slot where they would go
+  is pale green too (LineMarkup draws its line).  Lines the result has and a side lacks are a
+  deletion: pale red, in both panes.  Different lines on both are pale blue. }
+function TReviewPage.TintConflict(AEdit: TSynEdit; ARow: Integer; out ATint: TColor): Boolean;
+var
+  Back, Green, Red, Blue : TColor;
+  Kind : TDiffRowKind;
+  Side : Integer;
+begin
+  Result := True;
+  ATint := clNone;
+  Back  := AEdit.Color;
+  Green := RGBToColor(60, 180, 90);
+  Red   := RGBToColor(215, 80, 80);
+  Blue  := RGBToColor(70, 130, 220);
+  if AEdit = FEdM then
+  begin
+    if FRows.MK[ARow] = rkFiller then
+    begin
+      if RowLive(0, ARow) or RowLive(1, ARow) then
+        ATint := BlendColor(Back, Green, 30)
+      else
+        Result := False;
+    end
+    else if (RowLive(0, ARow) and (FRows.LK[ARow] = rkChanged)) or
+            (RowLive(1, ARow) and (FRows.RK[ARow] = rkChanged)) then
+      ATint := BlendColor(Back, Blue, 24)
+    else if (RowLive(0, ARow) and (FRows.LK[ARow] = rkFiller)) or
+            (RowLive(1, ARow) and (FRows.RK[ARow] = rkFiller)) then
+      ATint := BlendColor(Back, Red, 26)
+    else
+      Result := False;         { what the automatic merge took is no conflict: no colour }
+    Exit;
+  end;
+  if AEdit = FEdL then
+  begin
+    Side := 0;
+    Kind := FRows.LK[ARow];
+  end
+  else
+  begin
+    Side := 1;
+    Kind := FRows.RK[ARow];
+  end;
+  { a side's change that has been dealt with is no longer coloured; the grey of a row only
+    the other side has lines for stays }
+  if (Kind <> rkFiller) and not RowLive(Side, ARow) then Exit(False);
+  case Kind of
+    rkAdded:   ATint := BlendColor(Back, Green, 30);
+    rkChanged: ATint := BlendColor(Back, Blue, 24);
+    rkFiller:
+      if FRows.MK[ARow] = rkFiller then
+        ATint := BlendColor(Back, RGBToColor(128, 128, 128), 14)
+      else
+        Result := False;     { the result has lines, this side none: a red line marks the spot }
+  else
+    Result := False;
+  end;
+end;
+
+{ Is row ARow covered by a change of side ASide that has not been dealt with? }
+function TReviewPage.RowLive(ASide, ARow: Integer): Boolean;
+begin
+  Result := (ARow >= 0) and (ARow < Length(FLive[ASide])) and FLive[ASide][ARow];
 end;
 
 { JetBrains-like tints, mixed into the editor's own background (a dark scheme gets dark
@@ -633,6 +1310,7 @@ var
   Kind: TDiffRowKind;
   Back: TColor;
 begin
+  if FConflictMode then Exit(TintConflict(AEdit, ARow, ATint));
   Result := True;
   ATint := clNone;
   Back := AEdit.Color;
@@ -655,17 +1333,67 @@ begin
     end;
 end;
 
+{ A row where a change of a git conflict would put lines, or take them away: in the result
+  an empty slot a side's lines would fill (green), in a side pane the empty rows facing lines
+  the result has and the side lacks (red). }
+function TReviewPage.PlaceRow(AEdit: TSynEdit; ARow: Integer; out AColor: TColor): Boolean;
+var
+  Side : Integer;
+begin
+  Result := False;
+  if (ARow < 0) or (ARow >= Length(FRows.M)) then Exit;
+  if AEdit = FEdM then
+  begin
+    AColor := RGBToColor(60, 180, 90);
+    Result := (FRows.MK[ARow] = rkFiller) and (RowLive(0, ARow) or RowLive(1, ARow));
+  end
+  else
+  begin
+    AColor := RGBToColor(215, 80, 80);
+    if AEdit = FEdL then Side := 0 else Side := 1;
+    if Side = 0 then Result := FRows.LK[ARow] = rkFiller
+    else Result := FRows.RK[ARow] = rkFiller;
+    Result := Result and (FRows.MK[ARow] <> rkFiller) and RowLive(Side, ARow);
+  end;
+end;
+
+{ The line that shows the place to be: where the hunk would sit, which is the top of its
+  first row, so under the row above it (SynEdit draws no top edge).  A hunk on the first row
+  has no row above: the line goes under it. }
+function TReviewPage.LineBelow(AEdit: TSynEdit; ARow: Integer; out AColor: TColor): Boolean;
+var
+  Dummy : TColor;
+begin
+  Result := False;
+  if not FConflictMode then Exit;
+  if PlaceRow(AEdit, ARow + 1, AColor) and not PlaceRow(AEdit, ARow, Dummy) then
+    Exit(True);
+  Result := (ARow = 0) and PlaceRow(AEdit, 0, AColor);
+end;
+
 procedure TReviewPage.LineMarkup(Sender: TObject; Line: Integer; var Special: Boolean;
   Markup: TSynSelectedColor);
 var
-  C: TColor;
+  C, LineColor: TColor;
+  Tinted, Lined: Boolean;
 begin
   if (Line < 1) or (Line > Length(FRows.M)) then Exit;
-  if Tint(TSynEdit(Sender), Line - 1, C) then
+  Tinted := Tint(TSynEdit(Sender), Line - 1, C);
+  Lined  := LineBelow(TSynEdit(Sender), Line - 1, LineColor);
+  if Tinted or Lined then
   begin
     Special := True;
-    Markup.Background := C;
+    if Tinted then Markup.Background := C else Markup.Background := clNone;
     Markup.Foreground := clNone;
+    { the markup object is shared by all lines, so every line says what its frame is }
+    if Lined then
+    begin
+      Markup.FrameColor := LineColor;
+      Markup.FrameStyle := slsSolid;
+      Markup.FrameEdges := sfeBottom;
+    end
+    else
+      Markup.FrameEdges := sfeNone;
   end;
 end;
 
@@ -722,6 +1450,11 @@ var
 begin
   Side := TPaintBox(Sender).Tag;
   C := TPaintBox(Sender).Canvas;
+  if FConflictMode then
+  begin
+    GutterPaint(Side, C, TPaintBox(Sender).Width, TPaintBox(Sender).Height);
+    Exit;
+  end;
   C.Brush.Color := FEdM.Color;
   C.FillRect(0, 0, TPaintBox(Sender).Width, TPaintBox(Sender).Height);
   if FEditing then Exit;
@@ -747,9 +1480,26 @@ procedure TReviewPage.StripMouseDown(Sender: TObject; Button: TMouseButton;
 var
   I, Side: Integer;
   Rows: TDiffRowArray;
+  Ctl : TGutterCtl;
 begin
   if (not (Button in [mbLeft, mbRight])) or FEditing then Exit;
   Side := TPaintBox(Sender).Tag;
+  if FConflictMode then
+  begin
+    if Button <> mbLeft then Exit;
+    for Ctl in GutterControls(Side) do
+      if PtInRect(Ctl.Rect, Point(X, Y)) then
+      begin
+        case Ctl.Act of
+          gaDrop:   IgnoreHunk(Side, Ctl.Hunk);
+          gaTake:   TakeHunk(Side, Ctl.Hunk);
+          gaBeside: TakeBeside(Side, Ctl.Hunk);
+          gaReset:  DecideAgain(Ctl.Hunk);
+        end;
+        Exit;
+      end;
+    Exit;
+  end;
   Rows := StripRows(Side);
   for I := 0 to High(Rows) do
     if PtInRect(ArrowRect(Rows[I]), Point(X, Y)) then
@@ -772,9 +1522,19 @@ begin
 end;
 
 procedure TReviewPage.IgnoreHunk(ASide, AHunk: Integer);
+var
+  Hunk : TDiffHunk;
+  Span : Integer;
 begin
-  if ASide = 0 then FIgnored.Add(HunkKey(0, FRows.LeftHunks[AHunk]))
-  else FIgnored.Add(HunkKey(1, FRows.RightHunks[AHunk]));
+  if ASide = 0 then Hunk := FRows.LeftHunks[AHunk] else Hunk := FRows.RightHunks[AHunk];
+  FIgnored.Add(HunkKey(ASide, Hunk));
+  { keeping the result's lines is a decision about the conflict they are in }
+  if FConflictMode then
+  begin
+    Span := HunkSpan(ASide, AHunk);
+    MoveSpans(Hunk.AStart, Hunk.ALen, Hunk.ALen, True, True);
+    MarkDone(Span, ASide, False);
+  end;
   Rebuild;
 end;
 
@@ -812,11 +1572,20 @@ end;
 procedure TReviewPage.TakeHunk(ASide, AHunk: Integer);
 var
   Take: array of Boolean;
-  I   : Integer;
+  I, Span : Integer;
 begin
   if ASide = 0 then SetLength(Take, Length(FRows.LeftHunks))
   else SetLength(Take, Length(FRows.RightHunks));
   for I := 0 to High(Take) do Take[I] := I = AHunk;
+  if FConflictMode then
+  begin
+    Span := HunkSpan(ASide, AHunk);
+    if ASide = 0 then
+      with FRows.LeftHunks[AHunk] do MoveSpans(AStart, ALen, BLen, True, True)
+    else
+      with FRows.RightHunks[AHunk] do MoveSpans(AStart, ALen, BLen, True, True);
+    MarkDone(Span, ASide, True);
+  end;
   if ASide = 0 then FResult := ApplyHunks(FResult, FEditor, FRows.LeftHunks, Take)
   else FResult := ApplyHunks(FResult, FTheirs, FRows.RightHunks, Take);
   Rebuild;
@@ -830,8 +1599,25 @@ begin
 end;
 
 procedure TReviewPage.ToggleEdit(Sender: TObject);
+var
+  Hunks : TDiffHunks;
+  I     : Integer;
 begin
-  if FEditing then ReadWorkingCopy;     { back to the aligned view of what was typed }
+  if FEditing then
+  begin
+    ReadWorkingCopy;                    { back to the aligned view of what was typed }
+    if FConflictMode then
+    begin
+      { what was typed over a conflict's lines settles it, whatever it says: a third version
+        is as good a decision as either side.  Last change first: the places of the ones
+        before it do not move. }
+      Hunks := DiffLines(FBeforeEdit, FResult);
+      for I := High(Hunks) downto 0 do
+        MoveSpans(Hunks[I].AStart, Hunks[I].ALen, Hunks[I].BLen, True, False);
+    end;
+  end
+  else
+    FBeforeEdit := Copy(FResult, 0, Length(FResult));
   FEditing := not FEditing;
   Rebuild;
 end;
@@ -926,13 +1712,14 @@ end;
 
 procedure TReviewPage.Apply;
 begin
+  if FFinished or (ApplyBlocker <> '') then Exit;
   Finish(True);
 end;
 
 procedure TReviewPage.Keep(AAsk: Boolean);
 begin
   if FFinished then Exit;
-  if AAsk and Changed and (MessageDlg('Keep the editor as it is? The changes made in this ' +
+  if AAsk and (not FConflictMode) and Changed and (MessageDlg('Keep the editor as it is? The changes made in this ' +
                                       'window are lost, and the editor keeps its own text.',
                                       mtConfirmation, [mbYes, mbNo], 0) <> mrYes) then Exit;
   Finish(False);
@@ -941,6 +1728,20 @@ end;
 function TReviewPage.GetDifferences: Integer;
 begin
   Result := Length(FRows.RightHunks);
+end;
+
+{ What the tree says after the file's name. }
+function TReviewPage.TreeNote: string;
+begin
+  if FConflictMode then
+    if Unsettled = 0 then
+      Result := 'ready to resolve'
+    else
+      Result := IntToStr(Unsettled) + ' to decide'
+  else if Differences = 0 then
+    Result := 'identical'
+  else
+    Result := IntToStr(Differences) + ' to review';
 end;
 
 destructor TReviewPage.Destroy;
@@ -998,6 +1799,7 @@ begin
   Btn.Hint := 'Apply every file whose merge has no conflicts';
   Btn.ShowHint := True;
   Btn.OnClick := @ApplyCleanClick;
+  FAllApplyBtn := Btn;
   Btn := TButton.Create(Self);
   Btn.Parent := Bottom;
   Btn.SetBounds(148, 5, 110, 26);
@@ -1005,6 +1807,7 @@ begin
   Btn.Hint := 'Leave every editor as it is';
   Btn.ShowHint := True;
   Btn.OnClick := @KeepAllClick;
+  FAllKeepBtn := Btn;
 
   FTree := TTreeView.Create(Self);
   FTree.Parent := LeftPane;
@@ -1055,10 +1858,8 @@ function TReviewWindow.PageLabel(APage: TReviewPage): string;
 begin
   if APage.Finished then
     Result := '  [' + APage.State + ']'
-  else if APage.Differences = 0 then
-    Result := '  [identical]'
   else
-    Result := '  [' + IntToStr(APage.Differences) + ' to review]';
+    Result := '  [' + APage.TreeNote + ']';
 end;
 
 procedure TReviewWindow.RefreshTree;
@@ -1126,8 +1927,32 @@ begin
   if APage = FCurrent then Exit;
   if FCurrent <> nil then FCurrent.Visible := False;
   FCurrent := APage;
-  if APage <> nil then APage.Visible := True;
+  if APage <> nil then
+  begin
+    APage.Visible := True;
+    WordAllButtons(APage.ConflictMode);
+  end;
   RefreshTree;
+end;
+
+{ A merge conflict has nothing "clean" to apply and no editor text to keep: the two buttons
+  then resolve every file that is decided, or leave every file as git left it. }
+procedure TReviewWindow.WordAllButtons(AConflict: Boolean);
+begin
+  if AConflict then
+  begin
+    FAllApplyBtn.Caption := 'Resolve all decided';
+    FAllApplyBtn.Hint := 'Write and stage every file whose conflicts are all decided';
+    FAllKeepBtn.Caption := 'Leave all unresolved';
+    FAllKeepBtn.Hint := 'Leave every file as git left it, conflicts and all';
+  end
+  else
+  begin
+    FAllApplyBtn.Caption := 'Apply all clean';
+    FAllApplyBtn.Hint := 'Apply every file whose merge has no conflicts';
+    FAllKeepBtn.Caption := 'Keep all mine';
+    FAllKeepBtn.Hint := 'Leave every editor as it is';
+  end;
 end;
 
 procedure TReviewWindow.TreeChange(Sender: TObject; Node: TTreeNode);
@@ -1159,7 +1984,9 @@ begin
   for Ptr in FPages do
   begin
     P := TReviewPage(Ptr);
-    if (not P.Finished) and (P.Conflicts = 0) then P.Apply;
+    if P.Finished then Continue;
+    { a conflict page answers for itself: Apply does nothing while a conflict is undecided }
+    if P.ConflictMode or (P.Conflicts = 0) then P.Apply;
   end;
 end;
 
@@ -1167,7 +1994,13 @@ procedure TReviewWindow.KeepAllClick(Sender: TObject);
 var
   Ptr : Pointer;
 begin
-  if (Pending > 0) and (MessageDlg('Keep the editor text of all ' + IntToStr(Pending) +
+  if (FCurrent <> nil) and FCurrent.ConflictMode then
+  begin
+    if (Pending > 0) and (MessageDlg('Leave all ' + IntToStr(Pending) + ' file(s) waiting ' +
+                                     'unresolved? Git keeps them as conflicts; nothing is written.',
+                                     mtConfirmation, [mbYes, mbNo], 0) <> mrYes) then Exit;
+  end
+  else if (Pending > 0) and (MessageDlg('Keep the editor text of all ' + IntToStr(Pending) +
                                    ' file(s) waiting? Nothing from the disk is taken.',
                                    mtConfirmation, [mbYes, mbNo], 0) <> mrYes) then Exit;
   for Ptr in FPages do TReviewPage(Ptr).Keep(False);
@@ -1193,7 +2026,7 @@ end;
 
 function TReviewWindow.Add(const AFile, ALeftTitle, ARightTitle: string;
   const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean;
-  ADone: TReviewDone): TReviewPage;
+  ADone: TReviewDone; AConflict: Boolean): TReviewPage;
 var
   Old: TReviewPage;
   WasCurrent: Boolean;
@@ -1208,7 +2041,7 @@ begin
     Old.Free;
   end;
   Result := TReviewPage.CreateReview(Self, AFile, ALeftTitle, ARightTitle, Mine, Theirs,
-    Base, AHasBase, ADone);
+    Base, AHasBase, ADone, AConflict);
   Result.Parent := FHost;
   Result.Align := alClient;
   Result.Visible := False;
@@ -1295,13 +2128,14 @@ begin
 end;
 
 procedure McpReviewShow(const AFile, ALeftTitle, ARightTitle: string;
-  const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean; ADone: TReviewDone);
+  const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean; ADone: TReviewDone;
+  AConflict: Boolean);
 var
   W: TReviewWindow;
   Registered: Boolean;
 begin
   W := ReviewWindow(Registered);
-  W.Add(AFile, ALeftTitle, ARightTitle, Mine, Theirs, Base, AHasBase, ADone);
+  W.Add(AFile, ALeftTitle, ARightTitle, Mine, Theirs, Base, AHasBase, ADone, AConflict);
   ShowWindowQuietly(W, Registered);
 end;
 
@@ -1318,5 +2152,8 @@ procedure McpReviewDrop(const AFile: string);
 begin
   if GWindow <> nil then GWindow.Drop(AFile);       { no window: nothing waits }
 end;
+
+finalization
+  GInkCache.Free;
 
 end.

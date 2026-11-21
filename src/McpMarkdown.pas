@@ -18,20 +18,45 @@ const
   MD_MAX_DEPTH  = 16;   { nesting of quotes, lists and emphasis }
   MD_MAX_IMAGES = 32;   { data: images lifted out of one document }
 
-  { the look of Bootstrap 5: borders, shaded areas and inline code }
-  MD_BORDER     = '#DEE2E6';
-  MD_SHADE      = '#F8F9FA';
-  MD_CODE_COLOR = '#D63384';
+type
+  { The colours of a rendered page, as '#RRGGBB'.  The defaults are the look of Bootstrap 5; the
+    IDE's Markdown window replaces them with colours taken from the editor's colour scheme
+    (McpMarkdownView), so a page matches the editor, a dark scheme included.  A Back of ''
+    leaves the page background to the viewer. }
+  TMdPalette = record
+    Back, Text, Link : string;
+    Border, Shade, Cell : string;   { table and quote borders, shaded areas, table cells }
+    Code : string;                  { inline code }
+    Note, Tip, Important, Warning, Caution : string;   { the stripe and title of an alert }
+    Added, Removed : string;        { the inserted and the removed text of an inline diff }
+  end;
 
-  { IPro reads tag selectors and whole-pixel margins: Bootstrap's 1rem under a block, half
-    that under a heading }
-  MD_STYLE =
-    'h1,h2,h3,h4,h5,h6{margin-top:0px;margin-bottom:8px}' +
-    'p{margin-top:0px;margin-bottom:16px}' +
-    'ul{margin-top:0px;margin-bottom:16px}' +
-    'ol{margin-top:0px;margin-bottom:16px}' +
-    'table{margin-bottom:16px}' +
-    'table.md{border:1px solid ' + MD_BORDER + '}';
+var
+  MdPalette : TMdPalette;
+
+procedure MdDefaultPalette(out APalette: TMdPalette);
+
+type
+  { A stretch of one line of a code block that has its own look: Line is 0-based, Start 1-based,
+    Len in bytes; Color is '#RRGGBB' or '' (the text colour). }
+  TMdRun = record
+    Line, Start, Len : Integer;
+    Color : string;
+    Bold, Italic : Boolean;
+  end;
+  TMdRuns = array of TMdRun;
+
+  { Says where fenced code of language ALang (lower case) is coloured; False: show it plain.
+    Set by the IDE's viewer (McpMarkdownHighlight); nil in the test program unless it sets one.
+    The runs must be in order; the converter checks them and does all the escaping. }
+  TMdHighlightFunc = function(const ALang: string; ACode: TStrings; out ARuns: TMdRuns): Boolean;
+
+var
+  MdHighlighter : TMdHighlightFunc = nil;
+
+const
+  MdHighlightMaxLines = 1500;
+  MdHighlightMaxBytes = 120000;
 
 type
   TMarkdownHtml = class
@@ -56,7 +81,7 @@ type
     function Inline(const S: string): string;
     function ImageHtml(const AAlt, AUrl: string): string;
     function Blocks(ALines: TStrings; ATight: Boolean): string;
-    function CodeBlockHtml(ALines: TStrings): string;
+    function CodeBlockHtml(ALines: TStrings; const ALang: string = ''): string;
     function TableHtml(ALines: TStrings; var I: Integer): string;
     function ListHtml(ALines: TStrings; var I: Integer): string;
     function QuoteHtml(ALines: TStrings; var I: Integer): string;
@@ -77,6 +102,47 @@ implementation
 
 const
   HardBreak = #1;
+
+procedure MdDefaultPalette(out APalette: TMdPalette);
+begin
+  { Bootstrap 5 }
+  APalette.Back      := '';
+  APalette.Text      := '#212529';
+  APalette.Link      := '#0D6EFD';
+  APalette.Border    := '#DEE2E6';
+  APalette.Shade     := '#F8F9FA';
+  APalette.Cell      := '#FFFFFF';
+  APalette.Code      := '#D63384';
+  APalette.Note      := '#0D6EFD';
+  APalette.Tip       := '#198754';
+  APalette.Important := '#6F42C1';
+  APalette.Warning   := '#FD7E14';
+  APalette.Caution   := '#DC3545';
+  APalette.Added     := '#198754';
+  APalette.Removed   := '#DC3545';
+end;
+
+{ IPro reads tag selectors and whole-pixel margins: Bootstrap's 1rem under a block, half
+  that under a heading }
+function MdStyle: string;
+begin
+  Result :=
+    'h1,h2,h3,h4,h5,h6{margin-top:0px;margin-bottom:8px}' +
+    'p{margin-top:0px;margin-bottom:16px}' +
+    'ul{margin-top:0px;margin-bottom:16px}' +
+    'ol{margin-top:0px;margin-bottom:16px}' +
+    'table{margin-bottom:16px}' +
+    'table.md{border:1px solid ' + MdPalette.Border + '}';
+end;
+
+function MdBodyTag: string;
+begin
+  Result := '<body';
+  if MdPalette.Back <> '' then
+    Result := Result + ' bgcolor="' + MdPalette.Back + '" text="' + MdPalette.Text +
+              '" link="' + MdPalette.Link + '" vlink="' + MdPalette.Link + '"';
+  Result := Result + '>';
+end;
 
 function ParseTitle(const ARest: string): string; forward;
 
@@ -206,6 +272,21 @@ begin
   { an info string of a backtick fence holds no backtick; else it was inline code }
   if Result and (AChar = '`') and (Pos('`', Copy(T, ALen + 1, MaxInt)) > 0) then
     Result := False;
+end;
+
+{ The language of a fence line: the first word of its info string, lower case, spelled plain,
+  as an attribute with a leading dot in braces, or with a "language-" prefix. }
+function FenceLanguage(const S: string; AFenceLen: Integer): string;
+var
+  T : string;
+  I : Integer;
+begin
+  T := Trim(Copy(TrimLeft(S), AFenceLen + 1, MaxInt));
+  while (T <> '') and (T[1] in ['{', '.', ' ']) do Delete(T, 1, 1);
+  I := 1;
+  while (I <= Length(T)) and not (T[I] in [' ', #9, '{', '}', ',', ';']) do Inc(I);
+  Result := LowerCase(Copy(T, 1, I - 1));
+  if Copy(Result, 1, 9) = 'language-' then Delete(Result, 1, 9);
 end;
 
 function IsFenceEnd(const S: string; AChar: Char; ALen: Integer): Boolean;
@@ -1283,9 +1364,9 @@ var
       Exit;
     end;
     if Sign = '+' then
-      B.Append('<font color="#198754"><u>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</u></font>')
+      B.Append('<font color="' + MdPalette.Added + '"><u>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</u></font>')
     else
-      B.Append('<font color="#DC3545"><del>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</del></font>');
+      B.Append('<font color="' + MdPalette.Removed + '"><del>').Append(Inline(Copy(S, I + 3, E - I - 3))).Append('</del></font>');
     I := E + 3;
     Result := True;
   end;
@@ -1362,7 +1443,7 @@ begin
               if (Length(Inner) > 1) and (Inner[1] = ' ') and (Inner[Length(Inner)] = ' ') then
                 Inner := Copy(Inner, 2, Length(Inner) - 2);
               Inner := StringReplace(MdEscape(Inner), ' ', '&nbsp;', [rfReplaceAll]);
-              B.Append('<font color="' + MD_CODE_COLOR + '"><tt>' + Inner + '</tt></font>');
+              B.Append('<font color="' + MdPalette.Code + '"><tt>' + Inner + '</tt></font>');
               I := P + Run;
             end
             else
@@ -1604,20 +1685,95 @@ begin
   end;
 end;
 
-function TMarkdownHtml.CodeBlockHtml(ALines: TStrings): string;
+{ The runs the highlighter gave for ALines, or none: unknown language, too much code, a hook that
+  fails.  Nothing it returns is trusted, see LineHtml. }
+function HighlightRuns(const ALang: string; ALines: TStrings): TMdRuns;
 var
-  Item : string;
+  Bytes, I : Integer;
+begin
+  Result := nil;
+  if (ALang = '') or not Assigned(MdHighlighter) then Exit;
+  if ALines.Count > MdHighlightMaxLines then Exit;
+  Bytes := 0;
+  for I := 0 to ALines.Count - 1 do Inc(Bytes, Length(ALines[I]) + 1);
+  if Bytes > MdHighlightMaxBytes then Exit;
+  try
+    if not MdHighlighter(ALang, ALines, Result) then Result := nil;
+  except
+    Result := nil;
+  end;
+end;
+
+function ValidColor(const S: string): Boolean;
+var
+  I : Integer;
+begin
+  Result := (Length(S) = 7) and (S[1] = '#');
+  if Result then
+    for I := 2 to 7 do
+      if not (S[I] in ['0'..'9', 'a'..'f', 'A'..'F']) then Exit(False);
+end;
+
+function SpaceKept(const S: string): string;
+begin
+  Result := StringReplace(MdEscape(S), ' ', '&nbsp;', [rfReplaceAll]);
+end;
+
+{ One line of code as HTML.  ARuns[AIdx..] are the runs still to place; AIdx moves past those of
+  this line.  A run that is out of order, outside the line or cuts a multi-byte character is
+  skipped; the text between runs is plain. }
+function LineHtml(const ALine: string; ALineNo: Integer; const ARuns: TMdRuns;
+  var AIdx: Integer): string;
+var
+  Pos0, E : Integer;
+  R : TMdRun;
+  Seg, Open, Close : string;
+begin
+  Result := '';
+  Pos0 := 1;
+  while (AIdx <= High(ARuns)) and (ARuns[AIdx].Line <= ALineNo) do
+  begin
+    R := ARuns[AIdx];
+    Inc(AIdx);
+    E := R.Start + R.Len;                       { first byte after the run }
+    if (R.Line <> ALineNo) or (R.Len <= 0) or (R.Start < Pos0) or (E > Length(ALine) + 1) then
+      Continue;
+    if (R.Start <= Length(ALine)) and (ALine[R.Start] in [#$80..#$BF]) then Continue;
+    if (E <= Length(ALine)) and (ALine[E] in [#$80..#$BF]) then Continue;
+    Result := Result + SpaceKept(Copy(ALine, Pos0, R.Start - Pos0));
+    Seg := SpaceKept(Copy(ALine, R.Start, R.Len));
+    Open := '';
+    Close := '';
+    if ValidColor(R.Color) then
+    begin
+      Open := '<font color="' + R.Color + '">';
+      Close := '</font>';
+    end;
+    if R.Bold then begin Open := Open + '<b>'; Close := '</b>' + Close; end;
+    if R.Italic then begin Open := Open + '<i>'; Close := '</i>' + Close; end;
+    Result := Result + Open + Seg + Close;
+    Pos0 := E;
+  end;
+  Result := Result + SpaceKept(Copy(ALine, Pos0, MaxInt));
+end;
+
+function TMarkdownHtml.CodeBlockHtml(ALines: TStrings; const ALang: string): string;
+var
   B : TStringBuilder;
   L : string;
+  Runs : TMdRuns;
+  N, RunIdx : Integer;
 begin
+  Runs := HighlightRuns(ALang, ALines);
+  RunIdx := 0;
   B := TStringBuilder.Create;
   try
     { the frame's colour comes from the table.md rule of the style block }
     B.Append('<table class="md" width="100%" border="1" cellpadding="12" cellspacing="0">' +
-             '<tr><td bgcolor="' + MD_SHADE + '">');
-    for Item in ALines do
+             '<tr><td bgcolor="' + MdPalette.Shade + '">');
+    for N := 0 to ALines.Count - 1 do
     begin
-      L := StringReplace(MdEscape(Item), ' ', '&nbsp;', [rfReplaceAll]);
+      L := LineHtml(ALines[N], N, Runs, RunIdx);
       if L = '' then L := '&nbsp;';
       B.Append('<tt>').Append(L).Append('</tt><br>');
     end;
@@ -1648,8 +1804,8 @@ var
       if Cell = '' then Cell := '&nbsp;';
       B.Append('<' + ATag);
       if Align[C] <> '' then B.Append(' align="' + Align[C] + '"');
-      if ATag = 'th' then B.Append(' bgcolor="' + MD_SHADE + '"')
-      else B.Append(' bgcolor="#FFFFFF"');
+      if ATag = 'th' then B.Append(' bgcolor="' + MdPalette.Shade + '"')
+      else B.Append(' bgcolor="' + MdPalette.Cell + '"');
       B.Append('>' + Cell + '</' + ATag + '>');
     end;
     B.Append('</tr>');
@@ -1704,7 +1860,7 @@ var
   Color, Title, Kind, First : string;
   P : Integer;
 begin
-  Color := MD_BORDER;
+  Color := MdPalette.Border;
   Title := '';
   if AInner.Count > 0 then
   begin
@@ -1714,11 +1870,11 @@ begin
     begin
       Kind := LowerCase(Copy(First, 3, P - 3));
       case Kind of
-        'note':      Color := '#0D6EFD';
-        'tip':       Color := '#198754';
-        'important': Color := '#6F42C1';
-        'warning':   Color := '#FD7E14';
-        'caution':   Color := '#DC3545';
+        'note':      Color := MdPalette.Note;
+        'tip':       Color := MdPalette.Tip;
+        'important': Color := MdPalette.Important;
+        'warning':   Color := MdPalette.Warning;
+        'caution':   Color := MdPalette.Caution;
       else
         Kind := '';
       end;
@@ -1903,7 +2059,7 @@ begin
             Inc(I);
           end;
           Inc(I);                      { the closing fence, or past the end }
-          B.Append(CodeBlockHtml(Code)).Append(#10);
+          B.Append(CodeBlockHtml(Code, FenceLanguage(L, Len))).Append(#10);
         finally
           Code.Free;
         end;
@@ -2070,7 +2226,7 @@ begin
     Body := Blocks(Lines, False);
     if Pos(TocMark, Body) > 0 then
       Body := StringReplace(Body, TocMark, TocHtml, [rfReplaceAll]);
-    Result := '<html><head><style type="text/css">' + MD_STYLE + '</style></head><body>' + #10 +
+    Result := '<html><head><style type="text/css">' + MdStyle + '</style></head>' + MdBodyTag + #10 +
               Body + NotesHtml + '</body></html>';
   finally
     FreeAndNil(FSlugs);
@@ -2081,5 +2237,8 @@ begin
     Lines.Free;
   end;
 end;
+
+initialization
+  MdDefaultPalette(MdPalette);
 
 end.

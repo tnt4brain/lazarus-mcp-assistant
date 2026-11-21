@@ -58,13 +58,12 @@ function McpToolNeedsProject(const AToolName: string): Boolean;
 const
   { Parameters of ide_rebuild, package_install and package_uninstall besides their own }
   MCP_REBUILD_FLAGS =
-    '"save_unsaved":{"type":"boolean","description":"Save the editors and the packages that hold ' +
-    'unsaved changes first. Default false: the call is refused (nothing changed) and names them, ' +
-    'because the rebuild closes every editor without asking and stops on a question about an ' +
-    'unsaved package. A package that was never saved, or has a file missing on disk, is never ' +
-    'saved this way and still stops the call"},' +
-    '"skip_compile":{"type":"boolean","description":"Do not compile the package first. Default false: ' +
-    'a package that does not compile stops the call before anything is changed"}';
+    '"save_unsaved":{"type":"boolean","description":"Save unsaved editors and packages first. ' +
+    'Default false: the call is refused, nothing changed, and names them (a rebuild closes every ' +
+    'editor without asking). A package never saved, or with a file missing on disk, still stops ' +
+    'the call"},' +
+    '"skip_compile":{"type":"boolean","description":"Skip the compile check. Default false: a ' +
+    'package that does not compile stops the call, nothing changed"}';
 
 var
   { Set by mcpideserver: stop and start the server again (main thread).  A rebuild
@@ -80,6 +79,13 @@ var
   GMcpWriteCheck : TMcpWriteCheck = nil;
 
 type
+  { A folder a tool changes things in: may it?  '' = the folder the git tools use by default. }
+  TMcpFolderCheck = function(const ADir: string; out AWhy: string): Boolean;
+
+var
+  GMcpFolderCheck : TMcpFolderCheck = nil;
+
+type
   { A package by name or by .lpk path (one of them is ''): may its .lpk be changed? }
   TMcpPackageWriteCheck = function(const AName, ALpk: string; out AWhy: string): Boolean;
 
@@ -89,6 +95,11 @@ var
 { False, with AWhy, when AName is a tool that changes a file or a form outside the folders
   GMcpWriteCheck allows.  McpDispatch applies it before any tool runs. }
 function McpWriteAllowed(const AName: string; AParams: TJSONObject; out AWhy: string): Boolean;
+
+{ AName is a tool McpWriteAllowed may refuse.  tools/call asks it for these before any route
+  (the main-thread dispatch, the blocking tools, ide_run_tests) runs the tool, so none of them can
+  skip the check (ADR-034). }
+function McpToolIsWriteGuarded(const AName: string): Boolean;
 
 { Called by SyncCallTool and HandleToolsList respectively. }
 procedure McpDispatch(const Name: string; var Ctx: TMcpToolCall; out Handled: Boolean);
@@ -112,8 +123,8 @@ procedure McpBlockingDispatch(const Name: string; var Ctx: TMcpToolCall; out Han
 { MCP tool annotation presets — pass as AAnnotations to MakeTool.
   Everything works on the local IDE/project only, hence openWorldHint=false.
   RO is also used for tools that only move the editor cursor or open a tab.
-  DEST is for changes Ctrl+Z or form_undo can't take back: deletes that
-  form_undo restores are WRITE, as are deletes of editor text.
+  DEST is for changes Ctrl+Z or form_history can't take back: deletes that
+  form_history restores are WRITE, as are deletes of editor text.
   _IDEM: a second call with the same arguments changes nothing more (it may
   report "already" or "not found"); not for relative targets such as HEAD~1. }
 const
@@ -141,6 +152,11 @@ procedure McpListResources(Resources: TJSONArray);
 function  McpReadResource(const AUri: string; out Content: string): Boolean;
 
 implementation
+
+uses
+  McpLimitedMode, McpToolScope;
+
+{ a tool that is a limited-mode subject but not an old write tool is judged by McpLimitCheckUse }
 
 procedure SortToolsByName(Tools: TJSONArray); forward;
 
@@ -180,12 +196,20 @@ const
     'code_add_uses', 'code_add_to_class', 'code_insert_in_procedure',
     'code_replace_procedure_body', 'code_edit_statement', 'code_complete', 'code_format',
     'code_rename_identifier', 'code_extract_method');
-  { Tools that change the form their `form_file` argument names }
-  FORM_WRITERS : array[0..11] of string = (
+  { Tools that change the form their `file` argument names }
+  FORM_WRITERS : array[0..10] of string = (
     'form_set_properties', 'form_add_component', 'form_delete_component', 'form_arrange',
     'form_create_event_handler', 'form_add_collection_item', 'form_delete_collection_item',
-    'form_move_collection_item', 'form_add_menu_item', 'form_move_menu_item', 'form_undo',
-    'form_redo');
+    'form_move_collection_item', 'form_add_menu_item', 'form_move_menu_item', 'form_history');
+
+  { Git tools that change a repository (its files, branches, refs, remotes), whatever their
+    action; git_init and git_clone make a new folder and are not here (ADR-034) }
+  GIT_WRITERS : array[0..16] of string = (
+    'git_add', 'git_branch_delete', 'git_checkout', 'git_cherry_pick', 'git_commit', 'git_fetch',
+    'git_merge', 'git_merge_abort', 'git_pull', 'git_push', 'git_rebase', 'git_rebase_abort',
+    'git_rebase_continue', 'git_reset', 'git_resolve', 'git_squash', 'git_stash');
+  { ... and these when their action is not "list" }
+  GIT_LIST_OR_CHANGE : array[0..1] of string = ('git_remote', 'git_tag');
 
 function PackageArgAllowed(const AArg: string; out AWhy: string): Boolean;
 begin
@@ -198,7 +222,44 @@ begin
     Result := GMcpPackageCheck(AArg, '', AWhy);
 end;
 
+function InList(const AName: string; const AList: array of string): Boolean;
+var
+  I : Integer;
+begin
+  Result := False;
+  for I := Low(AList) to High(AList) do
+    if AList[I] = AName then Exit(True);
+end;
+
+function McpToolIsWriteGuarded(const AName: string): Boolean;
+var
+  P : TMcpToolPath;
+begin
+  Result := InList(AName, PACKAGE_WRITERS) or InList(AName, FILE_WRITERS) or
+            InList(AName, FORM_WRITERS) or InList(AName, GIT_WRITERS) or
+            InList(AName, GIT_LIST_OR_CHANGE) or
+            (AName = 'git_archive') or (AName = 'ide_run_tests') or (AName = 'package_create');
+  { limited mode judges every path a tool reads or creates a project in }
+  if (not Result) and McpLimitedOn then Result := McpToolPathFor(AName, 0, P);
+end;
+
+function WriteAllowedCore(const AName: string; AParams: TJSONObject; out AWhy: string): Boolean; forward;
+
 function McpWriteAllowed(const AName: string; AParams: TJSONObject; out AWhy: string): Boolean;
+var
+  Base : string;
+begin
+  AWhy := '';
+  if McpLimitedOn then
+  begin
+    Base := '';
+    if Assigned(GMcpBaseDir) then Base := GMcpBaseDir();
+    if not McpLimitCheckUse(AName, AParams, Base, AWhy) then Exit(False);
+  end;
+  Result := WriteAllowedCore(AName, AParams, AWhy);
+end;
+
+function WriteAllowedCore(const AName: string; AParams: TJSONObject; out AWhy: string): Boolean;
 var
   Arg, F : string;
   I      : Integer;
@@ -231,11 +292,41 @@ begin
       Result := GMcpWriteCheck(F, AWhy);
     Exit;
   end;
+  if AName = 'ide_run_tests' then
+  begin
+    { the test program writes its JUnit XML to this path }
+    F := AParams.Get('junit_out', '');
+    if (F <> '') and Assigned(GMcpWriteCheck) then
+      Result := GMcpWriteCheck(F, AWhy);
+    Exit;
+  end;
+  if AName = 'package_create' then
+  begin
+    { a new package in this folder; '' is left to the tool, which refuses it }
+    F := AParams.Get('directory', '');
+    if (F <> '') and Assigned(GMcpFolderCheck) then
+      Result := GMcpFolderCheck(F, AWhy);
+    Exit;
+  end;
+  for I := Low(GIT_LIST_OR_CHANGE) to High(GIT_LIST_OR_CHANGE) do
+    if (AName = GIT_LIST_OR_CHANGE[I]) and (AParams.Get('action', 'list') <> 'list') then
+    begin
+      if Assigned(GMcpFolderCheck) then
+        Result := GMcpFolderCheck(AParams.Get('work_dir', ''), AWhy);
+      Exit;
+    end;
+  for I := Low(GIT_WRITERS) to High(GIT_WRITERS) do
+    if AName = GIT_WRITERS[I] then
+    begin
+      if Assigned(GMcpFolderCheck) then
+        Result := GMcpFolderCheck(AParams.Get('work_dir', ''), AWhy);
+      Exit;
+    end;
   Arg := '';
   for I := Low(FILE_WRITERS) to High(FILE_WRITERS) do
     if AName = FILE_WRITERS[I] then Arg := 'file';
   for I := Low(FORM_WRITERS) to High(FORM_WRITERS) do
-    if AName = FORM_WRITERS[I] then Arg := 'form_file';
+    if AName = FORM_WRITERS[I] then Arg := 'file';
   if Arg = '' then Exit;
   if AParams.Get('dry_run', False) then Exit;
   F := AParams.Get(Arg, '');                 { '' = the active editor; the hook resolves it }
@@ -468,6 +559,12 @@ begin
     Ann := TJSONObject(GetJSON(AAnnotations))
   else
     Ann := TJSONObject.Create;
+  { readOnlyHint false is the MCP default: leaving it out says the same in 21 bytes less (ADR-029).
+    The other hints stay explicit: destructiveHint and openWorldHint default to true, and a
+    client that ignores defaults must not read "unsaid" as harmless. }
+  if (Ann.IndexOfName('readOnlyHint') >= 0) and (Ann.Find('readOnlyHint').JSONType = jtBoolean) and
+     not Ann.Booleans['readOnlyHint'] then
+    Ann.Delete('readOnlyHint');
   Ann.Add('title', Title);            { older clients read it here }
   Result.Add('annotations', Ann);
 end;

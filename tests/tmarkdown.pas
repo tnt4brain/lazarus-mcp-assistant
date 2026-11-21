@@ -9,7 +9,7 @@ unit TMarkdown;
 interface
 
 uses
-  Classes, SysUtils, fpcunit, testregistry;
+  Classes, SysUtils, fpcunit, testregistry, McpMarkdown;
 
 type
   TTestMarkdown = class(TTestCase)
@@ -75,7 +75,25 @@ type
     procedure TestComments;
     procedure TestImageSize;
     procedure TestEmoji;
+    procedure TestPalette;
     procedure TestNewSyntaxIsLinear;
+  end;
+
+  TTestMarkdownHighlight = class(TTestCase)
+  private
+    FSaved : TMdHighlightFunc;
+  protected
+    procedure SetUp; override;
+    procedure TearDown; override;
+  published
+    procedure TestRunsBecomeFont;
+    procedure TestTextIsEscaped;
+    procedure TestBoldItalicAndBadColour;
+    procedure TestBadRunsAreSkipped;
+    procedure TestUnknownLanguageStaysPlain;
+    procedure TestFailingHookStaysPlain;
+    procedure TestLanguageSpellings;
+    procedure TestBigBlockStaysPlain;
   end;
 
   TTestImageInfo = class(TTestCase)
@@ -94,7 +112,7 @@ type
 implementation
 
 uses
-  McpMarkdown, McpImageInfo;
+  McpImageInfo;
 
 function Be32(V: LongWord): string;
 begin
@@ -998,8 +1016,199 @@ begin
   AssertFalse(McpImageHeader(PngOf(200000, 10), K, W, H));
 end;
 
+{ The colours come from MdPalette: the IDE's editor scheme in the window, Bootstrap's here. }
+procedure TTestMarkdown.TestPalette;
+var
+  Saved, P : TMdPalette;
+  R : string;
+begin
+  Saved := MdPalette;
+  try
+    { the default page names no background: the viewer paints its own }
+    MdDefaultPalette(MdPalette);
+    HasNot(H('x'), 'bgcolor');
+    { a scheme: dark background, light text, its own accents }
+    P := Saved;
+    P.Back := '#1E1E1E'; P.Text := '#D4D4D4'; P.Link := '#569CD6';
+    P.Border := '#444444'; P.Shade := '#2A2A2A'; P.Cell := '#1E1E1E';
+    P.Code := '#CE9178'; P.Note := '#569CD6'; P.Tip := '#6A9955';
+    P.Added := '#6A9955'; P.Removed := '#F44747';
+    MdPalette := P;
+    R := H('`c` and {+ in +} [- out -]' + #10#10 + '| a | b |' + #10 + '|---|---|' + #10 + '| 1 | 2 |');
+    Has(R, '<body bgcolor="#1E1E1E" text="#D4D4D4" link="#569CD6" vlink="#569CD6">');
+    Has(R, '<font color="#CE9178"><tt>c</tt></font>');
+    Has(R, '<font color="#6A9955"><u>in</u></font>');
+    Has(R, '<font color="#F44747"><del>out</del></font>');
+    Has(R, '<th bgcolor="#2A2A2A">a</th>');
+    Has(R, '<td bgcolor="#1E1E1E">1</td>');
+    Has(R, 'border:1px solid #444444');
+    Has(H('> [!NOTE]' + #10 + '> x'), '<td width="5" bgcolor="#569CD6">');
+    { none of Bootstrap's colours is left }
+    HasNot(R, '#F8F9FA');
+    HasNot(R, '#DEE2E6');
+    HasNot(R, '#FFFFFF');
+  finally
+    MdPalette := Saved;
+  end;
+end;
+
+var
+  GFakeLang  : string;
+  GFakeRuns  : TMdRuns;
+  GFakeCalls : Integer;
+  GFakeRaise : Boolean;
+
+function FakeHighlighter(const ALang: string; ACode: TStrings; out ARuns: TMdRuns): Boolean;
+begin
+  Inc(GFakeCalls);
+  GFakeLang := ALang;
+  if GFakeRaise then raise Exception.Create('boom');
+  ARuns := GFakeRuns;
+  Result := ALang <> 'nolang';
+end;
+
+function MkRun(ALine, AStart, ALen: Integer; const AColor: string;
+  ABold: Boolean = False; AItalic: Boolean = False): TMdRun;
+begin
+  Result.Line := ALine; Result.Start := AStart; Result.Len := ALen;
+  Result.Color := AColor; Result.Bold := ABold; Result.Italic := AItalic;
+end;
+
+function Conv(const AMd: string): string;
+var
+  C : TMarkdownHtml;
+begin
+  C := TMarkdownHtml.Create;
+  try
+    Result := C.ToHtml(AMd);
+  finally
+    C.Free;
+  end;
+end;
+
+procedure TTestMarkdownHighlight.SetUp;
+begin
+  FSaved := MdHighlighter;
+  MdHighlighter := @FakeHighlighter;
+  GFakeRuns := nil;
+  GFakeCalls := 0;
+  GFakeRaise := False;
+  GFakeLang := '';
+end;
+
+procedure TTestMarkdownHighlight.TearDown;
+begin
+  MdHighlighter := FSaved;
+end;
+
+procedure TTestMarkdownHighlight.TestRunsBecomeFont;
+var
+  R : string;
+begin
+  SetLength(GFakeRuns, 2);
+  GFakeRuns[0] := MkRun(0, 1, 5, '#0000FF');
+  GFakeRuns[1] := MkRun(0, 7, 3, '#00AA00');
+  R := Conv('```pascal' + #10 + 'begin end' + #10 + '```');
+  AssertEquals('pascal', GFakeLang);
+  AssertTrue(R, Pos('<tt><font color="#0000FF">begin</font>&nbsp;<font color="#00AA00">end</font></tt>', R) > 0);
+end;
+
+procedure TTestMarkdownHighlight.TestTextIsEscaped;
+var
+  R : string;
+begin
+  SetLength(GFakeRuns, 1);
+  GFakeRuns[0] := MkRun(0, 1, 5, '#FF0000');
+  R := Conv('```sql' + #10 + '<b>&x  y' + #10 + '```');
+  AssertTrue(R, Pos('<font color="#FF0000">&lt;b&gt;&amp;x</font>&nbsp;&nbsp;y', R) > 0);
+  AssertTrue(R, Pos('<b>&x', R) = 0);
+end;
+
+procedure TTestMarkdownHighlight.TestBoldItalicAndBadColour;
+var
+  R : string;
+begin
+  SetLength(GFakeRuns, 2);
+  GFakeRuns[0] := MkRun(0, 1, 1, '#123456', True, True);
+  GFakeRuns[1] := MkRun(0, 2, 1, '"><script>', True);
+  R := Conv('```c' + #10 + 'ab' + #10 + '```');
+  AssertTrue(R, Pos('<font color="#123456"><b><i>a</i></b></font>', R) > 0);
+  AssertTrue(R, Pos('<b>b</b>', R) > 0);
+  AssertTrue(R, Pos('script', R) = 0);
+end;
+
+procedure TTestMarkdownHighlight.TestBadRunsAreSkipped;
+var
+  R : string;
+begin
+  { overlapping, past the end, backwards, negative length: all dropped, the text stays whole }
+  SetLength(GFakeRuns, 5);
+  GFakeRuns[0] := MkRun(0, 1, 2, '#111111');
+  GFakeRuns[1] := MkRun(0, 2, 2, '#222222');   { overlaps the first }
+  GFakeRuns[2] := MkRun(0, 3, 99, '#333333');  { past the end }
+  GFakeRuns[3] := MkRun(0, 3, 0, '#444444');   { empty }
+  GFakeRuns[4] := MkRun(7, 1, 1, '#555555');   { a line that is not there }
+  R := Conv('```c' + #10 + 'abcd' + #10 + '```');
+  AssertTrue(R, Pos('<font color="#111111">ab</font>cd</tt>', R) > 0);
+  AssertTrue(R, Pos('#222222', R) = 0);
+  AssertTrue(R, Pos('#555555', R) = 0);
+  { a run that would cut the two bytes of a multi-byte character }
+  SetLength(GFakeRuns, 1);
+  GFakeRuns[0] := MkRun(0, 2, 1, '#666666');
+  R := Conv('```c' + #10 + #$C3#$A9 + 'x' + #10 + '```');
+  AssertTrue(R, Pos('#666666', R) = 0);
+end;
+
+procedure TTestMarkdownHighlight.TestUnknownLanguageStaysPlain;
+var
+  R : string;
+begin
+  SetLength(GFakeRuns, 1);
+  GFakeRuns[0] := MkRun(0, 1, 1, '#777777');
+  R := Conv('```nolang' + #10 + 'ab' + #10 + '```');
+  AssertTrue(R, Pos('#777777', R) = 0);
+  AssertTrue(R, Pos('<tt>ab</tt>', R) > 0);
+  GFakeCalls := 0;
+  Conv('```' + #10 + 'ab' + #10 + '```');
+  AssertEquals(0, GFakeCalls);
+  Conv('    indented code');
+  AssertEquals(0, GFakeCalls);
+end;
+
+procedure TTestMarkdownHighlight.TestFailingHookStaysPlain;
+var
+  R : string;
+begin
+  GFakeRaise := True;
+  R := Conv('```pascal' + #10 + 'a<b' + #10 + '```');
+  AssertTrue(R, Pos('<tt>a&lt;b</tt>', R) > 0);
+end;
+
+procedure TTestMarkdownHighlight.TestLanguageSpellings;
+begin
+  Conv('```Pascal title="x"' + #10 + 'a' + #10 + '```');
+  AssertEquals('pascal', GFakeLang);
+  Conv('~~~{.python .numberLines}' + #10 + 'a' + #10 + '~~~');
+  AssertEquals('python', GFakeLang);
+  Conv('```language-sql' + #10 + 'a' + #10 + '```');
+  AssertEquals('sql', GFakeLang);
+end;
+
+procedure TTestMarkdownHighlight.TestBigBlockStaysPlain;
+var
+  S : string;
+  I : Integer;
+begin
+  S := '```pascal' + #10;
+  for I := 1 to MdHighlightMaxLines + 1 do S := S + 'x' + #10;
+  S := S + '```';
+  Conv(S);
+  AssertEquals(0, GFakeCalls);
+end;
+
 initialization
   RegisterTest(TTestMarkdown);
+  RegisterTest(TTestMarkdownHighlight);
   RegisterTest(TTestImageInfo);
 
 end.

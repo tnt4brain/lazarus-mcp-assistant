@@ -282,7 +282,7 @@ procedure TTestWindows.TestTree;
 var
   T : string;
 begin
-  T := Call('project_run', '{"wait_seconds":0}');
+  T := Call('project_run', '{"timeout_s":0}');
   CheckEquals('True', JPath(T, 'success'), T);
   T := WaitForWindow;
   CheckTrue(Pos('Window "MCP Windowee" 200,200 ', T) > 0, 'form: ' + T);
@@ -319,7 +319,7 @@ var
   Png, T  : string;
   W, H    : Integer;
 begin
-  T := Call('project_run', '{"wait_seconds":0}');
+  T := Call('project_run', '{"timeout_s":0}');
   CheckEquals('True', JPath(T, 'success'), 'project_run: ' + T);
   WaitForWindow;
   R := McpRequest('POST', '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{' +
@@ -375,7 +375,7 @@ procedure TTestWindows.TestWindowList;
 var
   T : string;
 begin
-  T := Call('project_run', '{"wait_seconds":0}');
+  T := Call('project_run', '{"timeout_s":0}');
   CheckEquals('True', JPath(T, 'success'), 'project_run: ' + T);
   T := WaitForWindow;
   CheckTrue(Pos(' "MCP Windowee" ', T) > 0, 'caption: ' + T);
@@ -594,7 +594,7 @@ begin
     end;
     CheckFalse(IsError(T), T);
 
-    T := Call('project_run', '{"args":"quick","wait_seconds":30}');
+    T := Call('project_run', '{"args":"quick","timeout_s":30}');
     CheckFalse(IsError(T), T);
     CheckEquals('True', JPath(T, 'success'), T);
     CheckEquals('False', JPath(T, 'running'), T);
@@ -605,12 +605,12 @@ begin
     CheckEquals('3', JPath(T, 'exit_code'), 'kept after the end: ' + T);
     CheckEquals('', JPath(T, 'stdout'), 'already handed out: ' + T);
 
-    T := Call('project_run', '{"args":"wait","wait_seconds":2}');
+    T := Call('project_run', '{"args":"wait","timeout_s":2}');
     CheckEquals('True', JPath(T, 'success'), T);
     CheckEquals('True', JPath(T, 'running'), T);
     CheckEquals('', JPath(T, 'exit_code'), 'no exit code yet: ' + T);
     CheckTrue(Pos('hello wait', JPath(T, 'stdout')) = 1, 'output so far: ' + T);
-    T := Call('project_run', '{"wait_seconds":0}');
+    T := Call('project_run', '{"timeout_s":0}');
     CheckTrue(IsError(T) and (Pos('still running', T) > 0), 'one at a time: ' + T);
     T := Call('project_run_output', '{"stop":true}');
     CheckFalse(IsError(T), T);
@@ -668,27 +668,27 @@ begin
     end;
     CheckFalse(IsError(T), T);
 
-    T := Call('project_run', '{"wait_seconds":30}');
+    T := Call('project_run', '{"timeout_s":30}');
     CheckEquals('5', JPath(T, 'exit_code'), 'stdin closed by default: ' + T);
     CheckTrue(Pos('eof', JPath(T, 'stdout')) > 0, T);
-    CheckTrue(IsError(Call('project_run_input', '{"text":"x"}')), 'the program has ended');
+    CheckTrue(IsError(Call('project_run_input', '{"stdin":"x"}')), 'the program has ended');
 
-    T := Call('project_run', '{"stdin":"a\nb\n","wait_seconds":30}');
+    T := Call('project_run', '{"stdin":"a\nb\n","timeout_s":30}');
     CheckEquals('5', JPath(T, 'exit_code'), 'stdin text, then end of file: ' + T);
     CheckTrue((Pos('got a', JPath(T, 'stdout')) > 0) and (Pos('got b', JPath(T, 'stdout')) > 0) and
               (Pos('eof', JPath(T, 'stdout')) > 0), T);
 
-    T := Call('project_run', '{"keep_stdin_open":true,"wait_seconds":2}');
+    T := Call('project_run', '{"keep_stdin_open":true,"timeout_s":2}');
     CheckEquals('True', JPath(T, 'running'), 'waits for input: ' + T);
     CheckEquals('True', JPath(T, 'stdin_open'), T);
-    T := Call('project_run_input', '{"text":"hi\n","wait_seconds":10}');
+    T := Call('project_run_input', '{"stdin":"hi\n","timeout_s":10}');
     CheckFalse(IsError(T), T);
     CheckTrue(Pos('got hi', JPath(T, 'stdout')) > 0, 'the answer: ' + T);
     CheckEquals('True', JPath(T, 'running'), T);
-    T := Call('project_run_input', '{"text":"one\ntwo\n","wait_seconds":10}');
+    T := Call('project_run_input', '{"stdin":"one\ntwo\n","timeout_s":10}');
     CheckTrue((Pos('got one', JPath(T, 'stdout')) > 0) and (Pos('got two', JPath(T, 'stdout')) > 0), T);
     CheckTrue(IsError(Call('project_run_input', '{}')), 'text or close');
-    T := Call('project_run_input', '{"close":true,"wait_seconds":10}');
+    T := Call('project_run_input', '{"close":true,"timeout_s":10}');
     CheckEquals('False', JPath(T, 'running'), 'end of input ends it: ' + T);
     CheckEquals('5', JPath(T, 'exit_code'), T);
     CheckTrue(Pos('eof', JPath(T, 'stdout')) > 0, T);
@@ -843,7 +843,7 @@ begin
     CheckTrue(IsError(T) and (Pos('did not attach', T) > 0), 'a wrong id: ' + T);
     CheckTrue(IsError(Call('debug_attach', '{}')), 'pid required');
 
-    T := Call('project_run', '{"wait_seconds":0}');
+    T := Call('project_run', '{"timeout_s":0}');
     CheckEquals('True', JPath(T, 'success'), T);
     Pid := JPath(T, 'pid');
     CheckTrue(StrToIntDef(Pid, 0) > 0, 'pid: ' + T);
@@ -868,13 +868,13 @@ begin
       if JPath(Call('debug_get_state', '{}'), 'state') = 'idle' then Break;
       Sleep(250);
     end;
-    T := Call('project_run_output', '{"wait_seconds":0}');
+    T := Call('project_run_output', '{"timeout_s":0}');
     CheckEquals('True', JPath(T, 'running'), 'still running after detach: ' + T);
 
     T := Call('debug_attach', '{"pid":' + Pid + ',"timeout_s":5}');
     CheckFalse(IsError(T), 'attach again: ' + T);
     Call('debug_stop', '{}');
-    T := Call('project_run_output', '{"wait_seconds":10}');
+    T := Call('project_run_output', '{"timeout_s":10}');
     CheckEquals('False', JPath(T, 'running'), 'a plain stop ends the program: ' + T);
   finally
     Call('debug_stop', '{}');
