@@ -8,10 +8,10 @@ unit McpToolsStatus;
   why it is on the short list in McpToolNeedsProject.
 
   Every section comes from a state source another tool already reads:
-  LazarusIDE.ActiveProject (project_get_directory), SourceEditorManagerIntf
-  with TSourceEditorInterface.Modified (editor_list_open), DebugBoss.State
-  with McpLeaseJSON (McpDebugLease), the package version (ide_ping), and git
-  in the project directory (git_status) — the last only when the caller asks
+  LazarusIDE.ActiveProject (project_get_directory), McpUnsavedEditors from
+  McpGitRun (editor_list_open), DebugBoss.State with McpLeaseJSON
+  (McpDebugLease), the package version (ide_ping), and git in the project
+  directory through RunGit (git_status) — the last only when the caller asks
   for it, because git status can be slow on big repositories. }
 
 {$mode objfpc}{$H+}
@@ -21,11 +21,10 @@ interface
 implementation
 
 uses
-  SysUtils, Process,
-  LazIDEIntf, SrcEditorIntf, PackageIntf, ProjectIntf,
-  LazDebuggerIntfBaseTypes, BaseDebugManager,
+  SysUtils, Classes,
+  LazIDEIntf, SrcEditorIntf, PackageIntf, ProjectIntf, BaseDebugManager,
   fpjson,
-  McpToolContext, McpDebugLease, McpIdeState;
+  McpToolContext, McpDebugLease, McpIdeState, McpGitRun;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -41,106 +40,55 @@ const
 
 { ── Helpers ──────────────────────────────────────────────────────────────── }
 
-{ The debugger state as a word, mapped like McpToolsDebugger's DbgStateStr. }
-function DebuggerStateStr(S: TDBGState): string;
-begin
-  case S of
-    dsNone, dsIdle           : Result := 'idle';
-    dsStop                   : Result := 'stopped';
-    dsPause                  : Result := 'paused';
-    dsInternalPause          : Result := 'running';  { internal pause; IDE auto-continues }
-    dsInit, dsRun            : Result := 'running';
-    dsError                  : Result := 'error';
-    dsDestroying             : Result := 'stopped';
-  else
-    Result := 'idle';
-  end;
-end;
-
 { The git state of ADir: in_repo, the branch and the count of changed files,
-  from one `git status --porcelain=v1 --branch`. }
+  from one `git status --porcelain=v1 --branch`.  RunGit hides the console
+  window and stops git from waiting for a terminal; False leaves the reason
+  in Output, and not being in a repository is the expected case here. }
 procedure FillGitSection(const ADir: string; Obj: TJSONObject);
 var
-  GitExe    : string;
-  Proc      : TProcess;
-  Chunk     : string;
-  BytesRead : LongInt;
-  Output    : string;
-  Line      : string;
-  Changed   : Integer;
-  SepPos    : Integer;
-const
-  BufSize = 4096;
+  Output  : string;
+  Line    : string;
+  Changed : Integer;
+  SepPos  : Integer;
 begin
-  GitExe := McpGitExecutable;
-  if GitExe = '' then
+  if not RunGit(['status', '--porcelain=v1', '--branch'], ADir, Output) then
   begin
     Obj.Add('in_repo', False);
-    Obj.Add('error', 'git executable not found on PATH');
+    { not a repository is the expected case; anything else is worth a line }
+    if Pos('not a git repository', Output) = 0 then
+      Obj.Add('error', Trim(Copy(Output, 1, 200)));
     Exit;
   end;
-  Proc   := TProcess.Create(nil);
-  Output := '';
-  Chunk  := '';
-  try
-    Proc.Executable := GitExe;
-    Proc.Parameters.Add('status');
-    Proc.Parameters.Add('--porcelain=v1');
-    Proc.Parameters.Add('--branch');
-    Proc.CurrentDirectory := ADir;
-    Proc.Options := [poUsePipes, poStderrToOutput];
-    Proc.Execute;
-    repeat
-      SetLength(Chunk, BufSize);
-      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
-      if BytesRead > 0 then
-      begin
-        SetLength(Chunk, BytesRead);
-        Output := Output + Chunk;
-      end;
-    until (BytesRead = 0) and not Proc.Running;
-    Proc.WaitOnExit;
-    if Proc.ExitCode <> 0 then
+  Obj.Add('in_repo', True);
+  Changed := 0;
+  while Output <> '' do
+  begin
+    SepPos := Pos(#10, Output);
+    if SepPos = 0 then
     begin
-      Obj.Add('in_repo', False);
-      { not a repository is the expected case; anything else is worth a line }
-      if Pos('not a git repository', Output) = 0 then
-        Obj.Add('error', Trim(Copy(Output, 1, 200)));
-      Exit;
-    end;
-    Obj.Add('in_repo', True);
-    Changed := 0;
-    while Output <> '' do
+      Line := Output;
+      Output := '';
+    end
+    else
     begin
-      SepPos := Pos(#10, Output);
-      if SepPos = 0 then
-      begin
-        Line := Output;
-        Output := '';
-      end
-      else
-      begin
-        Line := Copy(Output, 1, SepPos - 1);
-        Delete(Output, 1, SepPos);
-      end;
-      if Line = '' then Break;
-      if Copy(Line, 1, 3) = '## ' then
-      begin
-        { "## <branch>[...[upstream]]" }
-        SepPos := Pos('...', Line);
-        if SepPos > 0 then
-          Line := Copy(Line, 4, SepPos - 4)
-        else
-          Line := Copy(Line, 4, MaxInt);
-        if Line <> '' then Obj.Add('branch', Line);
-      end
-      else
-        Inc(Changed);
+      Line := Copy(Output, 1, SepPos - 1);
+      Delete(Output, 1, SepPos);
     end;
-    Obj.Add('changed', Changed);
-  finally
-    Proc.Free;
+    if Line = '' then Break;
+    if Copy(Line, 1, 3) = '## ' then
+    begin
+      { "## <branch>[...[upstream]]" }
+      SepPos := Pos('...', Line);
+      if SepPos > 0 then
+        Line := Copy(Line, 4, SepPos - 4)
+      else
+        Line := Copy(Line, 4, MaxInt);
+      if Line <> '' then Obj.Add('branch', Line);
+    end
+    else
+      Inc(Changed);
   end;
+  Obj.Add('changed', Changed);
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
@@ -154,6 +102,7 @@ var
   DbgSec       : TJSONObject;
   Lease        : TJSONObject;
   Unsaved      : TJSONArray;
+  UnsavedNames : TStringList;
   IDEPkg       : TIDEPackage;
   Proj         : TLazProject;
   I, Total     : Integer;
@@ -190,20 +139,20 @@ begin
       end;
     end;
 
-    { editors: how many buffers have unsaved changes, capped file names }
+    { editors: how many buffers have unsaved changes, capped file names;
+      McpUnsavedEditors walks the unique editors, one entry per file even
+      when it is open in a split view or a second window }
     if Assigned(SourceEditorManagerIntf) then
     begin
       Editors := TJSONObject.Create;
       Unsaved := TJSONArray.Create;
+      UnsavedNames := TStringList.Create;
       try
-        Total := 0;
-        for I := 0 to SourceEditorManagerIntf.SourceEditorCount - 1 do
-          if SourceEditorManagerIntf.SourceEditors[I].Modified then
-          begin
-            Inc(Total);
-            if Unsaved.Count < UNSAVED_CAP then
-              Unsaved.Add(SourceEditorManagerIntf.SourceEditors[I].FileName);
-          end;
+        McpUnsavedEditors(UnsavedNames);
+        Total := UnsavedNames.Count;
+        for I := 0 to Total - 1 do
+          if I < UNSAVED_CAP then
+            Unsaved.Add(UnsavedNames[I]);
         Editors.Add('unsaved_count', Total);
         if Unsaved.Count > 0 then
         begin
@@ -215,6 +164,7 @@ begin
         Obj.Add('editors', Editors);
         Editors := nil;
       finally
+        UnsavedNames.Free;
         Unsaved.Free;
         Editors.Free;
       end;
@@ -224,7 +174,7 @@ begin
     DbgSec := TJSONObject.Create;
     try
       if Assigned(DebugBoss) then
-        DbgSec.Add('state', DebuggerStateStr(DebugBoss.State))
+        DbgSec.Add('state', McpDbgStateStr(DebugBoss.State))
       else
         DbgSec.Add('state', 'idle');
       Lease := McpLeaseJSON;
@@ -252,12 +202,14 @@ end;
 procedure RegisterStatusSchemas(Tools: TJSONArray);
 begin
   Tools.Add(MakeTool('ide_get_status',
-    'Aggregated IDE status in one call: the open project (name, project_file, ' +
-    'directory; the section is omitted when no project is open), unsaved editors ' +
-    '(count and at most 10 file names), the debugger state with the session lease ' +
-    'when one is held, and the server version. include_git=true adds the git state ' +
-    'of the project''s directory (in_repo, branch, changed files count); it is off ' +
-    'by default because git status can be slow.',
+    'Overview, several tools in one call: the open project as ' +
+    'project_get_directory reports it (name, project_file, directory; the ' +
+    'section is omitted when no project is open), unsaved editors as ' +
+    'editor_list_open (count and at most 10 file names), the debugger state ' +
+    'with the session lease as debug_get_state reports it, and the server ' +
+    'version. include_git=true adds the git section of git_status (in_repo, ' +
+    'branch, changed files count) for the project''s directory; it is off by ' +
+    'default because git status can be slow.',
     SCHEMA_GET_STATUS, MCP_ANN_RO));
 end;
 
