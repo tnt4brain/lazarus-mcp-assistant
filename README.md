@@ -7,7 +7,7 @@ An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). In
 >
 > | Lazarus | Windows 11 | Debian 12 |
 > |---|---|---|
-> | **4.6** (the reference version) | passes | GTK2: passed on the 1.7.0 release candidate, before its last fixes |
+> | **4.6** (the reference version) | passes | GTK2: passes |
 > | **5.0RC1** (the `lazarus_5_0_RC1` tag) | passes | GTK3: passes (GTK2 is not usable with 5.0RC1 here) |
 >
 > **Not supported:** Lazarus trunk (4.99). It is known not to compile: the editor and
