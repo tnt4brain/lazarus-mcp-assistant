@@ -7,7 +7,7 @@ interface
 
 uses
   Classes, SysUtils, IDEIntf, Controls, LazFileUtils, FileUtil,
-  LazIDEIntf, McpSettingsFile;
+  LazIDEIntf, LazDebuggerIntfBaseTypes, McpSettingsFile;
 
 type
   { Everything stored in mcpassistantoptions.xml in the primary config
@@ -31,6 +31,9 @@ procedure FinalizeMcpState;
 
 { git executable: the configured path, else git on PATH; '' if neither. }
 function McpGitExecutable: string;
+
+{ The debugger state as the word every tool reports: idle, stopped, paused, running or error. }
+function McpDbgStateStr(S: TDBGState): string;
 
 { Shell command that waits until the restarted IDE answers: instantfpc runs
   wait_for_restart.pas from the parent of ALpkPath's directory, or of the
@@ -68,6 +71,20 @@ begin
 end;
 
 { Helpers }
+
+function McpDbgStateStr(S: TDBGState): string;
+begin
+  case S of
+    dsNone, dsIdle           : Result := 'idle';
+    dsStop                   : Result := 'stopped';
+    dsPause                  : Result := 'paused';
+    dsInternalPause          : Result := 'running';  { internal pause; IDE auto-continues }
+    dsInit, dsRun            : Result := 'running';
+    dsError                  : Result := 'error';
+    dsDestroying             : Result := 'stopped';
+  else                         Result := 'idle';
+  end;
+end;
 
 function McpGitExecutable: string;
 begin

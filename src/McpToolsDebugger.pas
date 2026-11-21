@@ -42,6 +42,7 @@ uses
   fpjson,
   McpDebugGuard,             { GMcpLastExc, McpMarkDebugDriven }
   McpDebugLease,             { McpLeaseJSON }
+  McpIdeState,               { McpDbgStateStr }
   McpIdeListeners,           { GMcpExceptionDialogHwnd }
   McpToolContext;
 
@@ -1305,20 +1306,6 @@ end;
 
 { ── Internal helpers ─────────────────────────────────────────────────────── }
 
-function DbgStateStr(S: TDBGState): string;
-begin
-  case S of
-    dsNone, dsIdle         : Result := 'idle';
-    dsStop                 : Result := 'stopped';
-    dsPause                  : Result := 'paused';
-    dsInternalPause          : Result := 'running';  { internal pause; IDE auto-continues }
-    dsInit, dsRun          : Result := 'running';
-    dsError                : Result := 'error';
-    dsDestroying           : Result := 'stopped';
-  else                       Result := 'idle';
-  end;
-end;
-
 { AExcSeqBefore: exception sequence sampled before the command was issued, or
   -1 to never report an exception.  Uses the GSyncHelper snapshot taken by the
   last ReadState: a newer exception turns the reason into 'exception' and adds
@@ -1330,7 +1317,7 @@ var
 begin
   Obj := TJSONObject.Create;
   try
-    Obj.Add('state',  DbgStateStr(S));
+    Obj.Add('state',  McpDbgStateStr(S));
     Obj.Add('file',   AFile);
     Obj.Add('line',   ALine);
     if (AExcSeqBefore >= 0) and GSyncHelper.OutExcValid and
@@ -1486,7 +1473,7 @@ begin
       GSyncHelper.ReadState;   { already on main thread }
       Obj := TJSONObject.Create;
       try
-        Obj.Add('state',  DbgStateStr(GSyncHelper.OutState));
+        Obj.Add('state',  McpDbgStateStr(GSyncHelper.OutState));
         Obj.Add('file',   GSyncHelper.OutFileName);
         Obj.Add('line',   GSyncHelper.OutLine);
         Obj.Add('reason', '');
@@ -2412,7 +2399,7 @@ begin
         end;
         Obj := TJSONObject.Create;
         try
-          Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
+          Obj.Add('state', McpDbgStateStr(GSyncHelper.OutState));
           if GSyncHelper.OutWatchReady then
             Obj.Add('watches', GetJSON(GSyncHelper.OutWatchJSON))
           else
@@ -2456,7 +2443,7 @@ begin
         Obj := TJSONObject.Create;
         try
           Obj.Add('has_exception', GSyncHelper.OutExcValid);
-          Obj.Add('state', DbgStateStr(GSyncHelper.OutState));
+          Obj.Add('state', McpDbgStateStr(GSyncHelper.OutState));
           if GSyncHelper.OutExcValid then
             Obj.Add('exception', GetJSON(GSyncHelper.OutExcJSON))
           else if GSyncHelper.OutState in [dsNone, dsIdle, dsStop] then
