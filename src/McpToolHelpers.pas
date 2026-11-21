@@ -379,6 +379,16 @@ begin
     Result := FindDefaultExecutablePath('lazbuild');
 end;
 
+{ The config folder this IDE runs with, as lazbuild's --pcp argument; empty when the IDE does not
+  say.  Without it lazbuild reads its own default folder, and two Lazarus installs mix their
+  settings and package links (a question dialog stops the build). }
+function LazbuildPcpArg: string;
+begin
+  Result := '';
+  if Assigned(LazarusIDE) and (LazarusIDE.GetPrimaryConfigPath <> '') then
+    Result := '--pcp=' + ExcludeTrailingPathDelimiter(LazarusIDE.GetPrimaryConfigPath);
+end;
+
 function McpLazbuildJSON(const LpkPath: string; out IsError: Boolean;
   AClean: Boolean = False): string;
 var
@@ -454,10 +464,8 @@ begin
   Proc   := TProcess.Create(nil);
   try
     Proc.Executable := LazbuildExe;
-    { the config folder this IDE runs with (--pcp), not lazbuild's default: another one mixes
-      the settings and package links of two Lazarus installs }
-    if Assigned(LazarusIDE) and (LazarusIDE.GetPrimaryConfigPath <> '') then
-      Proc.Parameters.Add('--pcp=' + ExcludeTrailingPathDelimiter(LazarusIDE.GetPrimaryConfigPath));
+    if LazbuildPcpArg <> '' then
+      Proc.Parameters.Add(LazbuildPcpArg);
     if AClean then
       Proc.Parameters.Add('-B');   { rebuild everything }
     Proc.Parameters.Add(LpkPath);
@@ -599,6 +607,8 @@ begin
   Proc     := TProcess.Create(nil);
   try
     Proc.Executable := LazbuildExe;
+    if LazbuildPcpArg <> '' then
+      Proc.Parameters.Add(LazbuildPcpArg);
     Proc.Parameters.Add(ResolvedLpi);
     Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];   { no console window, no focus grab }
     Proc.ShowWindow := swoHide;
