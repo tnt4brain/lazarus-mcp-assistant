@@ -102,7 +102,9 @@ begin
   Dst := FBase + PathDelim + 'dst' + IntToStr(GetTickCount64);
   ForceDirectories(Dst);
   GitRun(Dst, ['init', '-q'], Out_);
-  Result := GitRun(Dst, ['-c', 'http.extraHeader=Authorization: Basic ' +
+  { 'credential.helper=' first: no helper of the system (Git Credential Manager opens a window
+    when the server answers 401) may be asked }
+  Result := GitRun(Dst, ['-c', 'credential.helper=', '-c', 'http.extraHeader=Authorization: Basic ' +
     EncodeStringBase64('mcp:' + ACode), 'fetch', '-q', AServerUrl, '+HEAD:refs/mcp/snapshot'],
     Out_);
 end;
@@ -307,7 +309,7 @@ begin
     Dst := FBase + PathDelim + 'viahelper';
     ForceDirectories(Dst);
     GitRun(Dst, ['init', '-q'], Out_);
-    if not GitRun(Dst, ['-c', 'credential.helper=!sh ' + Script + ' ' + Hex(Key),
+    if not GitRun(Dst, ['-c', 'credential.helper=', '-c', 'credential.helper=!sh ' + Script + ' ' + Hex(Key),
          'fetch', '-q', 'http://127.0.0.1:' + IntToStr(Srv.Port) + '/repo.git',
          '+HEAD:refs/mcp/snapshot'], Out_) then
       Ignore('the helper could not run here (needs sh and openssl): ' + Out_);
@@ -344,7 +346,7 @@ begin
     Dst := FBase + PathDelim + 'viapas';
     ForceDirectories(Dst);
     GitRun(Dst, ['init', '-q'], Out_);
-    CheckTrue(GitRun(Dst, ['-c', 'credential.helper=!instantfpc ' + Script + ' ' + Hex(Key),
+    CheckTrue(GitRun(Dst, ['-c', 'credential.helper=', '-c', 'credential.helper=!instantfpc ' + Script + ' ' + Hex(Key),
       'fetch', '-q', 'http://127.0.0.1:' + IntToStr(Srv.Port) + '/repo.git',
       '+HEAD:refs/mcp/snapshot'], Out_), 'the fetch through the script: ' + Out_);
     CheckTrue(Srv.Served > 0, 'git got its credentials from the script');

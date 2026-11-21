@@ -122,9 +122,10 @@ const
     'package_compile|f', 'project_clean|f', 'ide_run_tests|f', 'package_move_unit|p');
 
   { tool|argument }
-  NOTPATH : array[0..14] of string = (
+  NOTPATH : array[0..15] of string = (
     'git_diff|path', 'git_diff|active_file', 'git_add|paths', 'git_archive|paths',
     'git_stash|paths', 'git_checkout|target', 'git_reset|target', 'package_get_info|files',
+    'git_serve|target',
     'project_open|unit_paths', 'package_set_settings|unit_output_dir',
     'package_set_settings|unit_search_path', 'package_set_settings|include_path',
     'package_set_settings|usage_unit_path', 'package_set_settings|usage_include_path',
