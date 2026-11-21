@@ -267,7 +267,8 @@ end;
 
 procedure TTestToolAliases.TestShippedDocumentsTeachCurrentNames;
 const
-  DOCS : array[0..4] of string = ('README.md', 'docs/system-prompt.md', 'docs/lazarus-knowledge.md',
+  DOCS : array[0..8] of string = ('README.md', 'docs/tools.md', 'docs/write-scope.md', 'docs/testing.md',
+                                  'docs/self-hosted-development.md', 'docs/system-prompt.md', 'docs/lazarus-knowledge.md',
                                   'src/system_prompt.inc', 'src/lazarus_knowledge.inc');
 var
   Root, Text : string;

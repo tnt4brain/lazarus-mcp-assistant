@@ -3,7 +3,16 @@
 An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 150 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows and Linux. The whole test suite, the debugger tests
-> included, passes on Windows and on Debian 12 (Lazarus 4.6, FPC 3.2.2, GTK2).
+> included, passes on the combinations below (FPC 3.2.2).
+>
+> | Lazarus | Windows 11 | Debian 12 |
+> |---|---|---|
+> | **4.6** (the reference version) | passes | GTK2: passed on the 1.7.0 release candidate, before its last fixes |
+> | **5.0RC1** (the `lazarus_5_0_RC1` tag) | passes | GTK3: passes (GTK2 is not usable with 5.0RC1 here) |
+>
+> **Not supported:** Lazarus trunk (4.99). It is known not to compile: the editor and
+> project interfaces differ. Known differences on 5.0RC1: [#29](https://github.com/tnt4brain/lazarus-mcp-assistant/issues/29).
+>
 > macOS is not tested and not claimed: the plugin uses only LCL/IDE interfaces
 > (no Win32 API) and has macOS code for launching Claude Code in Terminal.app,
 > but it has never been compiled or run there.
@@ -26,367 +35,39 @@ Transport details: [ADR-001](docs/adr/0001-mcp-server-transport-and-lifecycle.md
 
 ## Tool reference
 
-Tools are named `<category>_<action>`; `tools/list` returns them sorted, each
-with a human-readable `title` ("Debugger: get call stack") and annotations:
-- `readOnlyHint` for tools that change no file or project. Moving the cursor
-  or opening a tab counts as read-only.
-- `destructiveHint` only for changes that neither Ctrl+Z nor `form_history` can
-  take back: closing or reverting an editor with unsaved changes,
-  `git_checkout`, `git_reset`, rebuilds and installs.
-- `idempotentHint` where repeating a call with the same arguments changes
-  nothing more.
+150 tools, named `<category>_<action>` (in Claude Code: `mcp__lazarus-ide__<tool_name>`). Each has a title, a description
+and annotations: `readOnlyHint`, `destructiveHint` (only for changes that neither Ctrl+Z nor `form_history` can take back),
+`idempotentHint`. The full reference, with every tool, is in [docs/tools.md](docs/tools.md).
 
-In Claude Code they appear as `mcp__lazarus-ide__<tool_name>`.
-
-A tool that works on one source file takes it as `file`, an absolute path;
-`D:/x/f.pas` and `D:\x\f.pas` name the same file. The names used before v1.0
-(`file_path`, `path`, `filename`) are still accepted. A file that doesn't exist
-is an error of the tool, never the IDE's "File not found" dialog. Files created
-or changed outside the IDE (by the assistant's shell, say) are seen at once.
-
-**Renamed in 1.7.0.** Some tools were fused and some parameters renamed so that one idea
-has one name. The old names work through all of 1.x, with a one-line notice the first time a
-session uses one, and **are refused from 2.0 on**. The list, and what to change in saved
-prompts, skills and permission allow-lists, is in [docs/renamed-tools.md](docs/renamed-tools.md).
-
-### Editor — `editor_*`
-
-| Tool | Description |
+| Category | What it does |
 |---|---|
-| `editor_get_active` | Active editor file path and buffer (`what` content, default), the cursor position (`cursor`) or the selected text and range (`selection`) |
-| `editor_list_open` | All open editor tabs |
-| `editor_read_file` | Read any file by absolute path; prefers the live editor buffer (unsaved changes) over disk |
-| `editor_open` | Open a file in the editor without moving the cursor; returns `already_open` |
-| `editor_create_file` | Create a new text file on the IDE's machine and open it; only inside the project, a loaded package's folder or the temp folder, never in `.git`, no overwrite unless `overwrite:true` (and not while open) |
-| `editor_set_cursor` | Move the cursor (opens the file if needed) |
-| `editor_edit_text` | **Preferred edit.** Replace `old_string` with `new_string`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
-| `editor_replace_range` | Replace a range given by start and end, or start and `delete_len` (no end inserts, empty text deletes) — for coordinates from `code_*` tools |
-| `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
-| `editor_revert` | Discard unsaved changes and reload from disk |
-| `editor_close` | Close a tab, discarding unsaved changes |
+| `editor_*` | Read, open, create, edit and save files; edits go through the editor buffer, so Ctrl+Z works |
+| `code_*` | CodeTools: outline, declarations, references, rename, extract method, completion, formatting, structural edits |
+| `form_*` | The form designer: components, properties, menus, collections, layout, undo |
+| `debug_*` | Breakpoints, run and step, locals, evaluate, call stack, registers, attach |
+| `project_*` | Build, run, create and open projects, settings, files, search, todos |
+| `package_*` | Create, open, compile, install and edit packages and their dependencies |
+| `ide_*` | Ping, rebuild the IDE, messages, dialogs, tests, reports |
+| `git_*` | Status, diff, commit, branches, history, remotes, conflicts |
 
-`editor_edit_text`, `editor_replace_range`, `editor_create_file` and `project_create_unit` write only inside
-the active project's directory, the folder of a loaded package (not one that ships with Lazarus, such as the
-LCL, unless the project itself is inside the Lazarus folder), the git working tree that holds either (a
-package's tests and docs sit above its source folder) and the temp folder, never inside a `.git` folder: the
-same for a client on this machine and one on another. A path anywhere else is refused with the list of folders.
-The `code_*` and `form_*` tools that change files follow the same rule (`code_rename_identifier` checks every
-file it would touch and renames nothing if one is outside); `dry_run` is never refused. So do the tools that
-change an existing package's `.lpk` (`package_add_file`, `package_remove_file`, `package_add_dependency`,
-`package_remove_dependency`, `package_set_info`, `package_set_settings`, and both packages of `package_move_unit`).
-Not limited: `editor_save`, `editor_revert`, `editor_close`, and the tools listed below that create, open,
-download, install or uninstall.
-
-**What the limits do not do.** The tools that create or open something are not limited to any folder, because a
-new project or package has no folder to be inside: `project_create`, `project_open`, `package_create`,
-`package_open` and `git_clone`. What they create or open then becomes the active project or a loaded package,
-so its folder becomes writable. The limits keep a client from writing where it has not been given access; they
-do not stop one that may create or open a project from giving itself a new place. If that matters to you,
-the lever is a consent switch for those tools (like `AllowPackageInstall`), not a path rule.
-
-### CodeTools — `code_*`
-
-| Tool | Description |
-|---|---|
-| `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
-| `code_get_unit_interface` | The interface section of a unit |
-| `code_get_procedure_ast` | Locals (with type) and the statements of one routine as a tree (if/for/while/repeat/try/case/with, calls, assignments) with lines and columns; `depth` sets how many levels ([ADR-008](docs/adr/0008-structural-source-editing.md)) |
-| `code_find_declaration` | Where an identifier is declared, with a context snippet (`show=true` also jumps the editor cursor there); follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
-| `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
-| `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
-| `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
-| `code_find_descendants` | The classes (and interface implementers) below a class or interface, the whole tree unless `direct_only`; scope as `code_find_references` ([ADR-027](docs/adr/0027-navigation-and-refactoring-tools.md)) |
-| `code_find_overrides` | The methods of the same name in the classes below the one that declares a method: override, reintroduce or plain |
-| `code_unit_dependencies` | Uses graph: of one unit (uses, used by, unneeded units) or of the whole project with its cycles |
-| `code_find_unused` | Symbols of a unit nothing refers to (a hint: widen the search before deleting public API) |
-| `code_extract_method` | Extract statements into a procedure or method, as the IDE's Extract Procedure; `dry_run` reports what is possible |
-| `package_move_unit` | Move a unit between two packages and add the requirement that makes necessary; refuses a cycle; `dry_run` shows the plan |
-| `code_add_uses` | Add a unit to the interface or implementation uses clause |
-| `code_insert_in_procedure` | Insert text right after a routine's `begin`; an overloaded name is refused with the candidates, `line` picks one |
-| `code_edit_statement` | Replace, delete, insert next to or wrap (begin, try, if, while, for, with) ONE statement of a body, found by the `line`/`col` of `code_get_procedure_ast`; the text around it stays ([ADR-008](docs/adr/0008-structural-source-editing.md)) |
-| `code_replace_procedure_body` | Replace everything between a routine's `begin` and `end`; an overloaded name is refused with the candidates, `line` picks one |
-| `code_add_to_class` | Append a declaration to a class section (private/protected/public/published) |
-| `code_complete` | Code completion as Ctrl+Shift+C does it: method bodies, property fields and setters, forward procedures, local variables, event handlers. Returns the changed lines |
-| `code_format` | Format a file or a range of lines with JEDI Code Format, using the IDE's JCF settings; one undo step. Returns the changed lines |
-
-Changing `code_*` tools edit the editor buffer, as the IDE's own commands do:
-Ctrl+Z undoes them, and nothing is written to disk until `editor_save` (or
-`auto_save: true`).
-
-`code_complete` is the IDE's Ctrl+Shift+C without its dialogs. `code_format`
-runs JEDI Code Format, as **Source → JEDI Code Format** does, on `.pas`, `.pp`,
-`.lpr`, `.dpr` and `.inc` files. Both return the changed lines as hunks (the
-lines removed and added) rather than the whole file.
-- `code_format` uses the settings of JCF's IDE plugin (**Tools → Options →
-  JEDI Code Format**). Without that plugin, it uses `jcfsettings.cfg` in the
-  IDE's config folder, created from JCF's defaults; the result says so.
-  Lazarus's default JCF settings change the case of some words (for example
-  `Integer` becomes `integer`); that is a style setting, not the tool: change it in
-  **Clarify → Capitalisation** (or edit `jcfsettings.cfg`).
-- After formatting, the editor is checked against JCF's output. If they
-  differ, the change is put back and an error returned.
-- JCF itself isn't idempotent on long wrapped lines: a second run can still
-  change a few of them.
-
-### Form designer — `form_*`
-
-Property access goes through the Object Inspector's property editors: nested
-properties by dotted path (`BorderSpacing.Around`, `Font.Style`,
-`AnchorSideLeft.Control`, `ChildSizing.Layout`), enums/sets as text
-(`alClient`, `[akLeft,akTop]`), component references by name, events by
-handler name (created if missing), and `Name` renames the component in the
-source too. Collection items are addressed by index (`Columns[0].Caption`,
-`Panels[1].Width`), and string lists (`Memo.Lines`, `ListBox.Items`) are read
-as `lines` and set from an array of strings.
-
-| Tool | Description |
-|---|---|
-| `form_create` | New form, data module or frame (`kind`): `.pas` + `.lfm`, added to the project (or, with `package_name`/`lpk_path`, to that package) and opened |
-| `form_list_components` | Every component with class, parent, bounds, Align, Anchors, Visible, Caption/Text, TabOrder; form and client size |
-| `form_get_lfm` | LFM text of the live designer state (incl. unsaved changes) — whole form or one component |
-| `form_get_properties` | Properties of a component, nested ones as dotted paths; with `names`, also the allowed values |
-| `form_set_properties` | Set several properties at once; one result per property. `Parent` moves a control into another container |
-| `form_add_component` | Add a palette component, optionally inside a container, with `name` and initial `properties`; adds the unit to `uses` |
-| `form_delete_component` | Delete a component and its child controls, or a menu item and its submenu (fields removed from the source) |
-| `form_list_collection_items` | Items of a collection property (ListView `Columns`, StatusBar `Panels`, grid `Columns`, `Sections`, `Bands`) with their properties |
-| `form_add_collection_item` / `form_delete_collection_item` / `form_move_collection_item` | Add (at an index, with properties), delete or reorder collection items |
-| `form_get_menu` | Item tree of a `TMainMenu`/`TPopupMenu`: captions, shortcuts, checked/enabled, OnClick; `menu_name` is optional when the form has one menu, and errors list the form's menus |
-| `form_add_menu_item` / `form_move_menu_item` | Add an item or separator (`-`) to a menu or submenu; move an item to another position or parent |
-| `form_arrange` | Same size as the first control, distribute with a fixed gap or evenly, align edges/centres to the first control or the parent |
-| `form_create_event_handler` | Create (or show) the handler for a component event |
-| `form_search_palette` | Find palette classes by name: class, unit, palette page |
-| `form_history` (`action` undo / redo) | One step of the designer's undo list, as Edit > Undo / Redo (Ctrl+Z) in the designer; returns `can_undo` / `can_redo` |
-
-Designer changes are in memory until `editor_save` on the unit.
-
-**Undo.** Every changing `form_*` call is one step in the designer's own undo
-list, shared with the user's Ctrl+Z and with other clients; `form_history` (`action` undo or redo) takes
-back the last step, whoever made it. Simple properties, `Name`, `Parent`, adds,
-deletes and `form_arrange` are recorded property by property. Changes the
-designer cannot replay that way (sub-properties such as `Font.Color`, string
-lists, collection items, menus, events, component references) are recorded as
-a replacement of the whole component (a menu item: its whole menu). References
-that other components held to it are restored. Results say `"undoable"`. The
-form itself cannot be replaced, so changes of that kind to the form itself
-(`Form1.Font.Color`, `Form1.Menu`, `Form1.OnCreate`) are not undoable. Undo restores the form, not the source: a field returns with its
-component, but a created event handler method stays. See [ADR-014](docs/adr/0014-designer-undo.md).
-
-### Debugger — `debug_*`
-
-Run and step tools block until the program pauses or `timeout_s` elapses.
-Sessions driven through these tools never show IDE modals: an exception pauses
-the program and is returned as `reason: "exception"` with class, message, file
-and line; "Execution stopped" is suppressed; debugger error messages are
-returned as `debugger_message`. Sessions you start yourself (F9) behave as usual. If such a
-session stops in the IDE's exception dialog, an assistant can take it over:
-`debug_get_state` reports `waiting_for`, and `debug_pause` (or any other
-debugger-driving tool) answers the dialog with *Break*, as you would.
-
-With several clients connected, the first one that drives the debugger owns the
-session. Until it ends, other clients are refused the debugger-driving tools and
-`project_build`/`project_run`/`project_create`/`project_open`/`ide_rebuild`/`package_install`/
-`package_uninstall`; everything else stays available. The owner's lease expires
-after 300 s without calls from it (`debug_run` `lease_idle_timeout`), and the
-abandoned session is then stopped. `debug_get_state` shows the owner. Only one
-debugger call runs at a time. See [ADR-012](docs/adr/0012-multiple-clients.md).
-
-| Tool | Description |
-|---|---|
-| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`data` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
-| `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code`; a stop on a breakpoint says `reason: "breakpoint"`; if no session starts (a failed build) the answer is an error saying so |
-| `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
-| `debug_step` (`kind` over / into / out) | F8 / F7 / Shift+F8 |
-| `debug_attach` | Attach the debugger to a running process by id (e.g. the program `project_run` started); it stops with its stack readable. `debug_stop` with `detach: true` lets it go on |
-| `debug_pause` / `debug_stop` | Pause / stop the session (ends an attached program unless `detach`); a pause makes the program's main thread current (not the debugger's break-in thread) |
-| `debug_get_state` | State and source location, in any state |
-| `debug_get_call_stack` | Frames with file, line, function and address (`max_frames`) |
-| `debug_get_locals` | Locals and parameters of a frame (`thread`, `frame`) |
-| `debug_evaluate` | Evaluate a Pascal expression in the selected frame, or in `thread`/`frame` for this call only. Raw memory too: `^Byte($1000A0)[0..15]`, with a type the program uses (there is no separate memory dump tool; see [ADR-009](ADR-009.md#v09-registers-and-disassembly)) |
-| `debug_select_frame` | Select a thread and stack frame, as the Threads and Call Stack windows do |
-| `debug_set_variable` | Modify a variable or expression |
-| `debug_get_exception` | The exception the program is paused at |
-| `debug_add_watch` / `debug_remove_watch` / `debug_list_watches` | Watches window; values for the selected (or given) thread and frame |
-| `debug_list_threads` | Threads with state and top frame |
-| `debug_get_registers` | CPU registers of a thread and frame, as the Registers window shows them, plus `hex`; `changed` since the previous pause; `names` or `general` keep only some (the full list is ~20 KB) |
-| `debug_disassemble` | Machine code around an address, a symbol, or a frame: bytes, instruction, function+offset, source lines, call/jump targets |
-| `debug_get_output` | What the program wrote to its console, and debugger output |
-
-### Project — `project_*`
-
-| Tool | Description |
-|---|---|
-| `project_get_directory` | Root directory of the active project (contains the `.lpi`) |
-| `project_list_files` | Source files of the active project |
-| `project_list_directory` | Files and folders of any directory on disk (depth up to 5, size per file, capped) |
-| `project_get_settings` / `project_set_settings` | Target OS/CPU, output directory, custom options, debug info (`debug_info`: none, dwarf3, ...; the debugger needs DWARF), compiler and FPC version, LCL widgetset of the active build mode (set in the build-mode matrix, as Project Options does), and the debug-run switches `heaptrc`, `trash_variables`, `line_info`, `io_checks`, `range_checks`, `overflow_checks`, `stack_checks`, `assertions`, `smart_link`, `verify_method_calls` and `optimization` (0-3); the build modes (`build_modes` lists them, `mode_options` gives each mode's own custom options and switches (read only), `build_mode` makes one active, and the other settings of the call then change that mode); the application `icon` (an .ico file, `default` or `none`) and `use_manifest` |
-| `project_add_file` / `project_remove_file` | Project file list (files stay on disk). Adding a file already in the project reports `already_in_project`. Removing a file open in the editor is refused until it is closed |
-| `project_create_unit` | New unit on disk, added to the project and opened |
-| `project_list_packages` | Required packages as in Project Inspector: version limits, resolved `.lpk`, status (`ok`, `not_found`, ...); `recursive` adds the whole graph in compile order |
-| `project_add_package` / `project_remove_package` | Package dependencies in the `.lpi` |
-| `project_search` | Case-insensitive text search across project files |
-| `project_list_todos` | `TODO` / `FIXME` / `DONE` comments, as the IDE's ToDo List shows them |
-| `project_build` | Incremental build; returns success and errors |
-| `project_get_compiler_errors` | Errors and warnings of the last build |
-| `project_run` | Build if needed and run without the debugger; optional `args` (stored in the run parameters). Answers with the program's stdout, stderr and exit code (waits up to `timeout_s`, default 10; a program still running comes back with `running: true`); a heaptrc report in stderr also comes back parsed as `heap_report` (unfreed blocks and bytes, each leak's size and call stack) |
-| `project_run_output` | The output of that program since the last read, its exit code once it ended; can wait for more, or stop it |
-| `project_run_input` | Sends text to the stdin of that program (`project_run` with `stdin` or `keep_stdin_open`), or closes it; returns the answer |
-| `project_get_windows` | The running program's visible windows (Windows: a tree of windowed controls, `Class "text" x,y wxh`, about 20 tokens a line. Linux (X11): the top-level windows only, found by process id, without the controls inside); `image` adds a PNG of each window (scaled to `max_size`), which also shows controls without a handle such as `TLabel`. Never waits for the program, so it also works while the program is paused in the debugger (the image is then copied from the screen). `ide=true` with `window` looks at the IDE's own windows instead (a form being built, a dialog); `window` is required then, so only the windows you name are shown |
-| `project_open` | Open a `.lpi` (or a program's `.lpr`, for which the `.lpi` is written next to it), closing the current project; refused while debugging or building, or with unsaved changes |
-| `project_close` | Close the current project like File > Close Project: the IDE shows its Project Wizard, which `project_create` / `project_open` dismiss; refused while debugging or building, or with unsaved changes |
-| `project_list_templates` / `project_create` | Project templates; create a project from one |
-
-### Packages — `package_*`
-
-| Tool | Description |
-|---|---|
-| `package_get_info` | A package by name or `.lpk` path: status, version, type, requirements with their status, the packages using it, output dir, search paths, compiler options, and (`files`) its files with units and `Register` |
-| `package_list` | The packages loaded in the IDE (default: those that do not come with Lazarus) |
-| `package_open` / `package_create` | Load an `.lpk` without installing it; create a package (`.lpk`, optional first unit) in a directory and load it |
-| `package_get_settings` / `package_set_settings` | Package type, output dir, unit/include paths, compiler options, target, usage paths; old and new values returned, `.lpk` saved |
-| `package_find_unit` | Which loaded packages contain a unit, and whether the project depends on them — for "Can't find unit" |
-| `package_add_file` / `package_remove_file` | Files of a `.lpk`, as the package editor's Add/Remove: unit name and `Register` detected, unit/include path extended when needed |
-| `package_add_dependency` / `package_remove_dependency` | Required packages of a `.lpk`, with version limits; cycles, unknown packages and new code for the IDE are refused (ADR-013) |
-| `package_save` | Write unsaved packages to disk: the named one, or all modified ones; refused, naming the cause, when the IDE would have to ask a question |
-| `package_set_info` | Version, description, author and/or license of a `.lpk`, as on the package options' Package page; returns old and new values |
-| `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
-| `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS in-process or through curl; plain HTTP only when neither works) |
-| `package_compile` | Compile a package (`package_name` or `.lpk`): with the IDE's compiler when it is open there (errors as data, also in the Messages window), else `lazbuild` — a smoke test before `ide_rebuild` |
-| `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE, as `ide_rebuild` does |
-
-Installing a package that is not installed yet with `package_install` is off
-by default. Turn it on with
-**Tools → MCP Assistant → Allow Assistants to Install Packages** (or the same
-checkbox in **Tools → Options → MCP Assistant**); each install is
-then shown to you in the IDE (package, author, license, dependencies) and
-happens only if you click *Install* (no answer in 180 s means no). Rebuilding
-packages that are already installed never asks. See [ADR-013](docs/adr/0013-user-consent-before-new-code.md).
-
-### IDE — `ide_*`
-
-| Tool | Description |
-|---|---|
-| `ide_ping` | `{"status":"ok","version":"x.y","client":"<id>"}` — confirms the server is back after `ide_rebuild` and shows the caller's identity |
-| `ide_report` | Writes versions, plugin and project settings, packages and the last 200 lines of the three logs into one Markdown file in the Lazarus config folder (`mcp-report-<UTC time>.md`, three newest kept) and returns its path; the same as Tools > MCP Assistant > Write Report. For bug reports: read it before posting |
-| `ide_get_messages` | Everything in the Messages window, all urgency levels |
-| `ide_get_open_dialogs` | The dialogs blocking the IDE's main thread: LCL modal forms and native Windows dialogs, with caption, text and button captions |
-| `ide_answer_dialog` | Clicks a button of such a dialog: through the form for an LCL dialog, by clicking the button for a native one (Windows). Never answers a consent dialog (installing, cloning ...); `caption` picks one of several |
-| `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
-| `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s. Refused, changing nothing, while an editor or a package has unsaved changes (`save_unsaved` saves them first; a package that was never saved, or has a file missing on disk, still stops it) or the package does not compile (`skip_compile` skips that check); a build that fails leaves the IDE running, reopens the editors and brings the server back, with the errors as the answer (ADR-026) |
-| `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML; `suite` runs one class or test, `env` sets environment variables for the run (for example `MCP_DEBUG_TESTS`) |
-| `ide_show_markdown` | Show a Markdown document to the user in an IDE window (tabs, without taking the focus), rendered by `TIpHtmlPanel`: headings, lists, tables, code, http(s) links, and images from a project-relative path or a Base64 `data:` URI. Display only; returns `{shown, tab}`; `tab` replaces that document; `file` instead of `markdown` shows a Markdown file in one tab per file that follows it (the open editor's text, else the disk), so the text is not sent each time ([ADR-024](docs/adr/0024-show-markdown-tool.md)) |
-| *(menu)* | Tools > MCP Assistant > View Markdown..., View > Markdown Viewer... and the source editor's "View as Markdown" show the active `.md` file (or one you pick) in the same window, one tab per file; relative links to other `.md` files open in it |
-
-### Git — `git_*`
-
-`git_status`, `git_diff`, `git_log`, `git_branches`, `git_add`, `git_commit`
-(`amend=true` folds the staged changes into the last commit; refused once a remote
-branch holds it), `git_checkout` (`create=true` makes a new branch), `git_branch_delete` (a merged local
-branch only, `git branch -d`; no force), `git_cherry_pick` (a commit or a range `a..b`;
-`abort=true` undoes one that stopped on a conflict), `git_archive` (committed files of a ref
-into a new .tar, .tar.gz, .tgz or .zip; never overwrites; the output path is write-checked), `git_stash` (`action` push: all changes, or
-only `paths`; pop applies a stash entry), `git_reset` (soft/mixed only — no hard reset).
-`work_dir` defaults to the project directory.
-
-`git_init` makes a repository of an existing directory and keeps its files
-(`initial_branch`, default `main`; `gitignore=true` adds a Lazarus
-`.gitignore` if there is none). It commits nothing and refuses inside an
-existing repository.
-
-`git_clone` clones a repository into a new folder (`url`, `target_dir`; optional
-`branch` and `depth`). The user is asked in the IDE for every clone (ADR-013),
-it runs without holding the IDE, and nothing is built or opened: the result lists
-the `.lpi` and `.lpk` files found, for `project_open`.
-
-Remotes and history ([ADR-028](docs/adr/0028-git-remote-and-history-tools.md)):
-
-- `git_remote` (`list`, `add`, `set_url`, `rename`, `remove`), `git_fetch` (a configured remote; no
-  tags unless asked), `git_pull` (`ff-only` by default, or `merge`, or `rebase`), `git_push` (one branch
-  and named tags; `force` is `--force-with-lease`) and `git_tag` (`list`, `create`, `delete`; local).
-  **The user is asked in the IDE** for every push, every pull and every change of a remote's address,
-  with the remote, the address git will use and the commits that would go; there is no "remember" and no
-  setting that skips it. A force push asks a second question that names the commits it would discard.
-  Fetch from a configured remote, listing and local tags do not ask. No remote or branch name is assumed
-  (`origin` is only what `git clone` calls the first one), and every behavior a result depends on is
-  named on the command line, so a user's or a repository's `push.default`, `pull.rebase` or `merge.ff`
-  cannot change what a tool does; the answer carries the exact command that ran.
-- `git_merge` (`ff`, `squash`), `git_rebase` (`upstream`, `onto`; never interactive), `git_squash` (`count`
-  or `since`, `message`), `git_resolve` (one side of a whole file, or delete it), `git_merge_abort`,
-  `git_rebase_abort` and `git_rebase_continue`. Each refuses to start unless the tracked files are clean,
-  no editor has unsaved changes and nothing else is in progress, and makes a **backup ref**
-  (`refs/mcp-backup/<branch>/<UTC time>`) first: `git_reset` to it undoes the operation, `git_branches`
-  with `backups=true` lists them and `delete_backups=N` removes the old ones. A conflict is left in git's
-  own state and reported with the files and the next steps. Rebase and squash (and `git_reset`) warn when
-  commits that are already on a remote would be rewritten. They need git 2.38 (`git_merge`: 2.27).
-
-For the file open in the editor: `git_blame` (who last changed a line, and in
-which commit) defaults to the active editor's file and cursor line, and blames
-unsaved edits as uncommitted; `git_diff` with `active_file` diffs that file in
-its own repository.
-
-### Resources
-
-| URI | Content |
-|---|---|
-| `lazarus-ide://reference` | Lazarus/FPC component and IDE API reference (`docs/lazarus-knowledge.md`) |
-| `lazarus-ide://system-prompt` | The server's instructions to every client (`docs/system-prompt.md`) |
-
-### While a tool runs
-
-Nobody is at the IDE's keyboard while a tool call executes, so the plugin
-answers the IDE's "Some files have changed on disk" dialog with *Reload*,
-which reloads only files without unsaved editor changes. Before each call it
-also reloads, quietly, the open editors whose file an agent changed with its own
-tools. An editor with unsaved changes is never overwritten: when its file changed on
-disk, a review window opens (the Tools menu opens it by hand too) with three
-panes, the editor's text, the result and the disk's text, a merge of both where
-the changes do not overlap, and per-change arrows to take either side; only the
-result pane is editable, and nothing is written to the disk. *Options > MCP
-Assistant* can instead keep the editor's text and save the disk's version beside
-the file as `name.ext.agent`, or let the editor take the disk's text (undo with
-Ctrl+Z). The next tool result tells the assistant which happened. Every HTTP response
-carries `Connection: close`, and the server's sockets are not inheritable, so a
-program started by the IDE cannot keep a connection open.
-
-### Clients
-
-`initialize` returns an `Mcp-Session-Id` header (and the same id as an
-`mcp_session` cookie); clients send it back to identify themselves, and
-`DELETE /mcp` ends the session. A session id the server didn't hand out since it
-started (after `ide_rebuild`, say) gets HTTP 404, and the client starts a new session
-with `initialize`. Requests without either share one identity, `anonymous`; a client
-with a cookie jar (`curl -b jar -c jar`) gets its own.
+Files created or changed outside the IDE are seen at once. Some tools were renamed in 1.7.0; the old names work
+through all of 1.x and are refused from 2.0 on: [docs/renamed-tools.md](docs/renamed-tools.md).
 
 ---
 
 ## What the tools may change
 
-Without a limit a client, local or on another machine, could write anywhere the IDE's user can.
-So a tool changes a file only inside: the open project's folder, the folder of a loaded package
-that is not part of Lazarus, the git working tree holding either, and the temp folder. Never
-inside a `.git` folder, and never in the IDE's settings folder. Links and junctions are followed:
-a path that leads out of a folder through one is outside. The git tools that change a repository
-(`git_commit`, `git_push`, ...), `package_create` and the `junit_out` of `ide_run_tests` follow the
-same rule.
+A tool changes a file only inside the open project's folder, the folder of a loaded package that is not part of
+Lazarus, the git working tree holding either, and the temp folder; never inside a `.git` folder or the IDE's
+settings folder. *Limited mode* (**Tools > Options > MCP Assistant > Directories**, off by default) narrows reads and
+the opening of projects to folders you list. Details, and what the limits do not do:
+[docs/write-scope.md](docs/write-scope.md).
 
-Two things this does **not** do:
-
-- It does not stop a client that may open projects: `project_open` or `project_create` makes the
-  new project's folder one of these folders. For that, use limited mode.
-- It does not limit what a program does that a tool builds or runs (`project_run`,
-  `ide_run_tests`, the debugger, the compiler's own options): the limit is about where the *tools*
-  read and write.
-
-**Limited mode** is off by default. In Tools > Options > MCP Assistant > Directories you list
-folders; with at least one, the tools change files, create or open projects (`project_open`,
-`project_create`, `git_clone`, `git_init`, `package_open`, `project_add_package`) and read files
-only inside them. Besides, they may still read the open project, the loaded packages, the Lazarus and
-FPC sources and the temp folder. Only you can change the list: no tool reads or changes it, and
-`ide_ping` and `ide_report` tell a client that the mode is on. A refusal names the folders. It is a
-limit on the file access of the tools, not a sandbox.
+---
 
 ## Requirements
 
-- **Lazarus IDE** 4.6 (the version tested, on Windows 11 and Debian 12 with GTK2); macOS is not tested
+- **Lazarus IDE** 4.6 or 5.0RC1 (see the table at the top; trunk is not supported); macOS is not tested
 - **Free Pascal Compiler** 3.2.2 (bundled with Lazarus)
 - **Claude Code** (or any MCP client that supports Streamable HTTP transport)
 
@@ -442,24 +123,9 @@ directory, together with the server's token and port.
 
 ## Self-hosted development
 
-This plugin was built using itself. The development loop:
-
-1. **Launch MCP Assistant** — starts the server and opens Claude Code.
-2. Claude edits source files in the plugin repository using `editor_edit_text`, `project_create_unit`, etc.
-5. Claude runs the `poll_command` from the `ide_rebuild` response, which waits until the new IDE is up. If `startlazarus` never brings the IDE back (seen once: no `lazarus` process and no build running), the script starts the IDE itself after 45 s, from the same executable and config directory.
-4. Claude calls `ide_rebuild`. The IDE exits and `startlazarus.exe` rebuilds it (~60 s).
-5. Claude runs the `poll_command` from the `ide_rebuild` response, which waits until the new IDE is up.
-6. The new IDE starts with the same bearer token and the same ephemeral port, so Claude Code's next call just works: its old session id gets a 404, and it starts a new session by itself (verified). Changed tool descriptions still reach Claude Code only in a new conversation: it keeps the ones it loaded earlier, even in the new session and after `/mcp reconnect` (seen with tool search on).
-
-**Why this works across a restart:** the bearer token is generated once and stored in `mcpassistantoptions.xml`; subsequent starts reuse it. The new IDE writes the same token back to the same config file at the same path. The port stays stable because `TProcess.InheritHandles := False` prevents Claude Code from holding a duplicate of the listening socket across the rebuild.
-
-**Boot-loop escape hatch (Windows):** if a bad build causes the IDE to crash on startup, open a terminal and run:
-```
-rename lazarus.old.exe lazarus.exe
-```
-from the Lazarus installation directory. `startlazarus.exe` always keeps the previous working executable as `lazarus.old.exe`.
-
-Architecture details: [ADR-004](docs/adr/0004-self-hosted-development.md).
+This plugin was built using itself: Claude edits the source through the tools, calls `ide_rebuild`, and carries on
+in the rebuilt IDE with the same token and port. The loop, why it survives a restart and the boot-loop escape hatch:
+[docs/self-hosted-development.md](docs/self-hosted-development.md). Design: [ADR-004](docs/adr/0004-self-hosted-development.md).
 
 ---
 
@@ -475,70 +141,28 @@ To update the reference: edit `docs/lazarus-knowledge.md`, then run `tools/gen_k
 
 ## Testing
 
-A standalone FPCUnit test project lives in `tests/`. Plugin units without IDE dependencies (utilities, launcher, settings file) are tested in-process. Everything else is tested over HTTP against the running IDE. The `ide_run_tests` tool builds and runs it, or by hand:
-
-```
-lazbuild tests/mcpserver_tests.lpi
-tests/mcpserver_tests.exe --all --format=plain
-```
-
-**Suites:**
-
-| Suite | Count | Requires |
-|---|---|---|
-| `TTestUtils` | 11 | Nothing (always runs) |
-| `TTestJUnitWriter` | 8 | Nothing (always runs) |
-| `TTestLauncher` | 10 | Nothing (always runs): sh quoting, launch script, terminal choice |
-| `TTestSettingsFile` | 3 | Nothing (always runs): settings save/load, obsolete keys removed |
-| `TTestProtocol` | 12 | MCP server reachable: JSON-RPC, `initialize` (version negotiation, instructions) |
-| `TTestAuth` | 7 | MCP server reachable |
-| `TTestProjectTools` | 15 | MCP server reachable: project tool schemas, `project_clean`, dialog tools, `project_list_directory` on a temp folder |
-| `TTestGitWrite` | 16 | MCP server reachable: `git_checkout`/`reset`/`stash`/`commit` (amend)/`branch_delete`/`cherry_pick`/`archive`/`init` on temp repositories |
-| `TTestDialogHooks` | 2 | Only with `MCP_TEST_HOOKS=1` set for the IDE and the test run: opens a real native dialog through a test-only hook and answers it with `ide_answer_dialog` |
-| `TTestSession` | 8 | MCP server reachable: session id, cookie, anonymous, `DELETE /mcp`, 404 for unknown session ids |
-| `TTestToolSmoke` | 22 | MCP server reachable: one call per tool group, on `tests/fixtures/` and temp files; `editor_replace_range`; a file deleted and created again outside the IDE |
-| `TTestPackageEdit` | 6 | MCP server reachable: package editing on `tests/fixtures/fixturepkg/` (changed and changed back); `package_download` refusing an unknown package (no network) |
-| `TTestPackageManage` | 3 | MCP server reachable: `package_create`/`get_settings`/`set_settings`/`compile` (IDE and lazbuild) on a package written to a temp directory, `project_list_files`/`project_search` scoped to it |
-| `TTestFormUndo` | 11 | MCP server reachable: `form_history` and what the `form_*` tools record, on a temp copy of the fixture form |
-| `TTestCodeComplete` | 8 | MCP server reachable: `code_complete` on a temp copy of `tests/fixtures/fixturecomplete.pas` (classes, locals, forward procedures, unsaved edits, a 600-method class, an include file created later) |
-| `TTestCodeFormat` | 7 | MCP server reachable: `code_format` on temp files (whole file, line range, parse errors, include files, trailing lines) |
-| `TTestCodeRename` | 5 | MCP server reachable: `code_rename_identifier` on two temp units (dry run, rename into unsaved editors, unsaved edits, `auto_save`, refusals) |
-| `TTestCodeNav` | 11 | MCP server reachable: descendants, overrides, unit uses, unused symbols, extract method (dry run, real, bad name), move unit (plan, cycle refusal) on small temp units |
-| `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` of a new package is refused; `ide_rebuild` refuses `lpk_path` |
-| `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
-
-The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped. With `MCP_DEBUG_TESTS=1` the debugger suite opens the debuggee project itself and reopens yours afterwards; it stops with an error instead if your project or an editor has unsaved changes.
-
-Architecture details: [ADR-005](docs/adr/0005-fpcunit-test-suite.md).
+A standalone FPCUnit project lives in `tests/`: `lazbuild tests/mcpserver_tests.lpi`, then
+`tests/mcpserver_tests --all --format=plain`, or the `ide_run_tests` tool. Units without IDE dependencies are tested
+in-process; everything else over HTTP against the running IDE. Suites, requirements and options:
+[docs/testing.md](docs/testing.md).
 
 ---
 
 ## Architecture
 
-| Document | Covers |
-|---|---|
-| [ADR-001](docs/adr/0001-mcp-server-transport-and-lifecycle.md) | Transport (Streamable HTTP), security, threading, port & config management |
-| [ADR-002](docs/adr/0002-embedded-terminal-for-claude-code.md) | Embedded terminal (deferred to v1.x; v0.x uses an external console window) |
-| [ADR-003](docs/adr/0003-undo-redo-for-rename-identifier.md) | CodeTools-backed refactoring tools |
-| [ADR-004](docs/adr/0004-self-hosted-development.md) | Self-hosted development: token persistence, rebuild cycle, port stability |
-| [ADR-005](docs/adr/0005-fpcunit-test-suite.md) | FPCUnit test suite: testability boundary, standalone test project layout |
-| [ADR-006](docs/adr/0006-project-lifecycle-tools.md) | Project lifecycle tools: file management, project settings, component search, editor state, run configuration |
-| [ADR-008](docs/adr/0008-structural-source-editing.md) | Token-aware / structural source editing |
-| [ADR-009](docs/adr/0009-debugger-integration.md) | Debugger integration: blocking checkpoint model, and how it was built (polling, async data, the socket-inheritance hang) |
-| [ADR-010](docs/adr/0010-tool-naming-scheme.md) | Tool naming scheme `<category>_<action>`, titles, annotations; v0.7 → v0.8 rename table |
-| [ADR-011](docs/adr/0011-no-ide-modals-in-mcp-sessions.md) | No IDE modals in MCP-driven debug sessions |
-| [ADR-012](docs/adr/0012-multiple-clients.md) | Multiple clients: session identity, debug session lease, debugger lock |
-| [ADR-013](docs/adr/0013-user-consent-before-new-code.md) | User consent before new code enters the IDE (package installs) |
-| [ADR-014](docs/adr/0014-designer-undo.md) | Designer undo: the IDE's undo list, replacement steps, keeping references |
-| [ADR-015](docs/adr/0015-packages-and-bare-programs-addressed-per-call.md) | Packages and bare programs: addressed per call, no active state |
-| [ADR-016](docs/adr/0016-running-without-the-debugger.md) | Running without the debugger: output, exit code, later attach |
-| [ADR-017](docs/adr/0017-declaration-lookup-through-uses-clauses.md) | Declaration lookup through uses clauses; reference search scopes |
-| [ADR-018](docs/adr/0018-https-for-package-download-via-curl.md) | HTTPS for package_download through the curl executable |
-| [ADR-019](docs/adr/0019-debug-attach-without-the-ide-dialog.md) | debug_attach: the IDE's attach path without its process dialog |
-| [ADR-020](docs/adr/0020-listen-address-is-a-setting.md) | The listen address is a setting; the loopback is the default |
-| [ADR-021](docs/adr/0021-named-client-tokens.md) | Named client tokens, stored as tagged hashes and shown once |
+The design decisions are recorded as ADRs; [docs/adr/](docs/adr/README.md) lists them with one line each.
 
-ADR-007 was never assigned; no document is missing.
+---
+
+## Documentation
+
+- [docs/tools.md](docs/tools.md): every tool
+- [docs/write-scope.md](docs/write-scope.md): where the tools may write, limited mode
+- [docs/renamed-tools.md](docs/renamed-tools.md): tools renamed in 1.7.0
+- [docs/testing.md](docs/testing.md): the test suites
+- [docs/self-hosted-development.md](docs/self-hosted-development.md): developing the plugin with itself
+- [docs/adr/](docs/adr/README.md): design decisions
+- [docs/system-prompt.md](docs/system-prompt.md) and [docs/lazarus-knowledge.md](docs/lazarus-knowledge.md): what every client is told
 
 ---
 
