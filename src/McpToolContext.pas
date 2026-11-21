@@ -48,7 +48,9 @@ procedure RegisterMcpSchemas(Fn: TMcpSchemaReg);
   exactly: New project, Open project, Open recent project.  The same goes for
   tools: only project_create and project_open (which also covers "recent")
   pass, plus ide_ping, the liveness probe that the restart poll relies on and
-  that never touches the IDE, and ide_report, which looks for a project itself.
+  that never touches the IDE, ide_report, which looks for a project itself,
+  and ide_get_status, which reports the open project without ever touching it
+  (its project section is omitted when none is open).
   Everything else is refused, so a tool added
   later is safe by default instead of raising an access violation inside the
   IDE (TProject.GetMainFilename, PrepareForCompile, ... all dereference the
@@ -169,7 +171,8 @@ var
 function McpToolNeedsProject(const AToolName: string): Boolean;
 begin
   Result := not ((AToolName = 'project_create') or (AToolName = 'project_open') or
-                 (AToolName = 'ide_ping') or (AToolName = 'ide_report'));
+                 (AToolName = 'ide_ping') or (AToolName = 'ide_report') or
+                 (AToolName = 'ide_get_status'));
 end;
 
 procedure RegisterMcpGroup(Fn: TMcpGroupDispatch);

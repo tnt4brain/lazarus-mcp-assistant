@@ -8,20 +8,15 @@ unit LazMcpAssistant;
 interface
 
 uses
-  McpIdeListeners, McpIdeState, McpLayoutPanel, McpIdeServer, McpToolContext, 
-  McpToolHelpers, McpToolsPackages, McpToolsEditor, McpToolsBuild, 
-  McpToolsCodeTools, McpToolsForms, McpToolsProject, McpToolsGit, 
-  McpToolsDebugger, McpDebugGuard, McpDebugLease, McpConsent, McpLauncher, 
-  McpOptions, McpSettingsFile, McpRefKeeper, McpExceptionLog, McpLineDiff, 
-  McpToolsFormat, McpToolsWindows, McpToolsPkgManage, McpDialogWatch, 
-  McpSessionLog, McpRunProgram, McpTokens, McpTokensOptions, McpToolLog, 
-  McpMessages, McpReport, McpLoggingOptions, McpMarkdown, McpImageInfo, 
-  McpMarkdownView, McpToolsMarkdown, McpReviewView, McpDiff, McpReviewFlow, 
-  McpReviewPaths, McpReviewGutter, McpToolsCodeNav, McpStatements, 
-  McpStatementEdit, McpHeapReport, McpTestHooks, McpNativeDialog, McpGitRun, 
-  McpToolsGitRemote, McpToolsGitHistory, McpConflictFiles, McpGitConflicts, 
-  McpMarkdownHighlight, McpLimitedMode, McpToolScope, McpFoldersOptions, 
-  LazarusPackageIntf;
+  McpIdeListeners, McpIdeState, McpLayoutPanel, McpIdeServer, McpToolContext, McpToolHelpers, McpToolsPackages, 
+  McpToolsEditor, McpToolsBuild, McpToolsCodeTools, McpToolsForms, McpToolsProject, McpToolsGit, McpToolsDebugger, 
+  McpDebugGuard, McpDebugLease, McpConsent, McpLauncher, McpOptions, McpSettingsFile, McpRefKeeper, McpExceptionLog, 
+  McpLineDiff, McpToolsFormat, McpToolsWindows, McpToolsPkgManage, McpDialogWatch, McpSessionLog, McpRunProgram, 
+  McpTokens, McpTokensOptions, McpToolLog, McpMessages, McpReport, McpLoggingOptions, McpMarkdown, McpImageInfo, 
+  McpMarkdownView, McpToolsMarkdown, McpReviewView, McpDiff, McpReviewFlow, McpReviewPaths, McpReviewGutter, 
+  McpToolsCodeNav, McpStatements, McpStatementEdit, McpHeapReport, McpTestHooks, McpNativeDialog, McpGitRun, 
+  McpToolsGitRemote, McpToolsGitHistory, McpConflictFiles, McpGitConflicts, McpMarkdownHighlight, McpLimitedMode, 
+  McpToolScope, McpFoldersOptions, McpToolsStatus, LazarusPackageIntf;
 
 implementation
 

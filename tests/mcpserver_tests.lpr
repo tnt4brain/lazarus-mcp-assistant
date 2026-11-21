@@ -21,7 +21,7 @@ uses
   TUtils, TProtocol, TAuth, TTestInfra,
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
-  TCodeRename, TWindows, TFindDeclaration, TGitWrite, TGitRemote, TGitHistory, TConflictFiles, TTokens,
+  TCodeRename, TWindows, TFindDeclaration, TGitWrite, TGitRemote, TGitHistory, TConflictFiles, TTokens, TStatus,
   TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks, TToolAliases, TWriteScope, TLimitedMode, TSelfTest;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
@@ -186,6 +186,7 @@ begin
     GetTestRegistry.AddTest(TTestProtocol.Suite);
     GetTestRegistry.AddTest(TTestAuth.Suite);
     GetTestRegistry.AddTest(TTestProjectTools.Suite);
+    GetTestRegistry.AddTest(TTestStatus.Suite);
     GetTestRegistry.AddTest(TTestSession.Suite);
     GetTestRegistry.AddTest(TTestToolSmoke.Suite);
     GetTestRegistry.AddTest(TTestToolAliasTable.Suite);
@@ -211,6 +212,9 @@ begin
     else
       WriteLn('Debugger tests skipped (set MCP_DEBUG_TESTS=1, or open ',
               'tests/debuggee/mcpdebuggee.lpi in the IDE).');
+    { opt-in: it closes and reopens whatever project is open }
+    if GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1' then
+      GetTestRegistry.AddTest(TTestStatusClosedProject.Suite);
     { one setup, so one session: a debug lease the first suite leaves behind
       would refuse the second suite's own session }
     if GetEnvironmentVariable('MCP_DEBUG_TESTS') = '1' then
