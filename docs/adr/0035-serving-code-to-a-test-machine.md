@@ -105,7 +105,7 @@ credential to the MCP git tools for an assistant that works through its own IDE.
 
 ## Not done
 
-- No push back to this machine; no HTTPS (a token controls who fetches, not what is read on the
+- No push back to this machine (corrections made on the box come back as a patch: `git diff refs/remotes/mcp/snapshot` there, applied here; a return path into `refs/mcp/incoming/*` is for a later release); no HTTPS (a token controls who fetches, not what is read on the
   wire; the peer limit and the minutes keep that small, a tunnel covers anything wider).
 - No automatic firewall change. Windows asks once, or the person allows the port: the first
   start tells them when the peer cannot connect.

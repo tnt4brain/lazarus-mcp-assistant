@@ -293,6 +293,9 @@ Testing on another machine ([ADR-035](adr/0035-serving-code-to-a-test-machine.md
   `status`, `stop`. A machine without a link: `start` asks the user
   every time and returns ready `bash` and `powershell` commands with a code of a minute
   ([`scripts/mcp-pull.sh`](../scripts/mcp-pull.sh) does the same from a file).
+  The traffic is one way: a fix made on the other machine does not come back by itself. There, `git diff
+  refs/remotes/mcp/snapshot` gives the change; the assistant reads it through its shell and applies it
+  here (a return path is planned, see ADR-035).
 
 For the file open in the editor: `git_blame` (who last changed a line, and in
 which commit) defaults to the active editor's file and cursor line, and blames
