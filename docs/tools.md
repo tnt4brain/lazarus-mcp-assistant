@@ -35,7 +35,7 @@ prompts, skills and permission allow-lists, is in [renamed-tools.md](renamed-too
 | `editor_open` | Open a file in the editor without moving the cursor; returns `already_open` |
 | `editor_create_file` | Create a new text file on the IDE's machine and open it; only inside the project, a loaded package's folder or the temp folder, never in `.git`, no overwrite unless `overwrite:true` (and not while open) |
 | `editor_set_cursor` | Move the cursor (opens the file if needed) |
-| `editor_edit_text` | **Preferred edit.** Replace `old_string` with `new_string`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
+| `editor_edit_text` | **Preferred edit.** Replace `old_text` with `new_text`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
 | `editor_replace_range` | Replace a range given by start and end, or start and `delete_len` (no end inserts, empty text deletes) — for coordinates from `code_*` tools |
 | `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
 | `editor_revert` | Discard unsaved changes and reload from disk |
@@ -151,7 +151,7 @@ debugger call runs at a time. See [ADR-012](adr/0012-multiple-clients.md).
 
 | Tool | Description |
 |---|---|
-| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`data` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
+| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`watch_expression` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
 | `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code`; a stop on a breakpoint says `reason: "breakpoint"`; if no session starts (a failed build) the answer is an error saying so |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
 | `debug_step` (`kind` over / into / out) | F8 / F7 / Shift+F8 |

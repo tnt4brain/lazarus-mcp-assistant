@@ -69,12 +69,12 @@ const
 
   SCHEMA_EDIT_TEXT =
     '{"type":"object","properties":{' +
-    '"old_string":{"type":"string","description":"Exact text to find and replace (must be unique unless replace_all=true)"},' +
-    '"new_string":{"type":"string","description":"Replacement text; empty string to delete the match"},' +
+    '"old_text":{"type":"string","description":"Exact text to find and replace (must be unique unless replace_all=true)"},' +
+    '"new_text":{"type":"string","description":"Replacement text; empty string to delete the match"},' +
     '"file":{"type":"string","description":"Absolute path to the file; omit to edit the active editor"},' +
     '"replace_all":{"type":"boolean","description":"Replace all occurrences (default false — fails if >1 match)"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
-    '"required":["old_string","new_string"]}';
+    '"required":["old_text","new_text"]}';
 
   SCHEMA_SAVE_FILE =
     '{"type":"object","properties":{' +
@@ -601,15 +601,15 @@ begin
       Result := True;
       if not Assigned(Ctx.Params) then
       begin
-        Ctx.Error := True; Ctx.Result := 'old_string and new_string required'; Exit;
+        Ctx.Error := True; Ctx.Result := 'old_text and new_text required'; Exit;
       end;
-      SyncOldStr   := Ctx.Params.Get('old_string',  '');
-      SyncNewName  := Ctx.Params.Get('new_string',  '');
+      SyncOldStr   := Ctx.Params.Get('old_text',    '');
+      SyncNewName  := Ctx.Params.Get('new_text',    '');
       SyncReplAll  := Ctx.Params.Get('replace_all', False);
       SyncAutoSave := Ctx.Params.Get('auto_save',   False);
       if SyncOldStr = '' then
       begin
-        Ctx.Error := True; Ctx.Result := 'old_string must not be empty'; Exit;
+        Ctx.Error := True; Ctx.Result := 'old_text must not be empty'; Exit;
       end;
       SyncFilePath := Ctx.Params.Get('file', '');
       if SyncFilePath <> '' then
@@ -658,14 +658,14 @@ begin
         if SyncMatchPositions.Count = 0 then
         begin
           Ctx.Error  := True;
-          Ctx.Result := 'old_string not found in ' + Ed.FileName;
+          Ctx.Result := 'old_text not found in ' + Ed.FileName;
           Exit;
         end;
         if (SyncMatchPositions.Count > 1) and not SyncReplAll then
         begin
           Ctx.Error  := True;
-          Ctx.Result := 'old_string matches ' + IntToStr(SyncMatchPositions.Count) +
-            ' times; pass replace_all=true to replace all, or narrow old_string';
+          Ctx.Result := 'old_text matches ' + IntToStr(SyncMatchPositions.Count) +
+            ' times; pass replace_all=true to replace all, or narrow old_text';
           Exit;
         end;
         for I := SyncMatchPositions.Count - 1 downto 0 do
@@ -866,7 +866,7 @@ begin
     'temp folder; anything else is refused.',
     SCHEMA_REPLACE_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_edit_text',
-    'Replace old_string with new_string in the editor buffer (opens the file if ' +
+    'Replace old_text with new_text in the editor buffer (opens the file if ' +
     'needed; Ctrl+Z works). Prefer this over editor_replace_range: no stale line numbers. ' +
     'Only files inside the project, a loaded package, the git working tree holding either, or the ' +
     'temp folder; anything else is refused.',

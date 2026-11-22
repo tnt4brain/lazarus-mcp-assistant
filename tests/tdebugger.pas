@@ -223,7 +223,7 @@ begin
              '{"address":' + JsonStr(B.Get('address', '')) + '}')
       else if Kd = 'data' then
         Call(ASession, 'debug_remove_breakpoint',
-             '{"data":' + JsonStr(B.Get('data', '')) + ',"scope":' + JsonStr(B.Get('scope', '')) +
+             '{"watch_expression":' + JsonStr(B.Get('watch_expression', '')) + ',"scope":' + JsonStr(B.Get('scope', '')) +
              ',"watch":' + JsonStr(B.Get('watch', '')) + '}')
       else
         Call(ASession, 'debug_remove_breakpoint',
@@ -550,7 +550,7 @@ procedure TTestDebugger.TestDataBreakpoint;
 var
   T : string;
 begin
-  T := Call(GSessA, 'debug_set_breakpoint', '{"data":"Counter"}');
+  T := Call(GSessA, 'debug_set_breakpoint', '{"watch_expression":"Counter"}');
   CheckEquals('data', JPath(T, 'kind'), 'set: ' + T);
   CheckEquals('write', JPath(T, 'watch'), T);
   T := Call(GSessA, 'debug_run', '{"timeout_s":60,"lease_idle_timeout":60}');

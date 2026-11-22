@@ -122,3 +122,22 @@ and new calls compared, and a test that the shipped documents name no retired to
 - The tool set can be fixed without a day of breakage, and the major version marks the day an old
   name stops working.
 - A client that never reads the deprecation line keeps working until 2.0.
+
+## Amendment 1: three of the four rejected renames, taken after all (1.8.1, 2026-11-22)
+
+A review of the tool names found them inconsistent, and the layer exists to make such a change cost nothing, so
+three of the renames that section 5 decided against are done:
+
+- `editor_edit_text`: `old_string`/`new_string` → `old_text`/`new_text`. The names no longer
+  match the Edit tool of the assistants that use this server; that was the reason for keeping
+  them, and the weakest of the three changes, taken for a name that says what the value is.
+- `git_log` `max_count`, `package_search_online`, `code_find_descendants` and `code_find_overrides`
+  `max_results` → `limit`: one name for "stop after this many".
+- `debug_set_breakpoint` `data` → `watch_expression`. The answer of the breakpoint tools
+  carries both `data` and `watch_expression`, so a client that reads the field keeps working.
+
+Seven entries in the table, each with its row in `docs/renamed-tools.md`. **Still decided
+against:** `name` → `package_name` / `component_name`. The reasons in section 5 are technical
+(the write-scope and package guards read `package_name` as "a loaded package"; the form tools
+resolve `component_name` as an existing component), not a matter of taste, and they have not
+changed.

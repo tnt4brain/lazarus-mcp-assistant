@@ -138,7 +138,7 @@ const
       'description, category or .lpk names/descriptions, e.g. \"chart\", \"rich memo\", \"zip\". Empty lists everything."},' +
     '"category":{"type":"string","description":"Only packages whose category contains this text, e.g. Graphics, ' +
       'Networking, DataControls, LazIDEPlugins"},' +
-    '"max_results":{"type":"integer","description":"Most packages to return (default 20; less than 1 also means 20)"}}}';
+    '"limit":{"type":"integer","description":"Most packages to return (default 20; less than 1 also means 20)"}}}';
 
   OPM_REPOSITORY_URL = 'https://packages.lazarus-ide.org/';
 
@@ -253,7 +253,7 @@ begin
   begin
     Words    := LowerCase(Trim(AParams.Get('query', ''))).Split([' '], TStringSplitOptions.ExcludeEmpty);
     Category := LowerCase(Trim(AParams.Get('category', '')));
-    MaxRes   := AParams.Get('max_results', 20);
+    MaxRes   := AParams.Get('limit', 20);
   end;
   if MaxRes < 1 then MaxRes := 20;
 

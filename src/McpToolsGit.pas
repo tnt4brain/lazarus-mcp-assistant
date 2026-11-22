@@ -47,7 +47,7 @@ const
 
   SCHEMA_GIT_LOG =
     '{"type":"object","properties":{' +
-    '"max_count":{"type":"integer","description":"Maximum number of commits to show (default 20; 0 shows none)"},' +
+    '"limit":{"type":"integer","description":"Maximum number of commits to show (default 20; 0 shows none)"},' +
     '"branch":{"type":"string","description":"Branch or ref to log; defaults to HEAD"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
@@ -763,7 +763,7 @@ begin
       Branch   := '';
       if Assigned(Ctx.Params) then
       begin
-        MaxCount := Ctx.Params.Get('max_count', 20);
+        MaxCount := Ctx.Params.Get('limit', 20);
         Branch   := Ctx.Params.Get('branch', '');
       end;
       GitArgs := TStringList.Create;
@@ -1269,7 +1269,7 @@ begin
     'Defaults to the active editor''s file and cursor line; unsaved edits count as uncommitted.',
     SCHEMA_GIT_BLAME, MCP_ANN_RO));
   Tools.Add(MakeTool('git_log',
-    'Show recent commit history as one-line summaries. max_count defaults to 20.',
+    'Show recent commit history as one-line summaries. limit defaults to 20.',
     SCHEMA_GIT_LOG, MCP_ANN_RO));
   Tools.Add(MakeTool('git_add',
     'Stage files for the next commit. Pass an array of file or directory paths.',

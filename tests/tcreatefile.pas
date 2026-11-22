@@ -220,7 +220,7 @@ var
 begin
   if not FileExists(SystemFile) then Ignore('no ' + SystemFile);
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(SystemFile) +
-    ',"old_string":"zzz_never_there","new_string":"x"}', []);
+    ',"old_text":"zzz_never_there","new_text":"x"}', []);
   CheckTrue(IsError(T), T);
   CheckTrue(Pos('Refused', T) > 0, T);
 end;
@@ -258,7 +258,7 @@ begin
   Root := RepoRoot;
   if Root = '' then Ignore('the checkout was not found from ' + ParamStr(0));
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(Root + 'docs' + PathDelim + 'adr' + PathDelim +
-    'README.md') + ',"old_string":"zzz_never_there","new_string":"x"}', []);
+    'README.md') + ',"old_text":"zzz_never_there","new_text":"x"}', []);
   CheckTrue(IsError(T), 'the text is not there: ' + T);
   CheckTrue(Pos('Refused', T) = 0, 'but it was not refused: ' + T);
 end;
@@ -363,7 +363,7 @@ begin
   T := Call('{"file":' + JsonStr(F) + ',"text":"x"}');
   CheckTrue(IsError(T) and (Pos('Refused', T) > 0), 'editor_create_file in the LCL folder: ' + T);
   CheckFalse(FileExists(F), 'nothing was written');
-  T := CallToolText('editor_edit_text', '{"file":' + JsonStr(Lpk) + ',"old_string":"a","new_string":"b"}', []);
+  T := CallToolText('editor_edit_text', '{"file":' + JsonStr(Lpk) + ',"old_text":"a","new_text":"b"}', []);
   CheckTrue(IsError(T) and (Pos('Refused', T) > 0), 'editor_edit_text on lcl.lpk: ' + T);
 end;
 

@@ -383,10 +383,10 @@ procedure TTestGitWrite.TestLog;
 var
   T : string;
 begin
-  T := Tool('git_log', '"max_count":1');
+  T := Tool('git_log', '"limit":1');
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('second', T) > 0, T);
-  CheckEquals(0, Pos('first', T), 'max_count honoured: ' + T);
+  CheckEquals(0, Pos('first', T), 'limit honoured: ' + T);
 end;
 
 { A directory with a file in it, outside the repository of SetUp. }

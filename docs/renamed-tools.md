@@ -1,6 +1,6 @@
 # Renamed tools and parameters
 
-Version 1.7.0 gave the tools one name for each idea (ADR-031). **Every old name still works
+Version 1.7.0 gave the tools one name for each idea (ADR-031); 1.8.1 added `old_text`/`new_text`, `limit` and `watch_expression`. **Every old name still works
 through all of 1.x and is refused from 2.0 on.** A call with an old name is translated to the
 new one; the first time a session uses it, the result carries one extra line:
 
@@ -35,6 +35,10 @@ matching; replace it with the new name (`mcp__lazarus-ide__debug_step`).
 | `debug_set_breakpoint`, `debug_remove_breakpoint`, `debug_run_to_line`, `editor_open`, `project_add_file`, `project_remove_file`, `project_open` | `file_path` | `file` |
 | `editor_read_file` | `path` | `file` |
 | `project_create_unit` | `filename` | `file` |
+| `editor_edit_text` | `old_string`, `new_string` | `old_text`, `new_text` |
+| `git_log` | `max_count` | `limit` |
+| `package_search_online`, `code_find_descendants`, `code_find_overrides` | `max_results` | `limit` |
+| `debug_set_breakpoint` | `data` | `watch_expression` |
 
 Giving the old and the new parameter together is fine if the values are equal and an error if
 they differ.

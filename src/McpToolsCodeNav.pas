@@ -37,7 +37,7 @@ const
     '"line":{"type":"integer","description":"Line (1-based) of the class name: its declaration or any use"},' +
     '"col":{"type":"integer","description":"Column (1-based) of the class name"},' +
     '"direct_only":{"type":"boolean","description":"Only the classes that name it in their heritage list (default false: the whole tree below it)"},' +
-    '"max_results":{"type":"integer","description":"Stop after this many classes (default 500; 0 finds none)"},' +
+    '"limit":{"type":"integer","description":"Stop after this many classes (default 500; 0 finds none)"},' +
     SCOPE_PROPS + '},"required":["file","line","col"]}';
 
   SCHEMA_OVERRIDES =
@@ -45,7 +45,7 @@ const
     '"file":{"type":"string","description":"Absolute path of the file with the method"},' +
     '"line":{"type":"integer","description":"Line (1-based) of the method name in its class declaration, its implementation or a call"},' +
     '"col":{"type":"integer","description":"Column (1-based) of the method name"},' +
-    '"max_results":{"type":"integer","description":"Stop after this many classes (default 500; 0 finds none)"},' +
+    '"limit":{"type":"integer","description":"Stop after this many classes (default 500; 0 finds none)"},' +
     SCOPE_PROPS + '},"required":["file","line","col"]}';
 
   SCHEMA_DEPENDENCIES =
@@ -329,7 +329,7 @@ begin
     if not McpScopeFiles(Ctx.Params, DCode, DX, DY, Files, Used, Trunc, Searched, Err) then
       Exit(Fail(Ctx, Err));
     if not CollectDescendants(DCode, DX, DY, Name, Files, Ctx.Params.Get('direct_only', False),
-             Ctx.Params.Get('max_results', 500), Infos, Capped, Err) then
+             Ctx.Params.Get('limit', 500), Infos, Capped, Err) then
       Exit(Fail(Ctx, Err));
     Obj := TJSONObject.Create;
     try
@@ -436,7 +436,7 @@ begin
     if not McpScopeFiles(Ctx.Params, DCode, At.X, At.Y, Files, Used, Trunc, Searched, Err) then
       Exit(Fail(Ctx, Err));
     if not CollectDescendants(DCode, At.X, At.Y, ClassName, Files, False,
-             Ctx.Params.Get('max_results', 500), Infos, Capped, Err) then
+             Ctx.Params.Get('limit', 500), Infos, Capped, Err) then
       Exit(Fail(Ctx, Err));
     Arr := TJSONArray.Create;
     Obj := TJSONObject.Create;
