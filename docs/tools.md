@@ -278,7 +278,7 @@ Remotes and history ([ADR-028](adr/0028-git-remote-and-history-tools.md)):
   own state and reported with the files and the next steps. Rebase and squash (and `git_reset`) warn when
   commits that are already on a remote would be rewritten. They need git 2.38 (`git_merge`: 2.27).
 
-Testing on another machine ([ADR-035](adr/0035-serving-code-to-a-test-machine.md), prototype):
+Testing on another machine ([ADR-035](adr/0035-serving-code-to-a-test-machine.md)):
 
 - `git_serve` lets **one** other machine fetch the repository that holds the open project, read-only,
   over plain HTTP. `link` asks the user once and returns a setup for that machine (a remote `mcp` and a
@@ -288,7 +288,9 @@ Testing on another machine ([ADR-035](adr/0035-serving-code-to-a-test-machine.md
   `minutes`), then `git_fetch` and `git_reset` on the other machine. Only the linked address can connect,
   the password is a code that changes every 30 seconds (TOTP), five wrong codes close the door for five
   minutes. With `snapshot` (the default) the tracked files go as they are on disk, uncommitted changes
-  included. Also `unlink`, `links`, `status`, `stop`. A machine without a link: `start` asks the user
+  included. Untracked files stay home unless `include` names them (paths or patterns relative to the
+  repository root, e.g. a new unit); every `start` says how many were left out. Also `unlink`, `links`,
+  `status`, `stop`. A machine without a link: `start` asks the user
   every time and returns ready `bash` and `powershell` commands with a code of a minute
   ([`scripts/mcp-pull.sh`](../scripts/mcp-pull.sh) does the same from a file).
 

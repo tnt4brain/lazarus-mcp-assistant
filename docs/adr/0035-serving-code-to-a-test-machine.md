@@ -1,6 +1,6 @@
 # ADR-035 — Serving the open project's code to a test machine
 
-**Status:** Proposed (2026-11-21). A prototype is being built on branch `feat/git-serve`. Replaces the first draft of the same day
+**Status:** Accepted (2026-11-22), for 1.8.0. Built on branch `feat/git-serve`. Replaces the first draft of the same day
 (a TOTP login and new parameters on the git tools), which solved a problem this situation lacks.
 **Date:** 2026-11-21
 
@@ -128,9 +128,8 @@ credential to the MCP git tools for an assistant that works through its own IDE.
 
 ## Open questions
 
-- Version: 1.7.1 or 1.8.0.
-- Snapshot in the first build, or the committed state only.
-- (Settled in the prototype: both `bash` and `powershell` texts are in the answer.)
+- (Settled: 1.8.0, a new tool; the snapshot and `include` are in the first build; both `bash` and
+  `powershell` texts are in the answer.)
 
 ## Amendment 1: a link, so that nothing asks twice (2026-11-21)
 
@@ -174,5 +173,17 @@ unit), `McpToolsGitServe.pas` (`git_serve`), `scripts/mcp-pull.sh` (the remote p
 `tests/tgitservetests.pas` (RFC 2202 and RFC 6238 vectors; a real `git fetch` with the right code, a
 wrong code, a code of another token, the lockout and `stop`). Differences from the text above:
 the snapshot uses `git stash create` (decision 5); `include` was built afterwards (decision 5); the request is limited to
-64 MB and 10 minutes; gzip and chunked request bodies are understood. Not yet checked by hand: the
-consent dialog, the Windows firewall prompt, a fetch from the Linux box.
+64 MB and 10 minutes; gzip and chunked request bodies are understood. Checked by hand (2026-11-21/22): the consent dialog of `link`;
+a linked `start` without a dialog; a fetch and `reset --hard` from two containers on the Linux
+test host, one with `instantfpc` (the FPC helper) and one without FPC (the shell helper); the
+listener closing itself after the fetch; `include`. No Windows firewall prompt appeared, since the
+IDE already was allowed to accept connections.
+
+Found on the way: Git for Windows lists Git Credential Manager as a system credential helper, which
+opened a window and asked for a password when the server answered 401. The setup therefore puts an
+empty `credential.helper` entry first (it clears the inherited list), and the tests pass
+`-c credential.helper=` to every git call.
+
+Limits: one link per peer address, so a second container behind the same host address replaces the
+first one's key; the clock of the other machine must be within about a minute of this one
+(one 30-second step either side is accepted).
