@@ -136,7 +136,7 @@ three of the renames that section 5 decided against are done:
 - `debug_set_breakpoint` `data` → `watch_expression`. The answer of the breakpoint tools
   carries both `data` and `watch_expression`, so a client that reads the field keeps working.
 
-Ten entries in the table, each with its row in `docs/renamed-tools.md`. **Still decided
+Eleven entries in the table, each with its row in `docs/renamed-tools.md`. **Still decided
 against:** `name` → `package_name` / `component_name`. The reasons in section 5 are technical
 (the write-scope and package guards read `package_name` as "a loaded package"; the form tools
 resolve `component_name` as an existing component), not a matter of taste, and they have not
@@ -148,3 +148,8 @@ and `git_cherry_pick` (`commit`, which also took a range) and `git_log` (`branch
 `target` of `git_checkout` and `git_reset` (a revision **or a file path**, and with `create` the new branch),
 `upstream`/`onto` of `git_rebase`, `since` of `git_squash`, `start_point`, and `branch` where a branch
 (not any revision) is required (`git_branch_delete`, `git_push`, `git_pull`, `git_clone`).
+
+`git_push` `tags` (an array of tag names) became `tag_names`, because `git_fetch` `tags` is a boolean: it
+was the only parameter name with two types. And `debug_get_output` and `ide_get_exceptions` are no longer
+marked read-only: their `clear` flag drops the buffer they returned, and a client that lets read-only
+tools through unasked would clear it unasked (they are in the `g` list of `McpToolScope`: no file).

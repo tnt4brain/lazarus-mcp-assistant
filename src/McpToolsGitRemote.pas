@@ -92,7 +92,7 @@ const
     '"branch":{"type":"string","description":"Local branch to push, to the branch of the same name. Default: the current branch"},' +
     '"force":{"type":"boolean","description":"Overwrite the remote branch (--force-with-lease against what you last fetched). The user is asked a second question that names the commits it would discard"},' +
     '"set_upstream":{"type":"boolean","description":"Make the remote branch the branch''s upstream (default false)"},' +
-    '"tags":{"type":"array","items":{"type":"string"},"description":"Names of tags to push as well, one by one (never all tags)"},' +
+    '"tag_names":{"type":"array","items":{"type":"string"},"description":"Names of tags to push as well, one by one (never all tags)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository (default: the project''s directory)"}},' +
     '"required":[]}';
 
@@ -108,7 +108,7 @@ const
 
   SCHEMA_GIT_TAG =
     '{"type":"object","properties":{' +
-    '"action":{"type":"string","enum":["list","create","delete"],"description":"Local tags only; pushing one is git_push with tags"},' +
+    '"action":{"type":"string","enum":["list","create","delete"],"description":"Local tags only; pushing one is git_push with tag_names"},' +
     '"name":{"type":"string","description":"Tag name (create, delete)"},' +
     '"message":{"type":"string","description":"create: the message of the annotated tag (required unless lightweight)"},' +
     '"ref":{"type":"string","description":"create: what to tag (default HEAD)"},' +
@@ -583,7 +583,7 @@ var
 begin
   AWhy := '';
   if not Assigned(Ctx.Params) then Exit;
-  Data := Ctx.Params.Find('tags');
+  Data := Ctx.Params.Find('tag_names');
   if not (Data is TJSONArray) then Exit;
   for Item in TJSONArray(Data) do
   begin
@@ -1107,7 +1107,7 @@ begin
     SCHEMA_GIT_PUSH, MCP_ANN_PUSH));
   Tools.Add(MakeTool('git_tag',
     'List, create (annotated by default) or delete local tags. A tag is never moved: delete it ' +
-    'first. Pushing one is git_push with tags.',
+    'first. Pushing one is git_push with tag_names.',
     SCHEMA_GIT_TAG, MCP_ANN_DEST));
 end;
 

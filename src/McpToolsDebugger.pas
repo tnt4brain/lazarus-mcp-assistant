@@ -2687,8 +2687,9 @@ begin
     SCHEMA_NO_PARAMS, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_get_output',
     'Return what the program wrote to its console (stdout/stderr) and the ' +
-    'debugger''s own output/messages in the current or last debug session.',
-    SCHEMA_GET_OUTPUT, MCP_ANN_RO));
+    'debugger''s own output/messages in the current or last debug session. ' +
+    'clear=true drops what it returned, which is why the tool is not marked read-only.',
+    SCHEMA_GET_OUTPUT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_get_exception',
     'Return information about the current exception of the program being debugged when ' +
     'the debugger is paused ' +

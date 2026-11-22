@@ -195,8 +195,9 @@ begin
     'debug_get_exception) that it showed in its error dialog since it started ' +
     '(access violations and others, outside tool calls), newest last: class, ' +
     'message, stack, and the last MCP tool called before. Also appended to ' +
-    'log_file, which survives a restart.',
-    SCHEMA_IDE_GET_EXCEPTIONS, MCP_ANN_RO));
+    'log_file, which survives a restart. clear=true forgets the listed ones, which is why ' +
+    'the tool is not marked read-only.',
+    SCHEMA_IDE_GET_EXCEPTIONS, MCP_ANN_WRITE_IDEM));
 end;
 
 procedure InitializeExceptionLog;

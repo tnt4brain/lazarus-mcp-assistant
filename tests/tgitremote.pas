@@ -429,7 +429,7 @@ var
 begin
   Git(FWork, ['tag', '-a', 'v1', '-m', 'one']);
   Git(FWork, ['tag', 'v2']);
-  T := Tool('git_push', '"tags":["nope"]');
+  T := Tool('git_push', '"tag_names":["nope"]');
   CheckTrue(IsError(T) and (Pos('Not a tag', T) > 0), 'refused before asking: ' + T);
 
   Arm('yes');
