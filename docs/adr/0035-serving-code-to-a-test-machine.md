@@ -78,8 +78,15 @@ Git moves commits, and the code to test is usually not committed. `snapshot=true
 of the **tracked** files as they are on disk (`git stash create`, which makes the commit without
 touching the stash list, then `update-ref`; HEAD itself when nothing changed) under
 `refs/mcp/snapshot`. The branches and the working tree are not touched. Untracked files are left
-out: private notes next to the code must not travel. (`include` for named untracked files is not
-in the first build.) Saved files only: an unsaved editor buffer is not on disk, and the tool says
+out: private notes next to the code must not travel. `include` (a list of paths or patterns
+relative to the repository root) sends the named untracked files as well: the snapshot is then
+built in a throwaway index (`GIT_INDEX_FILE`: `read-tree` of the stash commit, `add --` of the
+named paths, `write-tree`, `commit-tree` on HEAD), so the real index and the working tree are never
+touched; ignored files are not sent, a name that matches nothing is refused, an entry that starts
+with `-` is refused. Every start says which files were included and how many untracked files were
+left out (with the first ten names), so a unit missing on the other machine is not a mystery.
+For a linked machine there is no dialog, so the assistant that holds the link may name any file
+of the repository; it could read the same file anyway. Saved files only: an unsaved editor buffer is not on disk, and the tool says
 how many there are.
 
 ### 6. Two parts: the server here, a pull step there
@@ -166,6 +173,6 @@ Built on branch `feat/git-serve`, not released: `McpGitServe.pas` (listener, TOT
 unit), `McpToolsGitServe.pas` (`git_serve`), `scripts/mcp-pull.sh` (the remote part), tests in
 `tests/tgitservetests.pas` (RFC 2202 and RFC 6238 vectors; a real `git fetch` with the right code, a
 wrong code, a code of another token, the lockout and `stop`). Differences from the text above:
-the snapshot uses `git stash create` (decision 5); `include` is not built; the request is limited to
+the snapshot uses `git stash create` (decision 5); `include` was built afterwards (decision 5); the request is limited to
 64 MB and 10 minutes; gzip and chunked request bodies are understood. Not yet checked by hand: the
 consent dialog, the Windows firewall prompt, a fetch from the Linux box.

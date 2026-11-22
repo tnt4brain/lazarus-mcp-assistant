@@ -36,6 +36,7 @@ const
     '"minutes":{"type":"integer","description":"start: how long to serve (default 15, at most 60)"},' +
     '"fetches":{"type":"integer","description":"start, linked machine: close after this many fetches (default 1; 0 = until minutes run out)"},' +
     '"snapshot":{"type":"boolean","description":"start: serve the tracked files as they are on disk, uncommitted changes included (default true); false serves the checked-out commit"},' +
+    '"include":{"type":"array","items":{"type":"string"},"description":"start: untracked files to send as well, as paths or patterns relative to the repository root (e.g. src/NewUnit.pas, tests/*.pas); ignored files and everything not named stay home"},' +
     '"port":{"type":"integer","description":"link: the port to keep (default: a free one is chosen)"},' +
     '"target":{"type":"string","description":"link, start without a link: the folder on the other machine the commands use (default mcp-code)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository (default: the project''s directory)"}},' +
@@ -479,11 +480,149 @@ end;
 
 { ── start ────────────────────────────────────────────────────────────────── }
 
-procedure DoStart(var Ctx: TMcpToolCall);
+const
+  MAX_INCLUDE   = 100;
+  QUERY_TIMEOUT = 60 * 1000;
+
+{ The include parameter: pathspecs of untracked files to send as well (a single string counts as
+  a list of one).  '' when it is fine, else why not. }
+function ReadIncludes(const Ctx: TMcpToolCall; AList: TStrings): string;
+var
+  D : TJSONData;
+  I : Integer;
+  S : string;
+begin
+  Result := '';
+  if not Assigned(Ctx.Params) then Exit;
+  D := Ctx.Params.Find('include');
+  if (D = nil) or D.IsNull then Exit;
+  if D is TJSONArray then
+    for I := 0 to TJSONArray(D).Count - 1 do
+      AList.Add(Trim(TJSONArray(D).Items[I].AsString))
+  else if D.JSONType = jtString then
+    AList.Add(Trim(D.AsString))
+  else
+    Exit('include is a list of paths or patterns, relative to the repository root.');
+  if AList.Count > MAX_INCLUDE then
+    Exit('include takes at most ' + IntToStr(MAX_INCLUDE) + ' entries.');
+  for I := 0 to AList.Count - 1 do
+  begin
+    S := AList[I];
+    if (S = '') or (S[1] = '-') or (Pos(#10, S) > 0) or (Pos(#13, S) > 0) then
+      Exit('include: "' + S + '" is not a path or a pattern.');
+  end;
+end;
+
+function JoinList(AList: TStrings; AMax: Integer): string;
+var
+  I : Integer;
+begin
+  Result := '';
+  for I := 0 to AList.Count - 1 do
+  begin
+    if I >= AMax then
+    begin
+      Result := Result + ', ... (' + IntToStr(AList.Count - AMax) + ' more)';
+      Break;
+    end;
+    if I > 0 then Result := Result + ', ';
+    Result := Result + AList[I];
+  end;
+end;
+
+{ A commit on top of AHead whose tree is ABase (the tracked files as on disk) plus the untracked
+  files that match ASpecs.  Made in a throwaway index, so the real index, the working tree and
+  the branches stay as they are.  AAdded gets the files that were new. }
+function SnapshotWithFiles(const G: TGit; const ABase, AHead: string; ASpecs: TStrings;
+  out ASha: string; AAdded: TStrings; out AWhy: string): Boolean;
+var
+  Idx, Env, Text, Tree : string;
+  AddArgs : array of string;
+  I : Integer;
+
+  function Run(const Args: array of string; AUseIndex: Boolean): Boolean;
+  begin
+    if AUseIndex then
+      Result := RunGitTimed(G.Exe, Args, G.Dir, QUERY_TIMEOUT, Text, '', Env)
+    else
+      Result := RunGitTimed(G.Exe, Args, G.Dir, QUERY_TIMEOUT, Text);
+  end;
+
+begin
+  Result := False;
+  ASha   := '';
+  AWhy   := '';
+  Idx := GetTempFileName(GetTempDir, 'mcpidx');
+  DeleteFile(Idx);   { git wants an index that does not exist yet, not an empty file }
+  Env := 'GIT_INDEX_FILE=' + Idx;
+  try
+    if not Run(['read-tree', ABase], True) then
+    begin
+      AWhy := 'read-tree: ' + Trim(Text);
+      Exit;
+    end;
+    SetLength(AddArgs, ASpecs.Count + 2);
+    AddArgs[0] := 'add';
+    AddArgs[1] := '--';
+    for I := 0 to ASpecs.Count - 1 do
+      AddArgs[I + 2] := ASpecs[I];
+    if not Run(AddArgs, True) then
+    begin
+      AWhy := 'include: ' + Trim(Text);
+      Exit;
+    end;
+    if Run(['diff', '--cached', '--name-only', '--no-renames', ABase], True) then
+      AAdded.Text := Trim(Text);
+    if not Run(['write-tree'], True) then
+    begin
+      AWhy := 'write-tree: ' + Trim(Text);
+      Exit;
+    end;
+    Tree := Trim(Text);
+    { the commit only carries the tree: no signing, an identity of its own }
+    if not Run(['-c', 'user.name=mcp', '-c', 'user.email=mcp@localhost',
+        '-c', 'commit.gpgsign=false', 'commit-tree', Tree, '-p', AHead, '-m', 'mcp snapshot'],
+        False) then
+    begin
+      AWhy := 'commit-tree: ' + Trim(Text);
+      Exit;
+    end;
+    ASha   := Trim(Text);
+    Result := True;
+  finally
+    DeleteFile(Idx);
+  end;
+end;
+
+{ Untracked files git does not ignore and the snapshot does not carry. }
+procedure UntrackedLeftOut(const G: TGit; AAdded, ALeft: TStrings);
+var
+  Text : string;
+  L    : TStringList;
+  I    : Integer;
+begin
+  ALeft.Clear;
+  if not RunGitTimed(G.Exe, ['-c', 'core.quotepath=false', 'ls-files', '--others',
+      '--exclude-standard'], G.Dir, QUERY_TIMEOUT, Text) then Exit;
+  L := TStringList.Create;
+  try
+    L.Text := Trim(Text);
+    for I := 0 to L.Count - 1 do
+      if (L[I] <> '') and (AAdded.IndexOf(L[I]) < 0) then ALeft.Add(L[I]);
+  finally
+    L.Free;
+  end;
+end;
+
+procedure DoStartWith(var Ctx: TMcpToolCall; ASpecs, AAdded: TStringList);
 var
   Main    : TMainPart;
   Unsaved : TUnsaved;
   G       : TGit;
+  Head, NewSha : string;
+  Left_   : TStringList;
+  Names   : TJSONArray;
+  I       : Integer;
   Peer, Why, Root, Sha, Snap, Note, Code, Target, Key : string;
   Minutes, Left, Fetches : Integer;
   Snapshot, Linked : Boolean;
@@ -524,6 +663,11 @@ begin
   if not Linked then Fetches := 0;
   Snapshot := (not Assigned(Ctx.Params)) or Ctx.Params.Get('snapshot', True);
   Target := StrParam(Ctx, 'target', 'mcp-code');
+  if (ASpecs.Count > 0) and not Snapshot then
+  begin
+    Refused(Ctx, 'include needs snapshot (the default): it adds files to the snapshot.');
+    Exit;
+  end;
 
   GLock.Enter;
   try
@@ -552,6 +696,8 @@ begin
         ', ' + IntToStr(Unsaved.Count) + ' unsaved editor buffer(s) NOT included', '')
     else
       Snap := 'the checked-out commit ' + Copy(Sha, 1, 10);
+    if ASpecs.Count > 0 then
+      Snap := Snap + '; plus the untracked files matching: ' + JoinList(ASpecs, 10);
 
     if not Linked then
     begin
@@ -579,11 +725,21 @@ begin
   end;
 
   { the commit to serve: the files as they are, or HEAD; always under one name }
-  Sha := QueryText(G, ['rev-parse', '--verify', 'HEAD']);
+  Sha  := QueryText(G, ['rev-parse', '--verify', 'HEAD']);
+  Head := Sha;
   if Snapshot then
   begin
     Key := QueryText(G, ['stash', 'create']);
     if Key <> '' then Sha := Key;
+    if ASpecs.Count > 0 then
+    begin
+      if not SnapshotWithFiles(G, Sha, Head, ASpecs, NewSha, AAdded, Why) then
+      begin
+        Refused(Ctx, 'Could not add the untracked files to the snapshot: ' + Why);
+        Exit;
+      end;
+      Sha := NewSha;
+    end;
   end;
   if not Query(G, ['update-ref', SNAPSHOT_REF, Sha], Note) then
   begin
@@ -615,6 +771,36 @@ begin
   Obj := StatusObject(Srv);
   Obj.Add('commit', Sha);
   Obj.Add('content', Snap);
+  if ASpecs.Count > 0 then
+  begin
+    Names := TJSONArray.Create;
+    for I := 0 to AAdded.Count - 1 do Names.Add(AAdded[I]);
+    Obj.Add('included', Names);
+  end;
+  if Snapshot then
+  begin
+    { untracked files stay home unless named: say how many, so a missing unit on the other
+      machine is not a mystery }
+    Left_ := TStringList.Create;
+    try
+      UntrackedLeftOut(G, AAdded, Left_);
+      if Left_.Count > 0 then
+      begin
+        Obj.Add('untracked_left_out', Left_.Count);
+        Names := TJSONArray.Create;
+        for I := 0 to Left_.Count - 1 do
+        begin
+          if I >= 10 then Break;
+          Names.Add(Left_[I]);
+        end;
+        Obj.Add('untracked_names', Names);
+        Obj.Add('untracked_hint', 'These are not sent. A new source file the build needs: ' +
+          'start again with include set to its path or a pattern.');
+      end;
+    finally
+      Left_.Free;
+    end;
+  end;
   if Linked then
   begin
     Obj.Add('fetches_left', Fetches);
@@ -642,6 +828,25 @@ begin
       'git_serve link once saves all this.');
   end;
   Reply(Ctx, True, Obj);
+end;
+
+procedure DoStart(var Ctx: TMcpToolCall);
+var
+  Specs, Added : TStringList;
+  Why : string;
+begin
+  Specs := TStringList.Create;
+  Added := TStringList.Create;
+  try
+    Why := ReadIncludes(Ctx, Specs);
+    if Why <> '' then
+      Refused(Ctx, Why)
+    else
+      DoStartWith(Ctx, Specs, Added);
+  finally
+    Added.Free;
+    Specs.Free;
+  end;
 end;
 
 procedure DoCode(var Ctx: TMcpToolCall);
