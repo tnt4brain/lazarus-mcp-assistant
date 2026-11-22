@@ -200,7 +200,7 @@ debugger call runs at a time. See [ADR-012](adr/0012-multiple-clients.md).
 |---|---|
 | `package_get_info` | A package by name or `.lpk` path: status, version, type, requirements with their status, the packages using it, output dir, search paths, compiler options, and (`files`) its files with units and `Register` |
 | `package_list` | The packages loaded in the IDE (default: those that do not come with Lazarus) |
-| `package_open` / `package_create` | Load an `.lpk` without installing it; create a package (`.lpk`, optional first unit) in a directory and load it |
+| `package_open` / `package_create` | Load an `.lpk` without installing it (`reload` reads it again and drops the IDE's unsaved changes; a package whose file changed on disk, for example after a branch switch, is reloaded before every call unless it has unsaved changes); create a package (`.lpk`, optional first unit) in a directory and load it |
 | `package_get_settings` / `package_set_settings` | Package type, output dir, unit/include paths, compiler options, target, usage paths; old and new values returned, `.lpk` saved |
 | `package_find_unit` | Which loaded packages contain a unit, and whether the project depends on them — for "Can't find unit" |
 | `package_add_file` / `package_remove_file` | Files of a `.lpk`, as the package editor's Add/Remove: unit name and `Register` detected, unit/include path extended when needed |

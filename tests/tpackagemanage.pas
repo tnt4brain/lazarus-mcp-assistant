@@ -19,6 +19,7 @@ type
     procedure TestCreateRefusals;
     procedure TestListAndInfoErrors;
     procedure TestConcurrentUninstallsKeepTheirOwnNames;
+    procedure TestPackageOpenReloadFlag;
   end;
 
 implementation
@@ -218,6 +219,27 @@ begin
     end;
   end;
   CheckFalse(IsError(Call('ide_ping', '{}')), 'the IDE still answers');
+end;
+
+{ package_open reload: the flag is accepted, a package that is not loaded is simply loaded (nothing to
+  reload), and a missing file is an error.  The reload of a package that IS loaded and changed on disk is
+  checked by hand (a branch switch under the installed plugin): a temporary package is closed by the IDE
+  as soon as it is unused, and keeping one open needs a package editor window. }
+procedure TTestPackageManage.TestPackageOpenReloadFlag;
+var
+  Dir, Lpk, Pkg, T : string;
+begin
+  Pkg := 'McpTmpPkgR' + IntToStr(GetProcessID);
+  Dir := TempPkgDir('r' + IntToStr(GetProcessID));
+  Lpk := Dir + Pkg + '.lpk';
+  T := Call('package_create', '{"name":"' + Pkg + '","directory":' + JsonStr(Dir) +
+            ',"version":"1.2","description":"temp"}');
+  CheckFalse(IsError(T), T);
+  T := Call('package_open', '{"lpk_path":' + JsonStr(Lpk) + ',"reload":true}');
+  CheckFalse(IsError(T), 'reload of a package that is not loaded: ' + T);
+  CheckTrue(Pos('"package_name":"' + Pkg + '"', T) > 0, 'opened: ' + T);
+  T := Call('package_open', '{"lpk_path":' + JsonStr(Dir + 'NoSuch.lpk') + ',"reload":true}');
+  CheckTrue(IsError(T) or (Pos('not', LowerCase(T)) > 0), 'a missing file: ' + T);
 end;
 
 initialization

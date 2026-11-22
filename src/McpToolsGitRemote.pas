@@ -111,7 +111,7 @@ const
     '"action":{"type":"string","enum":["list","create","delete"],"description":"Local tags only; pushing one is git_push with tags"},' +
     '"name":{"type":"string","description":"Tag name (create, delete)"},' +
     '"message":{"type":"string","description":"create: the message of the annotated tag (required unless lightweight)"},' +
-    '"commit":{"type":"string","description":"create: what to tag (default HEAD)"},' +
+    '"ref":{"type":"string","description":"create: what to tag (default HEAD)"},' +
     '"lightweight":{"type":"boolean","description":"create: a plain pointer without message or tagger (default false: annotated)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository (default: the project''s directory)"}},' +
     '"required":["action"]}';
@@ -956,7 +956,7 @@ var
 begin
   Name    := StrParam(Ctx, 'name');
   Message := Trim(StrParam(Ctx, 'message'));
-  Commit  := StrParam(Ctx, 'commit', 'HEAD');
+  Commit  := StrParam(Ctx, 'ref', 'HEAD');
   if Commit = '' then
     Commit := 'HEAD';
   Light   := BoolParam(Ctx, 'lightweight');

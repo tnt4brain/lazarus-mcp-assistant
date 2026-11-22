@@ -50,7 +50,7 @@ procedure McpAliasForgetSessions;           { tests: tell everything again }
 implementation
 
 const
-  ALIASES : array[0..30] of TMcpAlias = (
+  ALIASES : array[0..33] of TMcpAlias = (
     { one name for each idea (1.7.0): seconds to wait, text for stdin, the variable }
     (Kind: akParam; Tool: 'project_run';        Old: 'wait_seconds'; New: 'timeout_s'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'project_run_output'; Old: 'wait_seconds'; New: 'timeout_s'; FixedKey: ''; FixedVal: ''),
@@ -89,7 +89,10 @@ const
     (Kind: akParam; Tool: 'package_search_online';   Old: 'max_results'; New: 'limit'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'code_find_descendants';   Old: 'max_results'; New: 'limit'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'code_find_overrides';     Old: 'max_results'; New: 'limit'; FixedKey: ''; FixedVal: ''),
-    (Kind: akParam; Tool: 'debug_set_breakpoint';    Old: 'data';       New: 'watch_expression'; FixedKey: ''; FixedVal: ''));
+    (Kind: akParam; Tool: 'debug_set_breakpoint';    Old: 'data';       New: 'watch_expression'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_cherry_pick';         Old: 'commit';     New: 'ref'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_tag';                 Old: 'commit';     New: 'ref'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_log';                 Old: 'branch';     New: 'ref'; FixedKey: ''; FixedVal: ''));
 
 var
   GLock     : TRTLCriticalSection;

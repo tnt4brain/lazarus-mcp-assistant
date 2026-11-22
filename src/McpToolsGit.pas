@@ -48,7 +48,7 @@ const
   SCHEMA_GIT_LOG =
     '{"type":"object","properties":{' +
     '"limit":{"type":"integer","description":"Maximum number of commits to show (default 20; 0 shows none)"},' +
-    '"branch":{"type":"string","description":"Branch or ref to log; defaults to HEAD"},' +
+    '"ref":{"type":"string","description":"Branch, tag or commit to log from; defaults to HEAD"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
 
@@ -88,7 +88,7 @@ const
 
   SCHEMA_GIT_CHERRY_PICK =
     '{"type":"object","properties":{' +
-    '"commit":{"type":"string","description":"The commit to apply on the current branch: a hash, branch or tag, or a range a..b (oldest first, a itself excluded)"},' +
+    '"ref":{"type":"string","description":"The commit to apply on the current branch: a hash, branch or tag, or a range a..b (oldest first, a itself excluded)"},' +
     '"abort":{"type":"boolean","description":"Instead of picking: undo a cherry-pick that stopped on a conflict (git cherry-pick --abort). Default false"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository. Default: the saved project''s directory, else the active editor file''s directory"}},' +
     '"required":[]}';
@@ -764,7 +764,7 @@ begin
       if Assigned(Ctx.Params) then
       begin
         MaxCount := Ctx.Params.Get('limit', 20);
-        Branch   := Ctx.Params.Get('branch', '');
+        Branch   := Ctx.Params.Get('ref', '');
       end;
       GitArgs := TStringList.Create;
       try
@@ -978,11 +978,11 @@ begin
       else
       begin
         Target := '';
-        if Assigned(Ctx.Params) then Target := Trim(Ctx.Params.Get('commit', ''));
+        if Assigned(Ctx.Params) then Target := Trim(Ctx.Params.Get('ref', ''));
         if (Target = '') or (Target[1] = '-') or (Pos(' ', Target) > 0) then
         begin
           Ctx.Error  := True;
-          Ctx.Result := 'commit required: a commit, or a range such as a..b (no spaces, not starting with -); ' +
+          Ctx.Result := 'ref required: a commit, or a range such as a..b (no spaces, not starting with -); ' +
             'or abort=true to leave a cherry-pick that stopped on a conflict';
           Exit;
         end;

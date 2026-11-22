@@ -57,7 +57,10 @@ const
   SCHEMA_OPEN =
     '{"type":"object","properties":{' + PKG_TARGET + ',' +
     '"editor":{"type":"boolean","description":"Also open its package editor window ' +
-      '(default false)"}}}';
+      '(default false)"},' +
+    '"reload":{"type":"boolean","description":"Read the .lpk again although the package is ' +
+      'loaded, and drop the IDE''s unsaved changes to it (default false). A package whose file ' +
+      'changed on disk and has no unsaved changes is reloaded without this, before every call"}}}';
 
   SCHEMA_CREATE =
     '{"type":"object","properties":{' +
@@ -245,16 +248,38 @@ var
   Pkg    : TLazPackage;
   Was    : Boolean;
   Lpk    : string;
+  Discarded, Reloaded : Boolean;
 begin
   Result := '';
   Lpk := Trim(AParams.Get('lpk_path', ''));
-  Was := (Lpk <> '') and (PackageGraph.FindPackageWithFilename(Lpk) <> nil);
+  { by name the package is loaded for certain; by file only when the graph holds that file }
+  Was := (Lpk = '') or (PackageGraph.FindPackageWithFilename(Lpk) <> nil);
   if not TargetPackage(AParams, Pkg, AErr, False) then Exit;
+  Discarded := False;
+  Reloaded  := False;
+  if Was and AParams.Get('reload', False) then
+  begin
+    { read the file again, also when the IDE's copy holds unsaved changes: they are lost.
+      The package object is replaced, so it is looked up again. }
+    if not FileExists(Pkg.Filename) then
+    begin AErr := Pkg.Filename + ' does not exist on disk'; Exit; end;
+    Discarded := Pkg.Modified;
+    Lpk := Pkg.Filename;
+    if PackageEditingInterface.DoOpenPackageFile(Lpk, [pofRevert, pofDoNotOpenEditor], False) <> mrOK then
+    begin AErr := 'the IDE could not read ' + Lpk + ' (see ide_get_messages)'; Exit; end;
+    Pkg := PackageGraph.FindPackageWithFilename(Lpk);
+    if Pkg = nil then
+    begin AErr := Lpk + ' is no longer loaded after the reload'; Exit; end;
+    Reloaded := True;
+  end;
   if AParams.Get('editor', False) then
     PackageEditingInterface.DoOpenPackageFile(Pkg.Filename, [pofAddToRecent], False);
   Result := PackageInfoJSON(Pkg.Name, False, Pkg);
   if Was then
     Result := Copy(Result, 1, Length(Result) - 1) + ',"already_loaded":true}';
+  if Reloaded then
+    Result := Copy(Result, 1, Length(Result) - 1) + ',"reloaded":true' +
+      BoolToStr(Discarded, ',"discarded_ide_changes":true', '') + '}';
 end;
 
 { ── package_create ───────────────────────────────────────────────────────── }
@@ -675,6 +700,7 @@ begin
   Tools.Add(MakeTool('package_open',
     'Load an .lpk into the IDE without installing it, so the other package_* tools ' +
     'and package_compile can use it by name. editor=true also shows its package editor. ' +
+    'reload=true reads the .lpk again and drops the IDE''s unsaved changes to it. ' +
     'Not limited to any folder, and the package''s folder then becomes one the write tools may change.',
     SCHEMA_OPEN, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_create',

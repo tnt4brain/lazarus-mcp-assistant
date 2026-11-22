@@ -136,8 +136,15 @@ three of the renames that section 5 decided against are done:
 - `debug_set_breakpoint` `data` → `watch_expression`. The answer of the breakpoint tools
   carries both `data` and `watch_expression`, so a client that reads the field keeps working.
 
-Seven entries in the table, each with its row in `docs/renamed-tools.md`. **Still decided
+Ten entries in the table, each with its row in `docs/renamed-tools.md`. **Still decided
 against:** `name` → `package_name` / `component_name`. The reasons in section 5 are technical
 (the write-scope and package guards read `package_name` as "a loaded package"; the form tools
 resolve `component_name` as an existing component), not a matter of taste, and they have not
 changed.
+
+Also in 1.8.1: `ref` is the one name for "a revision to act on" where the tool takes any revision: `git_tag`
+and `git_cherry_pick` (`commit`, which also took a range) and `git_log` (`branch`). `git_merge` and
+`git_archive` already used it. Left as they are, because they are git's own words for something else:
+`target` of `git_checkout` and `git_reset` (a revision **or a file path**, and with `create` the new branch),
+`upstream`/`onto` of `git_rebase`, `since` of `git_squash`, `start_point`, and `branch` where a branch
+(not any revision) is required (`git_branch_delete`, `git_push`, `git_pull`, `git_clone`).

@@ -22,7 +22,7 @@ uses
   fpjson, jsonparser,
   LazDebuggerIntfBaseTypes, BaseDebugManager,
   McpToolContext, McpIdeListeners, McpIdeState, McpDebugGuard, McpConsent,
-  PackageLinks, PackageLinkIntf,
+  PackageLinks, PackageLinkIntf, PackageDefs,
   McpToolsPkgManage, McpRunProgram, McpMessages;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
@@ -206,6 +206,7 @@ type
     SaveUnsaved : Boolean;
     SkipCompile : Boolean;
     Unsaved    : TStringList;     { files whose editor holds unsaved changes }
+    Diverged   : TStringList;     { packages changed in the IDE AND on disk: saving would overwrite the disk }
     CompileFailed : Boolean;
     CompileJson : string;
     Closed     : TStringList;     { editors DoRebuild closed, to open again if the build fails }
@@ -373,11 +374,13 @@ constructor TBuildSyncHelper.Create;
 begin
   inherited Create;
   Unsaved := TStringList.Create;
+  Diverged := TStringList.Create;
   Closed  := TStringList.Create;
 end;
 
 destructor TBuildSyncHelper.Destroy;
 begin
+  Diverged.Free;
   Unsaved.Free;
   Closed.Free;
   inherited Destroy;
@@ -412,8 +415,22 @@ var
   Ed      : TSourceEditorInterface;
   Pkg     : TIDEPackage;
   Savable : Boolean;
+  Lazy    : TLazPackage;
 begin
   Unsaved.Clear;
+  Diverged.Clear;
+  { First, before anything is saved: a package with unsaved changes whose file also
+    changed on disk (a branch switch under an open package).  DoSaveAllPackages would
+    write the IDE's older copy over the newer file, and the build would use it. }
+  for I := 0 to PackageEditingInterface.GetPackageCount - 1 do
+  begin
+    Pkg := PackageEditingInterface.GetPackages(I);
+    if not (Pkg is TLazPackage) or not Pkg.Modified or Pkg.IsVirtual then Continue;
+    Lazy := TLazPackage(Pkg);
+    if Assigned(Lazy.LPKSource) and Lazy.LPKSource.FileNeedsUpdate(True) then
+      Diverged.Add(Pkg.Name + ' (' + Pkg.Filename + ')');
+  end;
+  if Diverged.Count > 0 then Exit;
   for I := 0 to SourceEditorManagerIntf.UniqueSourceEditorCount - 1 do
   begin
     Ed := SourceEditorManagerIntf.UniqueSourceEditors[I];
@@ -752,6 +769,17 @@ begin
     (closing it for the rebuild would drop it), and the build can succeed (a failed
     build used to leave the IDE half rebuilt, with the server down). }
   TThread.Synchronize(nil, @GBuildHelper.CheckUnsaved);
+  if GBuildHelper.Diverged.Count > 0 then
+  begin
+    Ctx.Error  := True;
+    Ctx.Result := '{"status":"not_started","message":"Nothing was changed. These packages have ' +
+      'unsaved changes in the IDE and the file on disk changed too (a branch switch, a pull): ' +
+      'saving would overwrite the newer file, and the build would use the older copy: ' +
+      StringReplace(Trim(GBuildHelper.Diverged.Text), LineEnding, '; ', [rfReplaceAll]) +
+      '. Take the disk version with package_open reload=true (the IDE''s changes are lost), ' +
+      'or keep the IDE''s with package_save (the disk file is overwritten)."}';
+    Exit;
+  end;
   if GBuildHelper.Unsaved.Count > 0 then
   begin
     Ctx.Error  := True;
