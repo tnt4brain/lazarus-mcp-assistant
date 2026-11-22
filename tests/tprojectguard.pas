@@ -35,6 +35,9 @@ begin
     no-project IDE }
   CheckFalse(McpToolNeedsProject('ide_ping'), 'ide_ping');
   CheckFalse(McpToolNeedsProject('ide_report'), 'ide_report');
+  { reports the open project without touching it; with none, its project
+    section is omitted }
+  CheckFalse(McpToolNeedsProject('ide_get_status'), 'ide_get_status');
 end;
 
 procedure TTestProjectGuard.TestEverythingElseIsRefused;

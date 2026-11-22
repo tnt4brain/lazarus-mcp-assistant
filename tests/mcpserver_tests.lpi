@@ -200,6 +200,10 @@
         <Filename Value="tlimitedmode.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit44>
+      <Unit45>
+        <Filename Value="tstatus.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit45>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
