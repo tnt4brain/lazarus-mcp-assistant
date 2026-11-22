@@ -16,7 +16,8 @@ uses
   McpMarkdownView, McpToolsMarkdown, McpReviewView, McpDiff, McpReviewFlow, McpReviewPaths, McpReviewGutter, 
   McpToolsCodeNav, McpStatements, McpStatementEdit, McpHeapReport, McpTestHooks, McpNativeDialog, McpGitRun, 
   McpToolsGitRemote, McpToolsGitHistory, McpConflictFiles, McpGitConflicts, McpMarkdownHighlight, McpLimitedMode, 
-  McpToolScope, McpFoldersOptions, McpToolsStatus, LazarusPackageIntf;
+  McpToolScope, McpFoldersOptions, McpToolsStatus, McpGitServe, McpToolsGitServe,
+  LazarusPackageIntf;
 
 implementation
 

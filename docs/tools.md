@@ -278,6 +278,25 @@ Remotes and history ([ADR-028](adr/0028-git-remote-and-history-tools.md)):
   own state and reported with the files and the next steps. Rebase and squash (and `git_reset`) warn when
   commits that are already on a remote would be rewritten. They need git 2.38 (`git_merge`: 2.27).
 
+Testing on another machine ([ADR-035](adr/0035-serving-code-to-a-test-machine.md)):
+
+- `git_serve` lets **one** other machine fetch the repository that holds the open project, read-only,
+  over plain HTTP. `link` asks the user once and returns a setup for that machine (a remote `mcp` and a
+  git credential helper, an `instantfpc` script, [`scripts/git-credential-mcp.pas`](../scripts/git-credential-mcp.pas),
+  or [`scripts/git-credential-mcp`](../scripts/git-credential-mcp) where there is no FPC); after that the
+  assistant works without dialogs: `start` (opens the listener, closes itself after the fetch or the
+  `minutes`), then `git_fetch` and `git_reset` on the other machine. Only the linked address can connect,
+  the password is a code that changes every 30 seconds (TOTP), five wrong codes close the door for five
+  minutes. With `snapshot` (the default) the tracked files go as they are on disk, uncommitted changes
+  included. Untracked files stay home unless `include` names them (paths or patterns relative to the
+  repository root, e.g. a new unit); every `start` says how many were left out. Also `unlink`, `links`,
+  `status`, `stop`. A machine without a link: `start` asks the user
+  every time and returns ready `bash` and `powershell` commands with a code of a minute
+  ([`scripts/mcp-pull.sh`](../scripts/mcp-pull.sh) does the same from a file).
+  The traffic is one way: a fix made on the other machine does not come back by itself. There, `git diff
+  refs/remotes/mcp/snapshot` gives the change; the assistant reads it through its shell and applies it
+  here (a return path is planned, see ADR-035).
+
 For the file open in the editor: `git_blame` (who last changed a line, and in
 which commit) defaults to the active editor's file and cursor line, and blames
 unsaved edits as uncommitted; `git_diff` with `active_file` diffs that file in

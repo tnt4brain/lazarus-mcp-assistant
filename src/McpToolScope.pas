@@ -51,7 +51,7 @@ implementation
 
 const
   { tool, argument, use }
-  PATHS : array[0..120] of string = (
+  PATHS : array[0..121] of string = (
     { ---- reads ---- }
     'code_find_declaration|file|R', 'code_find_descendants|file|R', 'code_find_overrides|file|R',
     'code_find_references|file|R', 'code_find_unused|file|R', 'code_get_identifier_info|file|R',
@@ -102,7 +102,7 @@ const
     'git_push|work_dir|F', 'git_rebase|work_dir|F', 'git_rebase_abort|work_dir|F',
     'git_rebase_continue|work_dir|F', 'git_reset|work_dir|F', 'git_resolve|work_dir|F',
     'git_squash|work_dir|F', 'git_stash|work_dir|F', 'git_remote|work_dir|F',
-    'git_tag|work_dir|F', 'package_create|directory|F', 'form_create|directory|I',
+    'git_tag|work_dir|F', 'git_serve|work_dir|F', 'package_create|directory|F', 'form_create|directory|I',
     { ---- new places ---- }
     'project_open|file|N', 'project_create|project_dir|N', 'git_clone|target_dir|N',
     'git_init|work_dir|N', 'package_open|lpk_path|N', 'project_add_package|lpk_path|N',
@@ -122,9 +122,10 @@ const
     'package_compile|f', 'project_clean|f', 'ide_run_tests|f', 'package_move_unit|p');
 
   { tool|argument }
-  NOTPATH : array[0..14] of string = (
+  NOTPATH : array[0..15] of string = (
     'git_diff|path', 'git_diff|active_file', 'git_add|paths', 'git_archive|paths',
     'git_stash|paths', 'git_checkout|target', 'git_reset|target', 'package_get_info|files',
+    'git_serve|remote_dir',
     'project_open|unit_paths', 'package_set_settings|unit_output_dir',
     'package_set_settings|unit_search_path', 'package_set_settings|include_path',
     'package_set_settings|usage_unit_path', 'package_set_settings|usage_include_path',

@@ -200,9 +200,9 @@ end;
 
 procedure TTestWriteScope.TestGuardedToolList;
 const
-  GUARDED : array[0..9] of string = (
+  GUARDED : array[0..10] of string = (
     'code_format', 'form_arrange', 'package_save', 'git_archive', 'ide_run_tests',
-    'package_create', 'git_fetch', 'git_push', 'git_remote', 'git_tag');
+    'package_create', 'git_fetch', 'git_push', 'git_remote', 'git_tag', 'git_serve');
   UNGUARDED : array[0..6] of string = (
     'git_status', 'git_log', 'git_init', 'git_clone', 'editor_read_file', 'project_create',
     'ide_ping');

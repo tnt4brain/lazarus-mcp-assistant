@@ -22,10 +22,11 @@ function RunGit(const Args: array of string; const WorkDir: string;
 { Like RunGit, for a command that may take minutes and talks to a remote:
   runs on the MCP worker thread (so AExe is passed in, McpGitExecutable is for
   the main thread), never asks for credentials (stdin is closed, so a prompt
-  would hang), and is stopped after ATimeoutMs. }
+  would hang), and is stopped after ATimeoutMs.  AEnv, if not empty, is one more
+  environment entry NAME=value for this child only (git_serve: GIT_INDEX_FILE). }
 function RunGitTimed(const AExe: string; const Args: array of string;
   const WorkDir: string; ATimeoutMs: QWord; out Output: string;
-  const AInput: string = ''): Boolean;
+  const AInput: string = ''; const AEnv: string = ''): Boolean;
 
 { Files whose open editor holds unsaved changes.  Main thread only. }
 procedure McpUnsavedEditors(AFiles: TStrings);
@@ -108,7 +109,7 @@ end;
 
 function RunGitTimed(const AExe: string; const Args: array of string;
   const WorkDir: string; ATimeoutMs: QWord; out Output: string;
-  const AInput: string): Boolean;
+  const AInput: string; const AEnv: string): Boolean;
 var
   Proc     : TProcess;
   Buf      : string;
@@ -141,6 +142,9 @@ begin
     if WorkDir <> '' then
       Proc.CurrentDirectory := WorkDir;
     SetGitEnvironment(Proc);
+    if (AEnv <> '') and (Pos('=', AEnv) > 1) then
+      Proc.Environment.Values[Copy(AEnv, 1, Pos('=', AEnv) - 1)] :=
+        Copy(AEnv, Pos('=', AEnv) + 1, MaxInt);
     Proc.Execute;
     if AInput <> '' then
       Proc.Input.Write(AInput[1], Length(AInput));
