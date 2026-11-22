@@ -38,7 +38,7 @@ const
     '"snapshot":{"type":"boolean","description":"start: serve the tracked files as they are on disk, uncommitted changes included (default true); false serves the checked-out commit"},' +
     '"include":{"type":"array","items":{"type":"string"},"description":"start: untracked files to send as well, as paths or patterns relative to the repository root (e.g. src/NewUnit.pas, tests/*.pas); ignored files and everything not named stay home"},' +
     '"port":{"type":"integer","description":"link: the port to keep (default: a free one is chosen)"},' +
-    '"target":{"type":"string","description":"link, start without a link: the folder on the other machine the commands use (default mcp-code)"},' +
+    '"remote_dir":{"type":"string","description":"link, start without a link: the folder on the other machine the commands use (default mcp-code)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository (default: the project''s directory)"}},' +
     '"required":[]}';
 
@@ -408,7 +408,7 @@ begin
     Refused(Ctx, 'link needs peer: the IPv4 address of the machine to link.');
     Exit;
   end;
-  Target := StrParam(Ctx, 'target', 'mcp-code');
+  Target := StrParam(Ctx, 'remote_dir', 'mcp-code');
   if not McpLocalAddressFor(Peer, L.Host, Why) then
   begin
     Refused(Ctx, Why);
@@ -662,7 +662,7 @@ begin
   Fetches := IntParam(Ctx, 'fetches', 1);
   if not Linked then Fetches := 0;
   Snapshot := (not Assigned(Ctx.Params)) or Ctx.Params.Get('snapshot', True);
-  Target := StrParam(Ctx, 'target', 'mcp-code');
+  Target := StrParam(Ctx, 'remote_dir', 'mcp-code');
   if (ASpecs.Count > 0) and not Snapshot then
   begin
     Refused(Ctx, 'include needs snapshot (the default): it adds files to the snapshot.');
@@ -874,9 +874,9 @@ begin
     Obj.Add('code_seconds_left', Left);
     Cmds := TJSONObject.Create;
     Cmds.Add('bash', BashCommand(UrlFor(GServer.Host, GServer.Port),
-      StrParam(Ctx, 'target', 'mcp-code'), Code));
+      StrParam(Ctx, 'remote_dir', 'mcp-code'), Code));
     Cmds.Add('powershell', PowerShellCommand(UrlFor(GServer.Host, GServer.Port),
-      StrParam(Ctx, 'target', 'mcp-code'), Code));
+      StrParam(Ctx, 'remote_dir', 'mcp-code'), Code));
     Obj.Add('commands', Cmds);
   finally
     GLock.Leave;

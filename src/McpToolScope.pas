@@ -125,7 +125,7 @@ const
   NOTPATH : array[0..15] of string = (
     'git_diff|path', 'git_diff|active_file', 'git_add|paths', 'git_archive|paths',
     'git_stash|paths', 'git_checkout|target', 'git_reset|target', 'package_get_info|files',
-    'git_serve|target',
+    'git_serve|remote_dir',
     'project_open|unit_paths', 'package_set_settings|unit_output_dir',
     'package_set_settings|unit_search_path', 'package_set_settings|include_path',
     'package_set_settings|usage_unit_path', 'package_set_settings|usage_include_path',
