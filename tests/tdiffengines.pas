@@ -1,9 +1,9 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit TDiffEngines;
 
-{ The two ways McpDiff finds the hunks between two texts (DiffLines: Myers, for the review
-  window; DiffLinesLcs: table and patience, for code_format) must both be correct and as
-  small as possible, so that one can replace the other.  Pure; no IDE. }
+{ McpDiff.DiffLines serves the review window and code_format / code_complete (through
+  McpLineDiff), so it is held to rules that do not depend on the case: ordered hunks, the
+  texts rebuilt from them, and the smallest set of changed lines.  Pure; no IDE. }
 
 {$mode objfpc}{$H+}
 
@@ -13,8 +13,6 @@ uses
   SysUtils, fpcunit, testregistry, McpDiff;
 
 type
-  TEngine = function(const A, B: TDiffLines): TDiffHunks;
-
   TTestDiffEngines = class(TTestCase)
   private
     function Lcs(const A, B: TDiffLines): Integer;
@@ -22,13 +20,12 @@ type
     function RandomText(AMax, AAlphabet: Integer): TDiffLines;
     function Mutate(const X: TDiffLines; AAlphabet: Integer): TDiffLines;
     procedure CheckHunks(const AName: string; const A, B: TDiffLines; const H: TDiffHunks);
-    procedure RunFuzz(const AName: string; AEngine: TEngine);
   published
-    procedure TestMyersFuzz;
-    procedure TestLcsFuzz;
+    procedure TestFuzz;
     procedure TestEmptyAndEqual;
     procedure TestLargeEditsStillRebuildTheText;
     procedure TestInsertedDuplicateSlidesDown;
+    procedure TestEditsFarApartAreSeparateHunks;
   end;
 
 implementation
@@ -85,16 +82,10 @@ begin
       0: if N > 0 then Result[Random(N)] := Chr(Ord('a') + Random(AAlphabet));
       1: begin
            I := Random(N + 1);
-           SetLength(Result, N + 1);
-           Move(Result[I], Result[I + 1], (N - I) * SizeOf(string));
-           Initialize(Result[I]);
-           Result[I] := Chr(Ord('a') + Random(AAlphabet));
+           Insert(Chr(Ord('a') + Random(AAlphabet)), Result, I);
          end;
       2: if N > 0 then
-         begin
-           I := Random(N);
-           Delete(Result, I, 1);
-         end;
+           Delete(Result, Random(N), 1);
     end;
   end;
 end;
@@ -112,7 +103,8 @@ begin
   for K := 0 to High(H) do
   begin
     CheckTrue((H[K].ALen > 0) or (H[K].BLen > 0), AName + ': empty hunk');
-    CheckTrue((H[K].AStart >= PA) and (H[K].BStart >= PB), AName + ': hunks overlap or are out of order');
+    CheckTrue((H[K].AStart >= PA) and (H[K].BStart >= PB),
+      AName + ': hunks overlap or are out of order');
     { the lines between two hunks are the same in both texts }
     CheckEquals(H[K].AStart - PA, H[K].BStart - PB, AName + ': unequal gap before hunk');
     for I := 0 to H[K].AStart - PA - 1 do
@@ -137,33 +129,23 @@ begin
     CheckTrue(Y[I] = A[I], AName + ': taking none gives A');
 end;
 
-procedure TTestDiffEngines.RunFuzz(const AName: string; AEngine: TEngine);
+procedure TTestDiffEngines.TestFuzz;
 var
-  N        : Integer;
-  A, B     : TDiffLines;
-  H        : TDiffHunks;
+  N    : Integer;
+  A, B : TDiffLines;
+  H    : TDiffHunks;
 begin
   RandSeed := 20261124;
   for N := 1 to 600 do
   begin
     A := RandomText(30, 4);
     if Random(2) = 0 then B := RandomText(30, 4) else B := Mutate(A, 4);
-    H := AEngine(A, B);
-    CheckHunks(AName, A, B, H);
-    { as small as possible: every line that is not in the common subsequence is in a hunk }
+    H := DiffLines(A, B);
+    CheckHunks('fuzz', A, B, H);
+    { as small as possible: every line outside the common subsequence is in a hunk }
     CheckEquals(Length(A) + Length(B) - 2 * Lcs(A, B), Edits(H),
-      AName + ': not a smallest set of changes, case ' + IntToStr(N));
+      'not a smallest set of changes, case ' + IntToStr(N));
   end;
-end;
-
-procedure TTestDiffEngines.TestMyersFuzz;
-begin
-  RunFuzz('Myers', @DiffLines);
-end;
-
-procedure TTestDiffEngines.TestLcsFuzz;
-begin
-  RunFuzz('Lcs', @DiffLinesLcs);
 end;
 
 procedure TTestDiffEngines.TestEmptyAndEqual;
@@ -175,12 +157,10 @@ begin
   SetLength(X, 2);
   X[0] := 'a';
   X[1] := 'b';
-  CheckEquals(0, Length(DiffLinesLcs(E, E)), 'nothing against nothing');
-  CheckEquals(0, Length(DiffLinesLcs(X, X)), 'equal texts');
-  CheckEquals(1, Length(DiffLinesLcs(E, X)), 'all added');
-  CheckEquals(1, Length(DiffLinesLcs(X, E)), 'all removed');
-  CheckEquals(0, Length(DiffLines(E, E)));
-  CheckEquals(1, Length(DiffLines(E, X)));
+  CheckEquals(0, Length(DiffLines(E, E)), 'nothing against nothing');
+  CheckEquals(0, Length(DiffLines(X, X)), 'equal texts');
+  CheckEquals(1, Length(DiffLines(E, X)), 'all added');
+  CheckEquals(1, Length(DiffLines(X, E)), 'all removed');
 end;
 
 { A text of thousands of lines with a change every few lines: more than the table holds,
@@ -199,8 +179,7 @@ begin
     A[I] := 'line ' + IntToStr(I);
     if I mod 7 = 3 then B[I] := 'changed ' + IntToStr(I) else B[I] := A[I];
   end;
-  CheckHunks('Lcs, large', A, B, DiffLinesLcs(A, B));
-  CheckHunks('Myers, large', A, B, DiffLines(A, B));
+  CheckHunks('large', A, B, DiffLines(A, B));
 end;
 
 { Inserting a line equal to its neighbour is one hunk, put after the run (as git does), so
@@ -216,11 +195,36 @@ begin
   A[0] := 'x'; A[1] := 'end;'; A[2] := 'y';
   SetLength(B, 4);
   B[0] := 'x'; B[1] := 'end;'; B[2] := 'end;'; B[3] := 'y';
-  H := DiffLinesLcs(A, B);
+  H := DiffLines(A, B);
   CheckEquals(1, Length(H));
   CheckEquals(0, H[0].ALen, 'only added');
   CheckEquals(2, H[0].BStart, 'after the line it equals');
   CheckEquals(1, H[0].BLen);
+end;
+
+{ Two edits with a thousand unchanged lines between them are two hunks, not one that
+  spans the lot. }
+procedure TTestDiffEngines.TestEditsFarApartAreSeparateHunks;
+var
+  A, B : TDiffLines;
+  I    : Integer;
+  H    : TDiffHunks;
+begin
+  A := nil;
+  B := nil;
+  SetLength(A, 1200);
+  SetLength(B, 1200);
+  for I := 0 to 1199 do
+  begin
+    A[I] := 'line ' + IntToStr(I);
+    B[I] := A[I];
+  end;
+  B[10]   := 'first change';
+  B[1190] := 'second change';
+  H := DiffLines(A, B);
+  CheckEquals(2, Length(H), 'two hunks');
+  CheckEquals(1, H[0].ALen);
+  CheckEquals(1, H[1].ALen);
 end;
 
 initialization
