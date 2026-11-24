@@ -59,6 +59,7 @@ function TTestDiff.L(const A: array of string): TDiffLines;
 var
   I: Integer;
 begin
+  Result := nil;
   SetLength(Result, Length(A));
   for I := 0 to High(A) do Result[I] := A[I];
 end;
@@ -90,6 +91,7 @@ function TTestDiff.RandomLines(AMax: Integer): TDiffLines;
 var
   I: Integer;
 begin
+  Result := nil;
   SetLength(Result, Random(AMax + 1));
   for I := 0 to High(Result) do
     Result[I] := Chr(Ord('a') + Random(6));
@@ -239,7 +241,8 @@ var
   I, J: Integer;
   A, B, R: TDiffLines;
   H: TDiffHunks;
-  All, None: array of Boolean;
+  All  : array of Boolean = nil;
+  None : array of Boolean = nil;
 begin
   RandSeed := 20261114;
   for I := 1 to 400 do
@@ -277,7 +280,9 @@ end;
 
 procedure TTestDiff.TestHugeDifferenceFallsBack;
 var
-  A, B, R: TDiffLines;
+  A: TDiffLines = nil;
+  B: TDiffLines = nil;
+  R: TDiffLines;
   H: TDiffHunks;
   I: Integer;
 begin
@@ -621,6 +626,7 @@ var
   var
     K: Integer;
   begin
+    Result := '';
     SetLength(Result, Random(9));
     for K := 1 to Length(Result) do Result[K] := Alphabet[1 + Random(Length(Alphabet))];
   end;
@@ -664,6 +670,7 @@ var
   var
     X: Integer;
   begin
+    Result := '';
     SetLength(Result, Random(8));
     for X := 1 to Length(Result) do Result[X] := Chr(Ord('a') + Random(4));
   end;

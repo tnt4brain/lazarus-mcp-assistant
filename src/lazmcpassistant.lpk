@@ -10,7 +10,7 @@
         <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
       </SearchPaths>
       <Other>
-        <CustomOptions Value="-dUseCThreads -vm6058"/>
+        <CustomOptions Value="-dUseCThreads -vm5023,6058"/>
       </Other>
     </CompilerOptions>
     <Description Value="Runs a local Model Context Protocol (MCP) server inside the Lazarus IDE so AI assistants can read and edit code, build, debug, use the form designer, manage packages and use git. Listens on localhost only, protected by a token. Tested with Lazarus 4.x and FPC 3.2.2."/>

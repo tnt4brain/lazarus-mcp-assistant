@@ -339,6 +339,8 @@ type
 var
   GRestartNotice : string = '';
 
+{ a timer event: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TServerRestarter.Tick(Sender: TObject);
 begin
   GRestartTimer.Enabled := False;
@@ -347,6 +349,7 @@ begin
   if GRestartNotice <> '' then McpAddMessage(mluImportant, GRestartNotice);
   if Assigned(GMcpRestartServer) then GMcpRestartServer();
 end;
+{$POP}
 
 { Main thread: bring the server back AMs from now, with ANotice in the Messages window
   when it is not empty.  A failed build: a moment from now (the answer of the call that

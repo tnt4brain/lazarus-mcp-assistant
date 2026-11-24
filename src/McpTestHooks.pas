@@ -62,6 +62,8 @@ var
     no concurrency involved, unlike polling Screen from a second call. }
   GFormAddedLog   : string = '';
 
+{ the IDE's screen events: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TTestDialogCapture.OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
 begin
   Inc(GFireCount);
@@ -81,7 +83,10 @@ begin
     GCapturing := False;
   end;
 end;
+{$POP}
 
+{ the IDE's screen events: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TTestDialogCapture.OnFormAdded(Sender: TObject; Form: TCustomForm);
 var
   Entry : string;
@@ -94,6 +99,7 @@ begin
   if GFormAddedLog = '' then GFormAddedLog := Entry
   else GFormAddedLog := GFormAddedLog + '; ' + Entry;
 end;
+{$POP}
 
 function StrToMsgDlgBtn(const AName: string; out ABtn: TMsgDlgBtn): Boolean;
 var

@@ -204,7 +204,7 @@ const
     '  FreeAndNil(X);' + LineEnding +                        { 31 }
     'end;' + LineEnding;                                     { 32 }
 
-{ kind[:name]@line[-endline][~else][^handler][/role]{children} }
+{ kind[:name]@line[-endline][~else][^handler][/role], then the children in braces }
 function Dump(N: TStmtNode): string;
 var
   I : Integer;
@@ -340,7 +340,7 @@ end;
 
 { A body cut anywhere (a half-typed routine) gives a tree, never an exception, and the
   lines of a node stay inside its parent's. }
-procedure CheckTree(ATest: TTestCase; N: TStmtNode; AParentFrom, AParentTo: Integer; const AWhat: string);
+procedure CheckTree(ATest: TTestCase; N: TStmtNode; const AWhat: string);
 var
   I : Integer;
   C : TStmtNode;
@@ -351,7 +351,7 @@ begin
     C := TStmtNode(N.Children[I]);
     ATest.CheckTrue(C.Line >= N.Line, AWhat + ': child before parent, ' + C.Kind);
     ATest.CheckTrue(C.EndLine <= N.EndLine, AWhat + ': child after parent, ' + C.Kind);
-    CheckTree(ATest, C, N.Line, N.EndLine, AWhat);
+    CheckTree(ATest, C, AWhat);
   end;
 end;
 
@@ -367,7 +367,7 @@ begin
     T := Copy(Sample, 1, Len);
     N := ParseBodyStatements(T, 1);
     try
-      CheckTree(Self, N, 1, 1000, 'cut at ' + IntToStr(Len));
+      CheckTree(Self, N, 'cut at ' + IntToStr(Len));
     finally
       N.Free;
     end;
@@ -380,7 +380,7 @@ begin
     T := Copy(Sample, 1, Len) + Copy(Sample, Len + 37, MaxInt);
     N := ParseBodyStatements(T, 1);
     try
-      CheckTree(Self, N, 1, 1000, 'hole at ' + IntToStr(Len));
+      CheckTree(Self, N, 'hole at ' + IntToStr(Len));
     finally
       N.Free;
     end;

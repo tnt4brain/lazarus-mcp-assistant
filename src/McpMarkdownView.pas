@@ -480,12 +480,15 @@ begin
     end;
 end;
 
+{ the viewer's link event: the signature is fixed by IPro, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 function TMdTab.CanHandle(Sender: TObject; const URL: string): Boolean;
 begin
   { never fetch anything: the panel scrolls to a "#heading" of this page and that is all;
     http(s) links go to OnHotClick, which opens the system browser }
   Result := (Length(URL) > 1) and (URL[1] = '#');
 end;
+{$POP}
 
 procedure TMdTab.HotClick(Sender: TObject);
 var
@@ -837,6 +840,8 @@ begin
     end;
 end;
 
+{ timer events: the signature is fixed by the LCL, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMdForm.Debounced(Sender: TObject);
 var
   I : Integer;
@@ -859,6 +864,7 @@ begin
        (TMdTab(FPages.Pages[I]).FileEditor = nil) then
       TMdTab(FPages.Pages[I]).CheckSource;
 end;
+{$POP}
 
 { The IDE re-creates its windows at start when they were open at exit; documents are not
   kept, so a window that comes back empty goes away again. }
@@ -925,6 +931,8 @@ begin
   if FPages.PageCount = 0 then Close;
 end;
 
+{ event handlers and the form creator: the signatures are fixed by the LCL and the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMdForm.WindowClosed(Sender: TObject; var CloseAction: TCloseAction);
 begin
   { Closing discards every document, but the form itself is kept hidden: freeing it makes the
@@ -944,6 +952,7 @@ begin
   GForm := TMdForm(AForm);
   Application.QueueAsyncCall(@GForm.CloseIfEmpty, 0);
 end;
+{$POP}
 
 procedure RegisterMarkdownWindow;
 begin
@@ -1109,6 +1118,8 @@ begin
     McpMarkdownPickFile(Sender);
 end;
 
+{ a menu handler: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure McpMarkdownPickFile(Sender: TObject);
 var
   Dlg : TOpenDialog;
@@ -1126,5 +1137,6 @@ begin
     Dlg.Free;
   end;
 end;
+{$POP}
 
 end.

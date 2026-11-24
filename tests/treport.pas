@@ -161,7 +161,7 @@ end;
 
 procedure TTestReport.TestPartsComeInOrderAndFencedOnes;
 var
-  P : TMcpReportParts;
+  P : TMcpReportParts = nil;
   R : string;
 begin
   SetLength(P, 2);
@@ -177,7 +177,7 @@ end;
 
 procedure TTestReport.TestSizeCapCutsEarlyLinesOfShrinkableParts;
 var
-  P : TMcpReportParts;
+  P : TMcpReportParts = nil;
   R : string;
 begin
   SetLength(P, 1);
@@ -191,7 +191,7 @@ end;
 
 procedure TTestReport.TestSizeCapNeverCutsTheOtherParts;
 var
-  P : TMcpReportParts;
+  P : TMcpReportParts = nil;
   R : string;
 begin
   SetLength(P, 2);

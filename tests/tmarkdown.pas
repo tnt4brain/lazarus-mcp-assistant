@@ -1058,6 +1058,8 @@ var
   GFakeCalls : Integer;
   GFakeRaise : Boolean;
 
+{ the highlighter hook has a fixed signature; this fake does not read ACode }
+{$PUSH}{$WARN 5024 OFF}
 function FakeHighlighter(const ALang: string; ACode: TStrings; out ARuns: TMdRuns): Boolean;
 begin
   Inc(GFakeCalls);
@@ -1066,6 +1068,7 @@ begin
   ARuns := GFakeRuns;
   Result := ALang <> 'nolang';
 end;
+{$POP}
 
 function MkRun(ALine, AStart, ALen: Integer; const AColor: string;
   ABold: Boolean = False; AItalic: Boolean = False): TMdRun;

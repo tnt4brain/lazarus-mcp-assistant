@@ -502,6 +502,8 @@ begin
   end;
 end;
 
+{ the IDE's init-run event: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 function TLaunchHandler.OnInit(Sender: TObject; var Handled: Boolean): TModalResult;
 var
   Run: TRunThread;
@@ -520,6 +522,7 @@ begin
   end;
   Launched := True;
 end;
+{$POP}
 
 procedure TLaunchHandler.NotifyFinished;
 begin

@@ -7,8 +7,6 @@ unit McpOptions;
   state (token, port, last config path) is not shown. }
 
 {$mode objfpc}{$H+}
-{$HINTS OFF}  { the overrides and handlers here have the signatures the IDE's options editor and
-                the LCL fix, so their parameters go unused; a WARN 5024 switch had no effect in this unit }
 
 interface
 
@@ -274,6 +272,8 @@ begin
   Add(MCP_TERM_CUSTOM, 'Custom');
 end;
 
+{ event handlers: the LCL fixes the signature, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpOptionsFrame.WinChoiceChanged(Sender: TObject);
 begin
   FTerminal.Enabled := (FWinChoice.ItemIndex >= 0) and
@@ -320,6 +320,7 @@ begin
   FTestBtn.Caption := 'Test the connection';
   FTestBtn.Enabled := True;
 end;
+{$POP}
 
 destructor TMcpOptionsFrame.Destroy;
 begin
@@ -339,9 +340,12 @@ begin
   Result := 'General';
 end;
 
+{ the options editor's override: the signature is fixed, ADialog is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpOptionsFrame.Setup(ADialog: TAbstractOptionsEditorDialog);
 begin
 end;
+{$POP}
 
 { Grey text in an empty field: what is used when the field stays empty. }
 function FoundOnPath(const AExe: string): string;
@@ -388,6 +392,8 @@ begin
   FGitPath.TextHint := FoundOnPath('git');
 end;
 
+{ the options editor's overrides: the signatures are fixed, AOptions is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpOptionsFrame.ReadSettings(AOptions: TAbstractIDEOptions);
 begin
   if not Assigned(McpSettings) then Exit;
@@ -417,7 +423,10 @@ begin
   ListenChanged(nil);
   FFileLabel.Caption   := 'Stored in ' + McpSettings.ConfigFileName;
 end;
+{$POP}
 
+{ the options editor's overrides: the signatures are fixed, AOptions is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpOptionsFrame.WriteSettings(AOptions: TAbstractIDEOptions);
 var
   Addr: string;
@@ -455,6 +464,7 @@ begin
   McpSettings.SaveSettings;
   McpSyncAllowInstallMenu;
 end;
+{$POP}
 
 class function TMcpOptionsFrame.SupportedOptionsClass: TAbstractIDEOptionsClass;
 begin

@@ -423,6 +423,8 @@ begin
   McpTrackModalForm(AForm, AForm.Caption, Txt, Btns);
 end;
 
+{ the IDE's event signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpIdeHookManager.OnFormVisibleChanged(Sender: TObject; Form: TCustomForm);
 begin
   if not Assigned(Form) then Exit;
@@ -431,7 +433,10 @@ begin
   else
     McpUntrackModalForm(Form);
 end;
+{$POP}
 
+{ the IDE's event signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpIdeHookManager.OnActiveFormChanged(Sender: TObject; Form: TCustomForm);
 var
   C: TComponent;
@@ -463,6 +468,7 @@ begin
         AutoAnswer(Form, mrOK);
     end;
 end;
+{$POP}
 
 type
   TMcpAutoAnswer = class
@@ -510,6 +516,8 @@ begin
   Application.QueueAsyncCall(@A.Apply, 0);
 end;
 
+{ the IDE's event signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpIdeHookManager.OnFormRemoved(Sender: TObject; Form: TCustomForm);
 begin
   McpUntrackModalForm(Form);
@@ -526,7 +534,10 @@ begin
     GMcpExceptionDialogHwnd := 0;
   end;
 end;
+{$POP}
 
+{ the IDE's event signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpIdeHookManager.OnCompilerFinished(Sender: TObject; BuildSuccessful: boolean);
 var
   ErrItem: TJSONObject;
@@ -554,6 +565,7 @@ begin
     FErrorLog.Add(ErrItem);
   end;
 end;
+{$POP}
 
 function TMcpIdeHookManager.GetActiveEditorContext: TJSONObject;
 var

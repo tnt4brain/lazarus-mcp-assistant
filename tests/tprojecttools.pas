@@ -98,7 +98,7 @@ var
 begin
   Tools := GetToolsArray;
   try
-    FillChar(Found, SizeOf(Found), 0);
+    for K := 0 to N_Tools - 1 do Found[K] := False;
     for I := 0 to Tools.Count - 1 do
       for K := 0 to N_Tools - 1 do
         if TJSONObject(Tools[I]).Get('name', '') = Expected[K] then

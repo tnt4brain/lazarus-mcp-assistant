@@ -347,6 +347,8 @@ begin
   end;
 end;
 
+{ the HTTP server's request event: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpServerThread.HandleRequest(Sender: TObject;
   var ARequest  : TFPHTTPConnectionRequest;
   var AResponse : TFPHTTPConnectionResponse);
@@ -462,6 +464,7 @@ begin
     AResponse.Content     := ResponseBody;
   end;
 end;
+{$POP}
 
 { ── JSON-RPC dispatch ─────────────────────────────────────────────────────── }
 
@@ -2050,6 +2053,8 @@ type
     procedure OnIDEClose(Sender: TObject);
   end;
 
+{ the IDE's close event: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpIDEHook.OnIDEClose(Sender: TObject);
 begin
   McpShutdownDebugGuard;
@@ -2057,6 +2062,7 @@ begin
   { the tokens' last-used times are only in memory until now }
   if Assigned(McpSettings) then McpSettings.SaveSettings;
 end;
+{$POP}
 
 var
   IDEHook: TMcpIDEHook = nil;

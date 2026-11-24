@@ -304,12 +304,15 @@ begin
   FTimer.Enabled := True;
 end;
 
+{ a menu click: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpCloseProjectClick.Fire(Sender: TObject);
 begin
   FTimer.Enabled := False;
   if Assigned(Item) and Assigned(Item.MenuItem) then
     Item.MenuItem.Click;
 end;
+{$POP}
 
 destructor TMcpCloseProjectClick.Destroy;
 begin

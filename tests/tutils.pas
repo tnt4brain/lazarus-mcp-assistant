@@ -188,7 +188,7 @@ begin
   CheckTrue(S >= 0, 'Could not create socket');
   Enable := 1;
   fpSetSockOpt(S, SOL_SOCKET, SO_REUSEADDR, @Enable, SizeOf(Enable));
-  FillChar(Addr, SizeOf(Addr), 0);
+  Addr := Default(TInetSockAddr);
   Addr.sin_family          := AF_INET;
   Addr.sin_port            := Swap16(P);
   Addr.sin_addr.s_bytes[1] := 127;

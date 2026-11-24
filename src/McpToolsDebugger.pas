@@ -603,6 +603,8 @@ type
 var
   GEvalSeq : Integer = 0;
 
+{ the debugger's evaluate callback: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TEvalCall.Callback(Sender: TObject; ASuccess: Boolean;
   ResultText: string; ResultDBGType: TDBGType);
 begin
@@ -620,6 +622,7 @@ begin
   if Started then
     Free;  { else DoEvaluateAndWait frees it after Evaluate returns }
 end;
+{$POP}
 
 procedure TDbgSyncHelper.DoEvaluateAndWait;
 { Runs on the main thread via TThread.Synchronize.  Starts the async evaluation
