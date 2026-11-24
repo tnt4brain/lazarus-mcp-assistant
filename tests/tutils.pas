@@ -14,9 +14,8 @@ uses
 type
   TTestUtils = class(TTestCase)
   published
-    procedure TestGenerateTokenIs64Chars;
-    procedure TestGenerateTokenAllHex;
-    procedure TestGenerateTokenIsUnique;
+    procedure TestHexRoundTrip;
+    procedure TestHexToStrStopsAtBadInput;
     procedure TestFindFreePortNonZero;
     procedure TestFindFreePortIsUsable;
     procedure TestIsPortFreeForBoundPort;
@@ -29,12 +28,60 @@ type
     procedure TestPathIsUnder;
     procedure TestPathHasSegment;
     procedure TestRepoRoot;
+    procedure TestProgramIsFoundThroughPath;
   end;
 
 implementation
 
 uses
-  SysUtils, Sockets, fpjson, jsonparser;
+  {$IFDEF WINDOWS}Windows{$ELSE}BaseUnix{$ENDIF},   { first: SysUtils must win the shared names }
+  SysUtils, Classes, Sockets, fpjson, jsonparser, LazFileUtils, FileUtil;
+
+{$IFNDEF WINDOWS}
+function setenv(AName, AValue: PChar; AOverwrite: LongInt): LongInt; cdecl; external 'c' name 'setenv';
+{$ENDIF}
+
+procedure SetPath(const AValue: string);
+begin
+  {$IFDEF WINDOWS}
+  Windows.SetEnvironmentVariable('PATH', PChar(AValue));
+  {$ELSE}
+  setenv('PATH', PChar(AValue), 1);
+  {$ENDIF}
+end;
+
+{ The plugin finds git, lazbuild and curl with FindDefaultExecutablePath(name).  Lazarus 5.0
+  stops searching the current directory on Windows for it; a program on PATH must be found on
+  4.x and 5.x alike, which is all the plugin relies on. }
+procedure TTestUtils.TestProgramIsFoundThroughPath;
+var
+  Dir, Fake, OldPath : string;
+  F : TStringList;
+begin
+  Dir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcppathtest';
+  ForceDirectories(Dir);
+  Fake := IncludeTrailingPathDelimiter(Dir) + 'mcpfaketool' + {$IFDEF WINDOWS}'.exe'{$ELSE}''{$ENDIF};
+  F := TStringList.Create;
+  try
+    F.Text := 'not a real program';
+    F.SaveToFile(Fake);
+    {$IFNDEF WINDOWS}
+    FpChmod(Fake, &755);
+    {$ENDIF}
+    OldPath := GetEnvironmentVariable('PATH');
+    try
+      SetPath(Dir + PathSeparator + OldPath);
+      AssertEquals('found by its bare name', Fake, FindDefaultExecutablePath('mcpfaketool'));
+    finally
+      SetPath(OldPath);
+    end;
+    AssertEquals('and not once PATH is back', '', FindDefaultExecutablePath('mcpfaketool'));
+  finally
+    F.Free;
+    DeleteFile(Fake);
+    RemoveDir(Dir);
+  end;
+end;
 
 procedure TTestUtils.TestPathIsUnder;
 var
@@ -95,27 +142,26 @@ begin
   AssertTrue(McpPathHasSegment('/a/b/.git', '.git'));
 end;
 
-procedure TTestUtils.TestGenerateTokenIs64Chars;
-begin
-  CheckEquals(64, Length(GenerateToken),
-    'GenerateToken must return exactly 64 characters');
-end;
-
-procedure TTestUtils.TestGenerateTokenAllHex;
+procedure TTestUtils.TestHexRoundTrip;
 var
-  T : string;
-  I : Integer;
+  B : array[0..3] of Byte = ($00, $0F, $A5, $FF);
+  S : string;
 begin
-  T := GenerateToken;
-  for I := 1 to Length(T) do
-    CheckTrue(T[I] in ['0'..'9', 'A'..'F', 'a'..'f'],
-      'GenerateToken char ' + IntToStr(I) + ' is not hex: ' + T[I]);
+  CheckEquals('000fa5ff', McpBytesToHex(B, SizeOf(B)), 'lower case, two characters per byte');
+  SetString(S, PChar(@B[0]), SizeOf(B));
+  CheckEquals('000fa5ff', McpStrToHex(S));
+  CheckTrue(McpHexToStr('000fa5ff') = S, 'back');
+  CheckTrue(McpHexToStr('000FA5FF') = S, 'upper case is read too');
+  CheckEquals('', McpStrToHex(''));
+  CheckEquals('', McpBytesToHex(B, 0));
+  CheckEquals('', McpHexToStr(''));
 end;
 
-procedure TTestUtils.TestGenerateTokenIsUnique;
+procedure TTestUtils.TestHexToStrStopsAtBadInput;
 begin
-  CheckNotEquals(GenerateToken, GenerateToken,
-    'Two consecutive GenerateToken calls must return different values');
+  CheckEquals(2, Length(McpHexToStr('4142zz43')), 'stops at the first bad pair');
+  CheckEquals('AB', McpHexToStr('4142zz43'));
+  CheckEquals('A', McpHexToStr('414'), 'a half pair at the end is dropped');
 end;
 
 { Where the server may listen: IPv4 addresses only, the loopback is the default }

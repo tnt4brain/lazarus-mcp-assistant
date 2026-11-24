@@ -59,6 +59,9 @@ const
 { Splits at LF or CRLF.  A final line ending does not make an empty last line;
   FinalNewline tells whether there was one.  An empty text has no lines. }
 function SplitLines(const S: string; out FinalNewline: Boolean): TDiffLines;
+
+{ The lines of S, for a caller that does not need to know about the final line ending. }
+function LinesOf(const S: string): TDiffLines;
 function JoinLines(const Lines: TDiffLines; const EOL: string;
   FinalNewline: Boolean): string;
 
@@ -145,6 +148,13 @@ begin
   end
   else
     FinalNewline := True;
+end;
+
+function LinesOf(const S: string): TDiffLines;
+var
+  Dummy : Boolean;
+begin
+  Result := SplitLines(S, Dummy);
 end;
 
 function JoinLines(const Lines: TDiffLines; const EOL: string;

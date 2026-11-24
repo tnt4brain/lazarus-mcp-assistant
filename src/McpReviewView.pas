@@ -1608,10 +1608,8 @@ begin
 end;
 
 procedure TReviewPage.ReadWorkingCopy;
-var
-  Dummy: Boolean;
 begin
-  FResult := SplitLines(FEdM.Lines.Text, Dummy);
+  FResult := LinesOf(FEdM.Lines.Text);
 end;
 
 { a button click: the LCL fixes the signature, Sender is not needed }

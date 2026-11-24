@@ -130,6 +130,23 @@ begin
   end;
 end;
 
+{$IFDEF WINDOWS}
+{ The project file as text, without the number of its file format: a newer IDE saves the same
+  project in its newer format (Lazarus 5.0: 12 becomes 13), which says nothing about what the
+  plugin did to the settings. }
+function FileTextSameFormat(const AFile: string): string;
+var
+  P, E : Integer;
+begin
+  Result := FileText(AFile);
+  P := Pos('<Version Value="', Result);
+  if P = 0 then Exit;
+  E := Pos('"/>', Copy(Result, P, 40));
+  if E > 0 then
+    Result := Copy(Result, 1, P - 1) + '<Version Value=""/>' + Copy(Result, P + E + 2, MaxInt);
+end;
+{$ENDIF}
+
 function MarkLine(const AName: string): Integer;
 var
   SL : TStringList;
@@ -244,7 +261,7 @@ procedure TTestWindows.TestWidgetset;
 var
   Before, T : string;
 begin
-  Before := FileText(WindoweeLpi);
+  Before := FileTextSameFormat(WindoweeLpi);
   T := Call('project_set_settings', '{"widgetset":"QT5"}');
   CheckFalse(IsError(T), T);
   CheckEquals('qt5', JPath(T, 'widgetset'), T);
@@ -263,7 +280,7 @@ begin
   CheckFalse(IsError(T), T);
   CheckEquals('', JPath(T, 'widgetset_override'), T);
   CheckEquals('win32', JPath(T, 'widgetset'), T);
-  CheckEquals(Before, FileText(WindoweeLpi), '.lpi restored');
+  CheckEquals(Before, FileTextSameFormat(WindoweeLpi), '.lpi restored');
 end;
 {$ENDIF}
 

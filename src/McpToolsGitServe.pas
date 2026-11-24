@@ -24,7 +24,7 @@ implementation
 
 uses
   Classes, SysUtils, StrUtils, SyncObjs, fpjson, base64, McpIdeState, McpGitRun,
-  McpToolsGitRemote, McpGitServe, McpTokens;
+  McpToolsGitRemote, McpGitServe, McpTokens, McpUtils;
 
 const
   MCP_ANN_SERVE = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":true}';
@@ -127,31 +127,9 @@ var
 
 { ── the links, in the settings (main thread) ─────────────────────────────── }
 
-function ToHex(const S: string): string;
-var
-  I : Integer;
-begin
-  Result := '';
-  for I := 1 to Length(S) do
-    Result := Result + LowerCase(IntToHex(Ord(S[I]), 2));
-end;
-
-function FromHex(const H: string): string;
-var
-  I : Integer;
-begin
-  Result := '';
-  I := 1;
-  while I < Length(H) do
-  begin
-    Result := Result + Chr(StrToIntDef('$' + Copy(H, I, 2), 0));
-    Inc(I, 2);
-  end;
-end;
-
 function LinkText(const L: TLink): string;
 begin
-  Result := L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + '|' + ToHex(L.Key);
+  Result := L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + '|' + McpStrToHex(L.Key);
 end;
 
 function ParseLink(const S: string; out L: TLink): Boolean;
@@ -168,7 +146,7 @@ begin
     L.Peer := P[0];
     L.Host := P[1];
     L.Port := StrToIntDef(P[2], 0);
-    L.Key  := FromHex(P[3]);
+    L.Key  := McpHexToStr(P[3]);
     Result := (L.Peer <> '') and (L.Port > 0) and (Length(L.Key) = 20);
   finally
     P.Free;
@@ -230,7 +208,8 @@ begin
         for I := 0 to McpSettings.GitLinks.Count - 1 do
           if ParseLink(McpSettings.GitLinks[I], L) then
           begin
-            Names := Names + L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + #10;
+            Names := Names + L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + '|' +
+              McpKeyFingerprint(L.Key) + #10;
             Found := True;
           end;
     end;
@@ -338,17 +317,21 @@ begin
       Windows lists Git Credential Manager, which would open a window and ask for a password) }
     ' && git config --unset-all credential.helper; git config credential.helper ""' +
     ' && if command -v instantfpc >/dev/null 2>&1; then' +
-    ' git config --add credential.helper "!instantfpc ~/.git-credential-mcp.pas ' + ToHex(L.Key) + '";' +
-    ' else git config --add credential.helper "!sh ~/.git-credential-mcp ' + ToHex(L.Key) + '"; fi';
+    ' git config --add credential.helper "!instantfpc ~/.git-credential-mcp.pas ' + McpStrToHex(L.Key) + '";' +
+    ' else git config --add credential.helper "!sh ~/.git-credential-mcp ' + McpStrToHex(L.Key) + '"; fi';
 end;
 
 const
   { what the assistant does on the box for every test run once the link is set up }
   PULL_STEPS = 'On the other machine: git_fetch (remote mcp), then git_reset (mode hard, target ' +
-    'refs/remotes/mcp/snapshot), or in a shell: cd <folder> && git fetch -q mcp && git reset ' +
-    '-q --hard refs/remotes/mcp/snapshot';
+    'refs/remotes/mcp/snapshot), or in a shell: cd <folder> && timeout 60 git fetch -q mcp && ' +
+    'git reset -q --hard refs/remotes/mcp/snapshot. A fetch that hangs or says Authentication ' +
+    'failed means the machine was set up for an older link: git_serve status says so, and ' +
+    'the setup_bash of the latest link fixes it';
 
 function StatusObject(AServer: TGitServe): TJSONObject;
+var
+  Hint : string;
 begin
   Result := TJSONObject.Create;
   Result.Add('serving', Assigned(AServer) and AServer.Running);
@@ -359,6 +342,9 @@ begin
     Result.Add('seconds_left', AServer.SecondsLeft);
     Result.Add('fetches_served', AServer.Served);
     Result.Add('wrong_codes', AServer.Wrong);
+    Result.Add('connections', AServer.Connects);
+    Hint := McpServeHint(AServer.Served, AServer.Wrong, AServer.Connects, AServer.SecondsRunning);
+    if Hint <> '' then Result.Add('hint', Hint);
   end;
 end;
 
@@ -472,8 +458,11 @@ begin
   Obj.Add('linked', Peer);
   Obj.Add('url', UrlFor(L.Host, L.Port));
   Obj.Add('setup_bash', SetupCommand(L, Target));
+  Obj.Add('key_fingerprint', McpKeyFingerprint(L.Key));
   Obj.Add('note', 'Run setup_bash once on ' + Peer + ' (it makes the folder and the remote "' +
-    REMOTE_NAME + '", and installs a credential helper that holds the key). ' + PULL_STEPS +
+    REMOTE_NAME + '", and installs a credential helper that holds the key). Linking again ' +
+    'replaces the port and the key: a machine set up for an earlier link stops working until ' +
+    'it has run this new setup_bash. ' + PULL_STEPS +
     '. Before each run: git_serve start; it closes itself after the fetch.');
   Reply(Ctx, True, Obj);
 end;
@@ -929,12 +918,13 @@ begin
       F.Delimiter := '|';
       F.StrictDelimiter := True;
       F.DelimitedText := Lines[I];
-      if F.Count = 3 then
+      if F.Count = 4 then
       begin
         Item := TJSONObject.Create;
         Item.Add('peer', F[0]);
         Item.Add('this_machine', F[1]);
         Item.Add('port', StrToIntDef(F[2], 0));
+        Item.Add('key_fingerprint', F[3]);
         Arr.Add(Item);
       end;
     end;

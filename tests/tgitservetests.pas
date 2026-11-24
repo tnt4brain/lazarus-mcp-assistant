@@ -39,21 +39,20 @@ type
     procedure TestFetchLimitClosesTheListener;
     procedure TestCredentialHelperAnswersTheServer;
     procedure TestInstantFpcHelperAnswersTheServer;
+    procedure TestHintNamesAStaleBox;
+    procedure TestKeyFingerprint;
+    procedure TestConnectionsAreCounted;
   end;
 
 implementation
 
 uses
   {$IFDEF WINDOWS} Windows, {$ENDIF}
-  Classes, SysUtils, FileUtil, Process, base64, McpGitServe;
+  Classes, SysUtils, FileUtil, Process, base64, McpGitServe, McpUtils;
 
 function Hex(const S: string): string;
-var
-  I : Integer;
 begin
-  Result := '';
-  for I := 1 to Length(S) do
-    Result := Result + LowerCase(IntToHex(Ord(S[I]), 2));
+  Result := McpStrToHex(S);
 end;
 
 procedure TTestGitServe.SetUp;
@@ -201,6 +200,43 @@ begin
     CheckFalse(Fetch('http://127.0.0.1:' + IntToStr(Srv.Port) + '/repo.git',
       McpTotp(McpServeKey('other'), 0)), 'a code of another token');
     CheckTrue(Srv.Wrong >= 1, 'wrong codes are counted');
+  finally
+    Srv.Free;
+  end;
+end;
+
+procedure TTestGitServe.TestHintNamesAStaleBox;
+begin
+  CheckEquals('', McpServeHint(1, 0, 3, 100), 'served: nothing to say');
+  CheckEquals('', McpServeHint(0, 0, 0, 5), 'too early to tell');
+  CheckTrue(Pos('old port', McpServeHint(0, 0, 0, 30)) > 0, 'nobody connected');
+  CheckTrue(Pos('code was refused', McpServeHint(0, 2, 4, 1)) > 0, 'codes refused: old key');
+  CheckEquals('', McpServeHint(0, 0, 2, 100), 'connected, waiting for the fetch');
+end;
+
+procedure TTestGitServe.TestKeyFingerprint;
+begin
+  CheckEquals(8, Length(McpKeyFingerprint('key')));
+  CheckEquals(McpKeyFingerprint('key'), McpKeyFingerprint('key'), 'stable');
+  CheckNotEquals(McpKeyFingerprint('key'), McpKeyFingerprint('Key'), 'differs');
+  CheckEquals(-1, Pos(McpStrToHex('key'), McpKeyFingerprint('key')) - 1, 'does not show the key');
+end;
+
+procedure TTestGitServe.TestConnectionsAreCounted;
+var
+  Srv : TGitServe;
+  Why : string;
+begin
+  if FGit = '' then Ignore('no git');
+  Srv := TGitServe.Create(FGit, FRepo, '127.0.0.1', McpServeKey('tok'));
+  try
+    CheckTrue(Srv.Start(1, Why), Why);
+    CheckEquals(0, Srv.Connects, 'none yet');
+    Fetch('http://127.0.0.1:' + IntToStr(Srv.Port) + '/repo.git', '000000');
+    CheckTrue(Srv.Connects >= 1, 'a refused fetch still counts as a connection');
+    CheckTrue(Srv.Wrong >= 1, 'and the wrong code is seen');
+    CheckTrue(Pos('code was refused', McpServeHint(Srv.Served, Srv.Wrong, Srv.Connects, 1)) > 0,
+      'the hint says the key is old');
   finally
     Srv.Free;
   end;

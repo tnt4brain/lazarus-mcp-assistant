@@ -52,7 +52,7 @@ uses
   CodeToolManager, CodeCache,
   Controls,               { mrOk }
   Laz2_XMLCfg, fphttpclient, opensslsockets, md5, zipper, process,
-  McpToolContext, McpIdeState, McpConsent, McpToolsCodeTools;
+  McpToolContext, McpIdeState, McpConsent, McpToolsCodeTools, McpProcess;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -557,10 +557,7 @@ end;
 function CurlGet(const AUrl: string; AStream: TMemoryStream; out AErr: string): Boolean;
 var
   Exe, Tmp, Msg : string;
-  P             : TProcess;
-  Buf           : array[0..1023] of Byte;
-  N             : Integer;
-  Err           : TStringStream;
+  Code          : Integer;
 begin
   Result := False;
   AErr := '';
@@ -571,36 +568,17 @@ begin
     Exit;
   end;
   Tmp := GetTempFileName(GetTempDir, 'mcpdl');
-  P := TProcess.Create(nil);
-  Err := TStringStream.Create('');
   try
-    P.Executable := Exe;
-    P.Parameters.AddStrings(['-fsSL', '--max-time', '120', '--connect-timeout', '15',
-                             '-o', Tmp, AUrl]);
-    P.Options := [poUsePipes, poNoConsole];
-    Buf[0] := 0;
-    try
-      P.Execute;
-      while P.Running or (P.Stderr.NumBytesAvailable > 0) do
-      begin
-        N := P.Stderr.NumBytesAvailable;
-        if N > 0 then
+    { the archive goes to the file (-o), so what curl prints is only its error text }
+    case McpRunCapture(Exe, ['-fsSL', '--max-time', '120', '--connect-timeout', '15',
+                             '-o', Tmp, AUrl], '', Msg, Code) of
+      reNotStarted:
         begin
-          if N > SizeOf(Buf) then N := SizeOf(Buf);
-          N := P.Stderr.Read(Buf, N);
-          Err.Write(Buf, N);
-        end
-        else
-          Sleep(20);
-      end;
-    except
-      on X: Exception do
-      begin
-        AErr := 'curl could not run: ' + X.Message;
-        Exit;
-      end;
+          AErr := 'curl could not run: ' + Msg;
+          Exit;
+        end;
     end;
-    if (P.ExitStatus = 0) and FileExists(Tmp) then
+    if (Code = 0) and FileExists(Tmp) then
     begin
       AStream.Clear;
       AStream.LoadFromFile(Tmp);
@@ -608,13 +586,11 @@ begin
     end
     else
     begin
-      Msg := Trim(Err.DataString);
-      if Msg = '' then Msg := 'exit code ' + IntToStr(P.ExitStatus);
+      Msg := Trim(Msg);
+      if Msg = '' then Msg := 'exit code ' + IntToStr(Code);
       AErr := 'curl: ' + Msg;
     end;
   finally
-    Err.Free;
-    P.Free;
     if FileExists(Tmp) then DeleteFile(Tmp);
   end;
 end;

@@ -121,13 +121,6 @@ begin
     Result := nil;
 end;
 
-function LinesOf(const AText: string): TDiffLines;
-var
-  Dummy : Boolean;
-begin
-  Result := SplitLines(AText, Dummy);
-end;
-
 function FindEntry(const AAbs: string): TEntry;
 var
   I : Integer;

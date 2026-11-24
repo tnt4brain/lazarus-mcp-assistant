@@ -14,8 +14,11 @@ uses
 { Byte-swap a 16-bit value (network ↔ host byte order on little-endian hosts). }
 function Swap16(v: Word): Word; inline;
 
-{ Returns a 64-character hex string (32 random bytes from the operating system). }
-function GenerateToken: string;
+{ Bytes as lower-case hex (two characters each), and back.  McpHexToStr stops at the first
+  character that is not a hex pair and returns what it has read up to there. }
+function McpBytesToHex(const ABuf; ALen: Integer): string;
+function McpStrToHex(const S: string): string;
+function McpHexToStr(const H: string): string;
 
 const
   { the address the server listens on unless the settings say otherwise }
@@ -89,7 +92,7 @@ procedure McpNormalizePathArgs(AArgs: TJSONObject);
 implementation
 
 uses
-  SysUtils, Sockets, LazFileUtils, McpTokens
+  SysUtils, Sockets, LazFileUtils
   {$IFDEF WINDOWS}, Windows{$ENDIF};
 
 {$IFDEF WINDOWS}
@@ -374,9 +377,56 @@ begin
     Result := AWanted;
 end;
 
-function GenerateToken: string;
+function McpBytesToHex(const ABuf; ALen: Integer): string;
+const
+  Digits = '0123456789abcdef';
+var
+  I : Integer;
+  P : PByte;
 begin
-  Result := McpNewPrimaryToken;   { 32 bytes from the operating system, as hex }
+  Result := '';
+  if ALen <= 0 then Exit;
+  SetLength(Result, ALen * 2);
+  P := @ABuf;
+  for I := 0 to ALen - 1 do
+  begin
+    Result[I * 2 + 1] := Digits[(P[I] shr 4) + 1];
+    Result[I * 2 + 2] := Digits[(P[I] and 15) + 1];
+  end;
+end;
+
+function McpStrToHex(const S: string): string;
+begin
+  if S = '' then Exit('');
+  Result := McpBytesToHex(S[1], Length(S));
+end;
+
+function McpHexToStr(const H: string): string;
+var
+  I, Hi, Lo : Integer;
+
+  function Nibble(C: Char): Integer;
+  begin
+    case C of
+      '0'..'9': Result := Ord(C) - Ord('0');
+      'a'..'f': Result := Ord(C) - Ord('a') + 10;
+      'A'..'F': Result := Ord(C) - Ord('A') + 10;
+    else
+      Result := -1;
+    end;
+  end;
+
+begin
+  Result := '';
+  I := 1;
+  while I < Length(H) do
+  begin
+    Hi := Nibble(H[I]);
+    Lo := Nibble(H[I + 1]);
+    if (Hi < 0) or (Lo < 0) then Break;
+    Result := Result + Chr(Hi * 16 + Lo);
+    Inc(I, 2);
+  end;
 end;
 
 end.

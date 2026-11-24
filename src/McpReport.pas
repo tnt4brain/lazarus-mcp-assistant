@@ -71,22 +71,9 @@ begin
 end;
 
 function SplitLines(const AText: string): TStringList;
-var
-  I, Start : Integer;
-  Line     : string;
 begin
   Result := TStringList.Create;
-  Start := 1;
-  for I := 1 to Length(AText) + 1 do
-    if (I > Length(AText)) or (AText[I] = #10) then
-    begin
-      if (I > Length(AText)) and (Start > Length(AText)) then Break;  { closing break }
-      Line := Copy(AText, Start, I - Start);
-      if (Line <> '') and (Line[Length(Line)] = #13) then
-        SetLength(Line, Length(Line) - 1);
-      Result.Add(Line);
-      Start := I + 1;
-    end;
+  Result.Text := AText;   { CR, LF and CR LF all end a line; a closing break adds none }
 end;
 
 function McpTailLines(const AText: string; N: Integer): string;

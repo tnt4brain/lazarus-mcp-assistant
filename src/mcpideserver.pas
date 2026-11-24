@@ -103,12 +103,12 @@ implementation
 
 uses
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
-  LazFileUtils, Sockets, ssockets, fphttpclient,
-  StrUtils, Forms,
-  IDEExternToolIntf, IDEMsgIntf,
-  McpUtils, McpToolAliases, McpToolContext, McpToolHelpers, McpDebugGuard, McpDebugLease,
-  McpExceptionLog, McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram,
-  McpTokens, McpToolLog, McpMessages, McpReport, McpLimitedMode, LCLVersion, DateUtils;
+  LazFileUtils, Sockets, ssockets, fphttpclient, StrUtils, Forms,
+  IDEExternToolIntf, IDEMsgIntf, McpUtils, McpToolAliases, McpToolContext,
+  McpToolHelpers, McpDebugGuard, McpDebugLease, McpExceptionLog,
+  McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram, McpTokens,
+  McpToolLog, McpMessages, McpReport, McpLimitedMode, McpProcess, LCLVersion,
+  DateUtils;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
@@ -1592,7 +1592,9 @@ function GetMcpGitHash: string;
 var
   IDEPkg : TIDEPackage;
   SrcDir : string;
-  Proc   : TProcess;
+  GitExe : string;
+  Got    : string;
+  Code   : Integer;
   SL     : TStringList;
 begin
   if GMcpGitHash <> '' then Exit(GMcpGitHash);
@@ -1600,30 +1602,21 @@ begin
   IDEPkg := PackageEditingInterface.FindPackageWithName('LazMcpAssistant');
   if not Assigned(IDEPkg) then begin GMcpGitHash := Result; Exit; end;
   SrcDir := ExtractFileDir(IDEPkg.Filename);
-  Proc := TProcess.Create(nil);
-  SL   := TStringList.Create;
+  GitExe := McpGitExecutable;
+  if GitExe = '' then begin GMcpGitHash := Result; Exit; end;
+  SL := TStringList.Create;
   try
-    Proc.Executable      := McpGitExecutable;
-    if Proc.Executable = '' then begin GMcpGitHash := Result; Exit; end;
-    Proc.Parameters.Add('rev-parse');
-    Proc.Parameters.Add('--short');
-    Proc.Parameters.Add('HEAD');
-    Proc.CurrentDirectory := SrcDir;
-    Proc.Options          := [poUsePipes, poWaitOnExit, poStderrToOutPut, poNoConsole];
-    Proc.ShowWindow       := swoHide;
-    try
-      Proc.Execute;
-      SL.LoadFromStream(Proc.Output);
+    if McpRunCapture(GitExe, ['rev-parse', '--short', 'HEAD'], SrcDir, Got, Code) = reExited then
+    begin
+      SL.Text := Got;
       { only a commit hash: outside a repository (an exported copy, a release zip) git's error
-        text is not one, and "exit code 0" alone is not enough with poStderrToOutPut }
-      if (Proc.ExitStatus = 0) and (SL.Count > 0) and (Trim(SL[0]) <> '') and
+        text is not one, and "exit code 0" alone is not enough with stderr merged in }
+      if (Code = 0) and (SL.Count > 0) and (Trim(SL[0]) <> '') and
          (Length(Trim(SL[0])) <= 40) and (Pos(' ', Trim(SL[0])) = 0) then
         Result := Trim(SL[0]);
-    except
     end;
   finally
     SL.Free;
-    Proc.Free;
   end;
   GMcpGitHash := Result;
 end;
@@ -1867,7 +1860,7 @@ begin
   Token := McpSettings.ServerToken;
   if Token = '' then
   begin
-    Token := GenerateToken;
+    Token := McpNewPrimaryToken;
     McpSettings.ServerToken := Token;
     McpSettings.SaveSettings;
   end;

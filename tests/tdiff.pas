@@ -24,6 +24,7 @@ type
     function CountKind(const C: TMergeChunks; K: TMergeKind): Integer;
   published
     procedure TestSplitJoin;
+    procedure TestLinesOf;
     procedure TestIdentical;
     procedure TestInsertDeleteReplace;
     procedure TestApplyAllAndNone;
@@ -206,6 +207,13 @@ begin
   CheckEquals(#10, JoinLines(X, #10, Final));
   CheckEquals('a|b|', JoinLines(L(['a', 'b']), '|', True));
   CheckEquals('a|b', JoinLines(L(['a', 'b']), '|', False));
+end;
+
+procedure TTestDiff.TestLinesOf;
+begin
+  CheckEquals(2, Length(LinesOf('a'#13#10'b'#10)), 'a closing line end adds no line');
+  CheckEquals(2, Length(LinesOf('a'#10'b')));
+  CheckEquals(0, Length(LinesOf('')));
 end;
 
 procedure TTestDiff.TestIdentical;
