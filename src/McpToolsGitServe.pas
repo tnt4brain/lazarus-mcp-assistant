@@ -208,7 +208,8 @@ begin
         for I := 0 to McpSettings.GitLinks.Count - 1 do
           if ParseLink(McpSettings.GitLinks[I], L) then
           begin
-            Names := Names + L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + #10;
+            Names := Names + L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + '|' +
+              McpKeyFingerprint(L.Key) + #10;
             Found := True;
           end;
     end;
@@ -323,10 +324,14 @@ end;
 const
   { what the assistant does on the box for every test run once the link is set up }
   PULL_STEPS = 'On the other machine: git_fetch (remote mcp), then git_reset (mode hard, target ' +
-    'refs/remotes/mcp/snapshot), or in a shell: cd <folder> && git fetch -q mcp && git reset ' +
-    '-q --hard refs/remotes/mcp/snapshot';
+    'refs/remotes/mcp/snapshot), or in a shell: cd <folder> && timeout 60 git fetch -q mcp && ' +
+    'git reset -q --hard refs/remotes/mcp/snapshot. A fetch that hangs or says Authentication ' +
+    'failed means the machine was set up for an older link: git_serve status says so, and ' +
+    'the setup_bash of the latest link fixes it';
 
 function StatusObject(AServer: TGitServe): TJSONObject;
+var
+  Hint : string;
 begin
   Result := TJSONObject.Create;
   Result.Add('serving', Assigned(AServer) and AServer.Running);
@@ -337,6 +342,9 @@ begin
     Result.Add('seconds_left', AServer.SecondsLeft);
     Result.Add('fetches_served', AServer.Served);
     Result.Add('wrong_codes', AServer.Wrong);
+    Result.Add('connections', AServer.Connects);
+    Hint := McpServeHint(AServer.Served, AServer.Wrong, AServer.Connects, AServer.SecondsRunning);
+    if Hint <> '' then Result.Add('hint', Hint);
   end;
 end;
 
@@ -450,8 +458,11 @@ begin
   Obj.Add('linked', Peer);
   Obj.Add('url', UrlFor(L.Host, L.Port));
   Obj.Add('setup_bash', SetupCommand(L, Target));
+  Obj.Add('key_fingerprint', McpKeyFingerprint(L.Key));
   Obj.Add('note', 'Run setup_bash once on ' + Peer + ' (it makes the folder and the remote "' +
-    REMOTE_NAME + '", and installs a credential helper that holds the key). ' + PULL_STEPS +
+    REMOTE_NAME + '", and installs a credential helper that holds the key). Linking again ' +
+    'replaces the port and the key: a machine set up for an earlier link stops working until ' +
+    'it has run this new setup_bash. ' + PULL_STEPS +
     '. Before each run: git_serve start; it closes itself after the fetch.');
   Reply(Ctx, True, Obj);
 end;
@@ -907,12 +918,13 @@ begin
       F.Delimiter := '|';
       F.StrictDelimiter := True;
       F.DelimitedText := Lines[I];
-      if F.Count = 3 then
+      if F.Count = 4 then
       begin
         Item := TJSONObject.Create;
         Item.Add('peer', F[0]);
         Item.Add('this_machine', F[1]);
         Item.Add('port', StrToIntDef(F[2], 0));
+        Item.Add('key_fingerprint', F[3]);
         Arr.Add(Item);
       end;
     end;

@@ -54,6 +54,8 @@ type
     FActive    : LongInt;
     FServed    : LongInt;
     FWrong     : LongInt;
+    FConnects  : LongInt;
+    FStartTick : QWord;
     FFetchesLeft : LongInt;
     FFetchLimit  : LongInt;
     FLock      : TCriticalSection;
@@ -76,6 +78,8 @@ type
     { The code that is good now, and the seconds it has left. }
     function  Code(out ASecondsLeft: Integer): string;
     function  SecondsLeft: Integer;
+    { Seconds since the listener opened. }
+    function  SecondsRunning: Integer;
     property  Running : Boolean read GetRunning;
     property  Host    : string  read FHost;
     property  Port    : Word    read FPort;
@@ -84,9 +88,19 @@ type
     property  Key     : string  read FKey;
     property  Served  : LongInt read FServed;   { fetches answered }
     property  Wrong   : LongInt read FWrong;    { wrong codes seen }
+    property  Connects: LongInt read FConnects; { requests of any kind, answered or refused }
     { The listener closes itself after this many answered fetches (0 = no limit); set before Start. }
     property  FetchLimit : LongInt read FFetchLimit write FFetchLimit;
   end;
+
+{ What a stuck fetch most likely means, for the status of a running server: '' when all is well
+  or too early to tell.  A box set up for an older link keeps the old port (nothing connects)
+  or the old key (it connects and every code is refused). }
+function McpServeHint(AServed, AWrong, AConnects, ASecondsRunning: Integer): string;
+
+{ A short public tag of a key (8 hex digits of its SHA-1), to compare the key of a link with the
+  one on the other machine without showing the key. }
+function McpKeyFingerprint(const AKey: string): string;
 
 var
   { Seconds since 1970 (UTC); a test can replace it. }
@@ -595,6 +609,7 @@ var
 begin
   FDeadline := GetTickCount64 + REQUEST_MS;
   if not ReadHead(Head) then Exit;
+  InterlockedIncrement(FOwner.FConnects);
   Lines := TStringList.Create;
   try
     Lines.Text := Head;
@@ -789,7 +804,9 @@ begin
   Len := SizeOf(Addr);
   fpgetsockname(FListen, @Addr, @Len);
   FPort     := ntohs(Addr.sin_port);
-  FEndTick  := GetTickCount64 + QWord(AMinutes) * 60000;
+  FStartTick := GetTickCount64;
+  FEndTick  := FStartTick + QWord(AMinutes) * 60000;
+  FConnects := 0;
   FStopping := False;
   FFetchesLeft := FFetchLimit;
   FThread   := TAcceptThread.Create(Self);
@@ -853,6 +870,30 @@ function TGitServe.SecondsLeft: Integer;
 begin
   if not Running then Exit(0);
   Result := Integer((FEndTick - GetTickCount64) div 1000);
+end;
+
+function TGitServe.SecondsRunning: Integer;
+begin
+  if not Running then Exit(0);
+  Result := Integer((GetTickCount64 - FStartTick) div 1000);
+end;
+
+function McpServeHint(AServed, AWrong, AConnects, ASecondsRunning: Integer): string;
+begin
+  Result := '';
+  if AServed > 0 then Exit;
+  if AWrong > 0 then
+    Result := 'The other machine connected but its code was refused: its setup is from an older ' +
+      'link (the key changed). Run the setup_bash of the latest git_serve link on it.'
+  else if (AConnects = 0) and (ASecondsRunning >= 20) then
+    Result := 'Nothing has connected yet. If the other machine was set up for an older link it ' +
+      'still points at the old port: run the setup_bash of the latest git_serve link on it ' +
+      '(git remote -v there shows the port it uses).';
+end;
+
+function McpKeyFingerprint(const AKey: string): string;
+begin
+  Result := Copy(SHA1Print(SHA1String(AKey)), 1, 8);
 end;
 
 procedure TGitServe.Track(ASock: TSocket; AAdd: Boolean);
