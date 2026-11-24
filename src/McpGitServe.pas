@@ -95,6 +95,7 @@ var
 implementation
 
 uses
+  {$IFDEF UNIX}UnixType,{$ENDIF}
   sha1, base64, Process, zstream, McpTokens;
 
 const
