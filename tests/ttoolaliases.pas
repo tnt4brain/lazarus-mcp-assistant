@@ -91,12 +91,14 @@ end;
 
 procedure TTestToolAliases.TestOneNamePerIdea;
 const
-  CASES : array[0..4, 0..2] of string = (
+  CASES : array[0..6, 0..2] of string = (
     ('project_run',        'wait_seconds', 'timeout_s'),
     ('project_run_output', 'wait_seconds', 'timeout_s'),
     ('project_run_input',  'wait_seconds', 'timeout_s'),
     ('project_run_input',  'text',         'stdin'),
-    ('debug_set_variable', 'name',         'variable_name'));
+    ('debug_set_variable', 'name',         'variable_name'),
+    ('code_edit_statement', 'op',           'action'),
+    ('package_create',     'type',         'package_type'));
 var
   I    : Integer;
   P    : TJSONObject;

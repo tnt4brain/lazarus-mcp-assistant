@@ -676,6 +676,9 @@ begin
   { files an agent wrote with its own tools: reloaded now, so this call sees them
     and the IDE does not ask the user later (ADR-011) }
   McpReloadChangedFiles;
+  { a package whose .lpk changed on disk (branch switch, rebase): the IDE's copy is stale
+    until its window gets the focus, and a rebuild would write from the stale copy }
+  McpReloadChangedPackages;
   try
     McpDispatch(ToolName, Ctx, Handled);
     if not Handled then

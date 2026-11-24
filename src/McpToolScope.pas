@@ -109,7 +109,7 @@ const
     'form_create|lpk_path|N');
 
   { not read-only, no path argument }
-  NOPATH : array[0..33] of string = (
+  NOPATH : array[0..35] of string = (
     'debug_add_watch|g', 'debug_attach|f', 'debug_pause|g', 'debug_remove_watch|g',
     'debug_run|f', 'debug_select_frame|g', 'debug_set_variable|g', 'debug_step|f',
     'debug_stop|g', 'ide_answer_dialog|g', 'ide_rebuild|f', 'package_download|f',
@@ -119,7 +119,8 @@ const
     'editor_save|d', 'editor_close|d', 'editor_revert|d',
     'project_add_file|c', 'project_remove_file|c', 'project_add_package|c',
     'project_remove_package|c', 'package_install|f', 'package_uninstall|f',
-    'package_compile|f', 'project_clean|f', 'ide_run_tests|f', 'package_move_unit|p');
+    'package_compile|f', 'project_clean|f', 'ide_run_tests|f', 'package_move_unit|p',
+    'debug_get_output|g', 'ide_get_exceptions|g');
 
   { tool|argument }
   NOTPATH : array[0..15] of string = (

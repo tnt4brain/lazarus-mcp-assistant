@@ -49,6 +49,14 @@ var
   touched.  Returns the number of editors reloaded.  Main thread only. }
 function McpReloadChangedFiles: Integer;
 
+{ Reloads the packages whose .lpk changed on disk (a branch switch, a rebase, a pull),
+  with the IDE's own test (TLazPackageGraph.GetPackagesChangedOnDisk): a package with
+  unsaved changes in the IDE is left alone, and so is a file that holds conflict markers.
+  Without this the IDE keeps the old file list until its window gets the focus, and a
+  rebuild then writes the generated unit from that stale copy.  Returns the number
+  reloaded.  Main thread only. }
+function McpReloadChangedPackages: Integer;
+
 procedure InitializeIdeHooks;
 procedure FinalizeIdeHooks;
 
@@ -76,7 +84,7 @@ function FindButtonByModalResult(AParent: TWinControl; AResult: TModalResult): T
 implementation
 
 uses
-  LazLogger, CheckLst, CodeCache, CodeToolManager,
+  LazLogger, CheckLst, CodeCache, CodeToolManager, PackageIntf, PackageDefs, PackageSystem, LazFileCache,
   McpDebugGuard,  { GMcpDriven }
   McpReviewFlow, McpReviewPaths, McpDialogWatch;
 
@@ -241,6 +249,65 @@ begin
     Kept.Free;
     Asked.Free;
     Disk.Free;
+  end;
+end;
+
+{ True when the file holds a git conflict marker at the start of a line: the IDE would open
+  an "XML Error" dialog on it, and the text is not a package to load yet. }
+function HasConflictMarkers(const AFileName: string): Boolean;
+var
+  SL : TStringList;
+  I  : Integer;
+begin
+  Result := False;
+  SL := TStringList.Create;
+  try
+    try
+      SL.LoadFromFile(AFileName);
+    except
+      Exit;
+    end;
+    for I := 0 to SL.Count - 1 do
+      if (Copy(SL[I], 1, 7) = '<<<<<<<') or (Copy(SL[I], 1, 7) = '>>>>>>>') then
+        Exit(True);
+  finally
+    SL.Free;
+  end;
+end;
+
+function McpReloadChangedPackages: Integer;
+var
+  List : TStringList;
+  I    : Integer;
+  Pkg  : TLazPackage;
+  Fn   : string;
+begin
+  Result := 0;
+  if PackageGraph = nil then Exit;
+  List := nil;
+  try
+    InvalidateFileStateCache;    { the IDE caches file dates and existence; its own check starts the same way }
+    PackageGraph.GetPackagesChangedOnDisk(List, False);
+    if List = nil then Exit;
+    for I := 0 to List.Count - 1 do
+    try
+      Pkg := TLazPackage(List.Objects[I]);
+      Fn := List[I];
+      if (Fn = '') and Assigned(Pkg) then Fn := Pkg.Filename;
+      if (Fn = '') or not FileExists(Fn) then Continue;   { vanished: the IDE's own business }
+      if HasConflictMarkers(Fn) then Continue;
+      if Assigned(PackageEditingInterface) and
+         (PackageEditingInterface.DoOpenPackageFile(Fn, [pofRevert, pofDoNotOpenEditor], False) = mrOK) then
+      begin
+        Inc(Result);
+        DebugLn(['[MCP Assistant] reloaded package ', Fn, ' (changed on disk)']);
+      end;
+    except
+      on E: Exception do
+        DebugLn(['[MCP Assistant] reload check of a package: ', E.Message]);
+    end;
+  finally
+    List.Free;
   end;
 end;
 

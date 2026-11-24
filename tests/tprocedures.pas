@@ -229,7 +229,7 @@ begin
   CheckTrue(Pos('"line":12', T) > 0, 'the AST lists Last: ' + T);
 
   T := Call('code_edit_statement', '{"file":' + JsonStr(FUnit) +
-    ',"line":12,"op":"wrap","with":"try_finally","text":"Cleanup;","auto_save":true}');
+    ',"line":12,"action":"wrap","with":"try_finally","text":"Cleanup;","auto_save":true}');
   CheckFalse(IsError(T), T);
   D := DiskText;
   CheckTrue(Pos('  try' + LineEnding + '    Last;' + LineEnding + '  finally' + LineEnding +
@@ -237,19 +237,19 @@ begin
   CheckTrue(Pos('Prep; // first', D) > 0, 'the comment is still there');
 
   T := Call('code_edit_statement', '{"file":' + JsonStr(FUnit) +
-    ',"line":9,"op":"delete","auto_save":true}');
+    ',"line":9,"action":"delete","auto_save":true}');
   CheckTrue(IsError(T), 'the only statement of a branch: ' + T);
   CheckTrue(Pos('Go', DiskText) > 0, 'untouched after a refusal');
 
   T := Call('code_edit_statement', '{"file":' + JsonStr(FUnit) +
-    ',"line":7,"op":"insert_after","text":"Mid(1)","auto_save":true}');
+    ',"line":7,"action":"insert_after","text":"Mid(1)","auto_save":true}');
   CheckFalse(IsError(T), T);
   D := DiskText;
   CheckTrue(Pos('  Prep; // first' + LineEnding + '  Mid(1);' + LineEnding + '  if X > 0 then', D) > 0,
     'inserted after, the comment kept: ' + D);
 
   T := Call('code_edit_statement', '{"file":' + JsonStr(FUnit) +
-    ',"line":7,"op":"delete","auto_save":true}');
+    ',"line":7,"action":"delete","auto_save":true}');
   CheckFalse(IsError(T), T);
   D := DiskText;
   CheckTrue(Pos('Prep', D) = 0, 'deleted');
@@ -257,11 +257,11 @@ begin
     'its comment stays: ' + D);
 
   T := Call('code_edit_statement', '{"file":' + JsonStr(FUnit) +
-    ',"line":10,"op":"replace","text":"Go(1, 2)","auto_save":true}');
+    ',"line":10,"action":"replace","text":"Go(1, 2)","auto_save":true}');
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('    Go(1, 2)' + LineEnding + '  else', DiskText) > 0, 'replaced in its branch');
 
-  T := Call('code_edit_statement', '{"file":' + JsonStr(FUnit) + ',"line":99,"op":"delete"}');
+  T := Call('code_edit_statement', '{"file":' + JsonStr(FUnit) + ',"line":99,"action":"delete"}');
   CheckTrue(IsError(T), 'no routine there: ' + T);
 end;
 

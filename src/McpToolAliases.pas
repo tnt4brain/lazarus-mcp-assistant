@@ -50,7 +50,7 @@ procedure McpAliasForgetSessions;           { tests: tell everything again }
 implementation
 
 const
-  ALIASES : array[0..23] of TMcpAlias = (
+  ALIASES : array[0..36] of TMcpAlias = (
     { one name for each idea (1.7.0): seconds to wait, text for stdin, the variable }
     (Kind: akParam; Tool: 'project_run';        Old: 'wait_seconds'; New: 'timeout_s'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'project_run_output'; Old: 'wait_seconds'; New: 'timeout_s'; FixedKey: ''; FixedVal: ''),
@@ -81,7 +81,22 @@ const
     (Kind: akParam; Tool: 'project_remove_file';     Old: 'file_path'; New: 'file'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'project_open';            Old: 'file_path'; New: 'file'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'editor_read_file';        Old: 'path';      New: 'file'; FixedKey: ''; FixedVal: ''),
-    (Kind: akParam; Tool: 'project_create_unit';     Old: 'filename';  New: 'file'; FixedKey: ''; FixedVal: ''));
+    (Kind: akParam; Tool: 'project_create_unit';     Old: 'filename';  New: 'file'; FixedKey: ''; FixedVal: ''),
+    { 1.8.1: one name for the same idea }
+    (Kind: akParam; Tool: 'editor_edit_text';        Old: 'old_string'; New: 'old_text'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'editor_edit_text';        Old: 'new_string'; New: 'new_text'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_log';                 Old: 'max_count';  New: 'limit'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'package_search_online';   Old: 'max_results'; New: 'limit'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'code_find_descendants';   Old: 'max_results'; New: 'limit'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'code_find_overrides';     Old: 'max_results'; New: 'limit'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'debug_set_breakpoint';    Old: 'data';       New: 'watch_expression'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_cherry_pick';         Old: 'commit';     New: 'ref'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_tag';                 Old: 'commit';     New: 'ref'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_log';                 Old: 'branch';     New: 'ref'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'git_push';                Old: 'tags';       New: 'tag_names'; FixedKey: ''; FixedVal: ''),
+    { the verb of a tool is "action" (git_stash, form_history, ...); the type of a package is "package_type" }
+    (Kind: akParam; Tool: 'code_edit_statement';     Old: 'op';         New: 'action'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'package_create';          Old: 'type';       New: 'package_type'; FixedKey: ''; FixedVal: ''));
 
 var
   GLock     : TRTLCriticalSection;

@@ -460,7 +460,7 @@ end;
 
 { Fill GSyncHelper's InBp* fields from the arguments of debug_set_breakpoint
   / debug_remove_breakpoint / debug_run_to_line.  Exactly one location:
-  file + line, address, or data.  ASymbol receives an address that is
+  file + line, address, or watch_expression.  ASymbol receives an address that is
   not a number (a symbol, resolved by the caller while paused); '' else. }
 function ReadBreakpointArgs(P: TJSONObject; out ASymbol, AErr: string): Boolean;
 var
@@ -473,14 +473,14 @@ begin
   AErr    := '';
   if not Assigned(P) then
   begin
-    AErr := 'Give file and line, address, or data';
+    AErr := 'Give file and line, address, or watch_expression';
     Exit;
   end;
   Forms := Ord(P.Get('file', '') <> '') + Ord(P.Get('address', '') <> '') +
-           Ord(P.Get('data', '') <> '');
+           Ord(P.Get('watch_expression', '') <> '');
   if Forms <> 1 then
   begin
-    AErr := 'Give exactly one location: file and line, address, or data';
+    AErr := 'Give exactly one location: file and line, address, or watch_expression';
     Exit;
   end;
   with GSyncHelper do
@@ -513,7 +513,7 @@ begin
     else
     begin
       InBpKind  := bpkData;
-      InBpData  := Trim(P.Get('data', ''));
+      InBpData  := Trim(P.Get('watch_expression', ''));
       S := LowerCase(P.Get('scope', 'global'));
       case S of
         'global': InBpScope := wpsGlobal;
@@ -559,7 +559,8 @@ begin
     bpkData :
     begin
       Result.Add('kind',  'data');
-      Result.Add('data',  BP.WatchData);
+      Result.Add('watch_expression', BP.WatchData);
+      Result.Add('data',  BP.WatchData);   { the old name of the same field }
       Result.Add('scope', WATCH_SCOPES[BP.WatchScope]);
       Result.Add('watch', WATCH_KINDS[BP.WatchKind]);
     end;
@@ -1747,7 +1748,7 @@ begin
     into the variable's memory }
   if (Pos('procedure', LowerCase(Typ)) = 0) and (Pos('function', LowerCase(Typ)) = 0) then
   begin
-    AErr := Sym + ' is data (' + Typ + '), not code. Use data to stop when it changes.';
+    AErr := Sym + ' is data (' + Typ + '), not code. Use watch_expression to stop when it changes.';
     Exit;
   end;
   P := Pos('$', Value);
@@ -2460,16 +2461,16 @@ end;
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
 const
-  { one location: file + line, address, or data (+ scope, watch) }
+  { one location: file + line, address, or watch_expression (+ scope, watch) }
   BP_LOCATION_PROPS =
     '"file":{"type":"string","description":"Absolute path (source breakpoint)"},' +
     '"line":{"type":"integer","description":"1-based line number"},' +
     '"address":{"type":"string","description":"Code address ($401000, 0x401000), or ' +
       'Proc / Proc+12 from code with debug info (resolved while paused; valid ' +
       'for this session only)"},' +
-    '"data":{"type":"string","description":"Variable to watch (data breakpoint)"},' +
-    '"scope":{"type":"string","enum":["global","local"],"description":"For data; default global"},' +
-    '"watch":{"type":"string","enum":["write","read","readwrite"],"description":"For data; default write"}';
+    '"watch_expression":{"type":"string","description":"Variable to watch (data breakpoint)"},' +
+    '"scope":{"type":"string","enum":["global","local"],"description":"For watch_expression; default global"},' +
+    '"watch":{"type":"string","enum":["write","read","readwrite"],"description":"For watch_expression; default write"}';
 
   SCHEMA_SET_BREAKPOINT =
     '{"type":"object","properties":{' + BP_LOCATION_PROPS + ',' +
@@ -2593,7 +2594,7 @@ begin
     SCHEMA_SET_BREAKPOINT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_remove_breakpoint',
     'Remove the breakpoint at a location, given as for debug_set_breakpoint.',
-    SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_WRITE_IDEM));
+    SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('debug_list_breakpoints',
     'List all breakpoints: kind and location, condition, pass count, hit count, ' +
     'enabled and valid.',
@@ -2629,7 +2630,7 @@ begin
     'Stop the debug session unconditionally. Non-blocking; safe in any ' +
     'state including after a timed-out step. For a program that debug_attach ' +
     'attached to, stopping ends the program; detach=true lets it keep running.',
-    SCHEMA_STOP, MCP_ANN_WRITE_IDEM));
+    SCHEMA_STOP, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('debug_step',
     'Single-step the paused program: kind "over" the current line (F8), "into" the call on it ' +
     '(F7) or "out" of the current procedure (Shift+F8). Blocks until the debugger pauses again.',
@@ -2675,7 +2676,7 @@ begin
     SCHEMA_WATCH_EXPRESSION, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_remove_watch',
     'Remove a watch expression from the Watches window, or all with "*".',
-    SCHEMA_REMOVE_WATCH, MCP_ANN_WRITE_IDEM));
+    SCHEMA_REMOVE_WATCH, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('debug_list_watches',
     'List the Watches window entries. While paused, each comes with its value ' +
     'and type in the selected (or given) thread and stack frame.',
@@ -2686,8 +2687,9 @@ begin
     SCHEMA_NO_PARAMS, MCP_ANN_RO));
   Tools.Add(MakeTool('debug_get_output',
     'Return what the program wrote to its console (stdout/stderr) and the ' +
-    'debugger''s own output/messages in the current or last debug session.',
-    SCHEMA_GET_OUTPUT, MCP_ANN_RO));
+    'debugger''s own output/messages in the current or last debug session. ' +
+    'clear=true drops what it returned, which is why the tool is not marked read-only.',
+    SCHEMA_GET_OUTPUT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_get_exception',
     'Return information about the current exception of the program being debugged when ' +
     'the debugger is paused ' +

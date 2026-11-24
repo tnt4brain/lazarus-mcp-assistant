@@ -689,3 +689,6 @@ Windows x86-64.
 - `rip` = frame 0's address, and registers of frame 1;
 - disassembly at the stop, at `Sum` (its entry, no offset), and at frame 1's
   return address in `main`.
+
+**Amendment (1.8.1):** `debug_remove_breakpoint`, `debug_remove_watch` and `debug_stop` are marked destructive
+(they lose a condition, a pass count, a session that nothing restores); see ADR-031, "Destructive marks".

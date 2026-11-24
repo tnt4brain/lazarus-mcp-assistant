@@ -8,7 +8,11 @@ with a human-readable `title` ("Debugger: get call stack") and annotations:
   or opening a tab counts as read-only.
 - `destructiveHint` only for changes that neither Ctrl+Z nor `form_history` can
   take back: closing or reverting an editor with unsaved changes,
-  `git_checkout`, `git_reset`, rebuilds and installs.
+  `git_checkout`, `git_reset`, rebuilds and installs, and every remove or delete tool
+  except the form ones (`form_delete_*` are undone with `form_history`): removing a
+  breakpoint, a watch, a file or a package requirement loses its settings, and
+  `debug_stop` ends the session. A tool is marked non-destructive only when its effect
+  can be reliably undone.
 - `idempotentHint` where repeating a call with the same arguments changes
   nothing more.
 
@@ -35,7 +39,7 @@ prompts, skills and permission allow-lists, is in [renamed-tools.md](renamed-too
 | `editor_open` | Open a file in the editor without moving the cursor; returns `already_open` |
 | `editor_create_file` | Create a new text file on the IDE's machine and open it; only inside the project, a loaded package's folder or the temp folder, never in `.git`, no overwrite unless `overwrite:true` (and not while open) |
 | `editor_set_cursor` | Move the cursor (opens the file if needed) |
-| `editor_edit_text` | **Preferred edit.** Replace `old_string` with `new_string`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
+| `editor_edit_text` | **Preferred edit.** Replace `old_text` with `new_text`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
 | `editor_replace_range` | Replace a range given by start and end, or start and `delete_len` (no end inserts, empty text deletes) — for coordinates from `code_*` tools |
 | `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
 | `editor_revert` | Discard unsaved changes and reload from disk |
@@ -151,7 +155,7 @@ debugger call runs at a time. See [ADR-012](adr/0012-multiple-clients.md).
 
 | Tool | Description |
 |---|---|
-| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`data` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
+| `debug_set_breakpoint` / `debug_remove_breakpoint` / `debug_list_breakpoints` | Source (file + line), address (`$401000`, or `Proc+12` for a procedure with debug info, resolved while paused) and data breakpoints (`watch_expression` + `watch` write/read/readwrite); each with `condition` and `pass_count`. Setting one again at its location changes it. No session needed, except to resolve a symbol |
 | `debug_run` | Start, or continue from a pause (F9). Refused up front when the project has no DWARF info (the IDE would ask in a dialog); a program that ends reports `reason: "exited"` and `exit_code`; a stop on a breakpoint says `reason: "breakpoint"`; if no session starts (a failed build) the answer is an error saying so |
 | `debug_run_to_line` | Run to a file/line via a temporary breakpoint |
 | `debug_step` (`kind` over / into / out) | F8 / F7 / Shift+F8 |
@@ -200,7 +204,7 @@ debugger call runs at a time. See [ADR-012](adr/0012-multiple-clients.md).
 |---|---|
 | `package_get_info` | A package by name or `.lpk` path: status, version, type, requirements with their status, the packages using it, output dir, search paths, compiler options, and (`files`) its files with units and `Register` |
 | `package_list` | The packages loaded in the IDE (default: those that do not come with Lazarus) |
-| `package_open` / `package_create` | Load an `.lpk` without installing it; create a package (`.lpk`, optional first unit) in a directory and load it |
+| `package_open` / `package_create` | Load an `.lpk` without installing it (`reload` reads it again and drops the IDE's unsaved changes; a package whose file changed on disk, for example after a branch switch, is reloaded before every call unless it has unsaved changes); create a package (`.lpk`, optional first unit) in a directory and load it |
 | `package_get_settings` / `package_set_settings` | Package type, output dir, unit/include paths, compiler options, target, usage paths; old and new values returned, `.lpk` saved |
 | `package_find_unit` | Which loaded packages contain a unit, and whether the project depends on them — for "Can't find unit" |
 | `package_add_file` / `package_remove_file` | Files of a `.lpk`, as the package editor's Add/Remove: unit name and `Register` detected, unit/include path extended when needed |
@@ -208,7 +212,7 @@ debugger call runs at a time. See [ADR-012](adr/0012-multiple-clients.md).
 | `package_save` | Write unsaved packages to disk: the named one, or all modified ones; refused, naming the cause, when the IDE would have to ask a question |
 | `package_set_info` | Version, description, author and/or license of a `.lpk`, as on the package options' Package page; returns old and new values |
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
-| `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS in-process or through curl; plain HTTP only when neither works) |
+| `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS in-process or through curl; refused when neither works, never plain HTTP) |
 | `package_compile` | Compile a package (`package_name` or `.lpk`): with the IDE's compiler when it is open there (errors as data, also in the Messages window), else `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE, as `ide_rebuild` does |
 
@@ -234,7 +238,7 @@ packages that are already installed never asks. See [ADR-013](adr/0013-user-cons
 | `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s. Refused, changing nothing, while an editor or a package has unsaved changes (`save_unsaved` saves them first; a package that was never saved, or has a file missing on disk, still stops it) or the package does not compile (`skip_compile` skips that check); a build that fails leaves the IDE running, reopens the editors and brings the server back, with the errors as the answer (ADR-026) |
 | `ide_run_tests` | Build and run the FPCUnit test project; structured results, optional JUnit XML; `suite` runs one class or test, `env` sets environment variables for the run (for example `MCP_DEBUG_TESTS`) |
 | `ide_show_markdown` | Show a Markdown document to the user in an IDE window (tabs, without taking the focus), rendered by `TIpHtmlPanel`: headings, lists, tables, code, http(s) links, and images from a project-relative path or a Base64 `data:` URI. Display only; returns `{shown, tab}`; `tab` replaces that document; `file` instead of `markdown` shows a Markdown file in one tab per file that follows it (the open editor's text, else the disk), so the text is not sent each time ([ADR-024](adr/0024-show-markdown-tool.md)) |
-| *(menu)* | Tools > MCP Assistant > View Markdown..., View > Markdown Viewer... and the source editor's "View as Markdown" show the active `.md` file (or one you pick) in the same window, one tab per file; relative links to other `.md` files open in it |
+| *(menu)* | Tools > MCP Assistant > View Markdown..., View > Markdown Viewer... and the source editor's "View as Markdown" show the active `.md` file (or one you pick) in the same window, one tab per file; relative links to other `.md` files open in it; Ctrl+mouse wheel zooms the active tab (each tab on its own; the last zoom is kept, also across IDE restarts, and new tabs start with it). To list `.md` files in File > Open, add a row to the IDE's own filters (Tools > Options > Environment > Files > File filters): name `Markdown (*.md;*.markdown)`, mask `*.md;*.markdown` — the plugin does not change IDE settings |
 
 ## Git — `git_*`
 

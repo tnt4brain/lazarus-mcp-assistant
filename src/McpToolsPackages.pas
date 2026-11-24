@@ -138,7 +138,7 @@ const
       'description, category or .lpk names/descriptions, e.g. \"chart\", \"rich memo\", \"zip\". Empty lists everything."},' +
     '"category":{"type":"string","description":"Only packages whose category contains this text, e.g. Graphics, ' +
       'Networking, DataControls, LazIDEPlugins"},' +
-    '"max_results":{"type":"integer","description":"Most packages to return (default 20; less than 1 also means 20)"}}}';
+    '"limit":{"type":"integer","description":"Most packages to return (default 20; less than 1 also means 20)"}}}';
 
   OPM_REPOSITORY_URL = 'https://packages.lazarus-ide.org/';
 
@@ -253,7 +253,7 @@ begin
   begin
     Words    := LowerCase(Trim(AParams.Get('query', ''))).Split([' '], TStringSplitOptions.ExcludeEmpty);
     Category := LowerCase(Trim(AParams.Get('category', '')));
-    MaxRes   := AParams.Get('max_results', 20);
+    MaxRes   := AParams.Get('limit', 20);
   end;
   if MaxRes < 1 then MaxRes := 20;
 
@@ -618,8 +618,8 @@ begin
   end;
 end;
 
-{ Fetch AUrl into AStream; HTTPS first, plain HTTP only when OpenSSL is not
-  available (the IDE on Windows often has no OpenSSL DLLs). }
+{ Fetch AUrl into AStream over HTTPS: in-process, and through the curl executable
+  when the IDE has no OpenSSL (on Windows it often has none). Never plain HTTP. }
 function FetchArchive(const AHttpsUrl: string; AStream: TMemoryStream;
   out AUrl, ATransport, AErr: string): Boolean;
 
@@ -660,9 +660,12 @@ begin
   ATransport := 'https (curl)';
   if CurlGet(AUrl, AStream, AErr) then
     Exit(True);
-  AUrl := 'http://' + Copy(AHttpsUrl, Length('https://') + 1, MaxInt);
-  ATransport := 'http';
-  Result := Get(AUrl, AErr);
+  { never downgrade to plain HTTP: the server answers HTTPS (checked 2026-11-22),
+    and an archive that comes unencrypted could be swapped together with its MD5 }
+  AErr := 'No TLS available: this IDE has no OpenSSL libraries and curl failed (' + AErr +
+    '). Install the OpenSSL DLLs next to the IDE or put curl on the PATH, or install ' +
+    'the package through the IDE''s Online Package Manager. Nothing was downloaded over plain HTTP.';
+  Result := False;
 end;
 
 procedure TOpmDownload.Run;
@@ -795,9 +798,6 @@ begin
       Obj.Add('package', Job.PkgName);
       Obj.Add('url', Job.Url);
       Obj.Add('transport', Job.Transport);
-      if Job.Transport = 'http' then
-        Obj.Add('transport_note', 'HTTPS was not available (no OpenSSL in the IDE, no curl); the ' +
-          'archive came unencrypted and was checked against the catalog''s MD5 only');
       Obj.Add('md5_verified', True);
       Obj.Add('directory', Job.Target);
       Arr := TJSONArray.Create;
@@ -1821,7 +1821,7 @@ begin
     SCHEMA_PKG_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_remove_file',
     'Remove a file from a package (.lpk); the file stays on disk.',
-    SCHEMA_PKG_FILE, MCP_ANN_WRITE_IDEM));
+    SCHEMA_PKG_FILE, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('package_add_dependency',
     'Make a PACKAGE (.lpk) require another one, optionally with version limits; for the ' +
     'open project use project_add_package. Refused for ' +
@@ -1829,7 +1829,7 @@ begin
     SCHEMA_PKG_ADD_DEP, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('package_remove_dependency',
     'Remove a requirement from a package (.lpk).',
-    SCHEMA_PKG_REMOVE_DEP, MCP_ANN_WRITE_IDEM));
+    SCHEMA_PKG_REMOVE_DEP, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('package_save',
     'Write unsaved packages (.lpk) to disk: the named one, or every modified one. The ' +
     'package tools save their own change when nothing else is unsaved; use this when they ' +
@@ -1851,7 +1851,7 @@ begin
   Tools.Add(MakeTool('project_remove_package',
     'Remove a package dependency from the active project (.lpi). ' +
     'No rebuild required. Returns the updated list of project package dependencies.',
-    SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_WRITE_IDEM));
+    SCHEMA_REMOVE_PACKAGE_FROM_PROJECT, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('package_install',
     'Install a package into the IDE (design-time / palette); the IDE rebuilds and ' +
     'restarts. A package not installed yet needs the user''s consent. Run ' +

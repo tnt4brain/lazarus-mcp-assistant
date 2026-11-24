@@ -227,7 +227,7 @@ var
 begin
   DiskB := Disk(FUnitB);
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(FUnitB) +
-    ',"old_string":"  F.Free;","new_string":"  F.Free;\n  F := TFoo(nil);"}', []);
+    ',"old_text":"  F.Free;","new_text":"  F.Free;\n  F := TFoo(nil);"}', []);
   CheckFalse(IsError(T), T);
   T := Rename(FUnitB, LineVar, ColVar, ',"new_name":"TBar"');
   CheckFalse(IsError(T), T);

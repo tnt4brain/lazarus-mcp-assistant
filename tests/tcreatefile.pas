@@ -220,7 +220,7 @@ var
 begin
   if not FileExists(SystemFile) then Ignore('no ' + SystemFile);
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(SystemFile) +
-    ',"old_string":"zzz_never_there","new_string":"x"}', []);
+    ',"old_text":"zzz_never_there","new_text":"x"}', []);
   CheckTrue(IsError(T), T);
   CheckTrue(Pos('Refused', T) > 0, T);
 end;
@@ -258,7 +258,7 @@ begin
   Root := RepoRoot;
   if Root = '' then Ignore('the checkout was not found from ' + ParamStr(0));
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(Root + 'docs' + PathDelim + 'adr' + PathDelim +
-    'README.md') + ',"old_string":"zzz_never_there","new_string":"x"}', []);
+    'README.md') + ',"old_text":"zzz_never_there","new_text":"x"}', []);
   CheckTrue(IsError(T), 'the text is not there: ' + T);
   CheckTrue(Pos('Refused', T) = 0, 'but it was not refused: ' + T);
 end;
@@ -277,7 +277,7 @@ begin
   Args[1][0] := 'code_add_to_class';     Args[1][1] := '{"file":' + F + ',"class_name":"TX","text":"x"}';
   Args[2][0] := 'code_insert_in_procedure'; Args[2][1] := '{"file":' + F + ',"proc_name":"P","text":"x"}';
   Args[3][0] := 'code_replace_procedure_body'; Args[3][1] := '{"file":' + F + ',"proc_name":"P","new_body":"x"}';
-  Args[4][0] := 'code_edit_statement';   Args[4][1] := '{"file":' + F + ',"line":1,"op":"delete"}';
+  Args[4][0] := 'code_edit_statement';   Args[4][1] := '{"file":' + F + ',"line":1,"action":"delete"}';
   Args[5][0] := 'code_complete';         Args[5][1] := '{"file":' + F + ',"line":1,"col":1}';
   Args[6][0] := 'code_format';           Args[6][1] := '{"file":' + F + '}';
   Args[7][0] := 'code_rename_identifier'; Args[7][1] := '{"file":' + F + ',"line":1,"col":1,"new_name":"Zed"}';
@@ -363,7 +363,7 @@ begin
   T := Call('{"file":' + JsonStr(F) + ',"text":"x"}');
   CheckTrue(IsError(T) and (Pos('Refused', T) > 0), 'editor_create_file in the LCL folder: ' + T);
   CheckFalse(FileExists(F), 'nothing was written');
-  T := CallToolText('editor_edit_text', '{"file":' + JsonStr(Lpk) + ',"old_string":"a","new_string":"b"}', []);
+  T := CallToolText('editor_edit_text', '{"file":' + JsonStr(Lpk) + ',"old_text":"a","new_text":"b"}', []);
   CheckTrue(IsError(T) and (Pos('Refused', T) > 0), 'editor_edit_text on lcl.lpk: ' + T);
 end;
 

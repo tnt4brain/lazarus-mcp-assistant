@@ -122,3 +122,54 @@ and new calls compared, and a test that the shipped documents name no retired to
 - The tool set can be fixed without a day of breakage, and the major version marks the day an old
   name stops working.
 - A client that never reads the deprecation line keeps working until 2.0.
+
+## Amendment 1: three of the four rejected renames, taken after all (1.8.1, 2026-11-22)
+
+A review of the tool names found them inconsistent, and the layer exists to make such a change cost nothing, so
+three of the renames that section 5 decided against are done:
+
+- `editor_edit_text`: `old_string`/`new_string` → `old_text`/`new_text`. The names no longer
+  match the Edit tool of the assistants that use this server; that was the reason for keeping
+  them, and the weakest of the three changes, taken for a name that says what the value is.
+- `git_log` `max_count`, `package_search_online`, `code_find_descendants` and `code_find_overrides`
+  `max_results` → `limit`: one name for "stop after this many".
+- `debug_set_breakpoint` `data` → `watch_expression`. The answer of the breakpoint tools
+  carries both `data` and `watch_expression`, so a client that reads the field keeps working.
+
+Eleven entries in the table, each with its row in `docs/renamed-tools.md`. **Still decided
+against:** `name` → `package_name` / `component_name`. The reasons in section 5 are technical
+(the write-scope and package guards read `package_name` as "a loaded package"; the form tools
+resolve `component_name` as an existing component), not a matter of taste, and they have not
+changed.
+
+Also in 1.8.1: `ref` is the one name for "a revision to act on" where the tool takes any revision: `git_tag`
+and `git_cherry_pick` (`commit`, which also took a range) and `git_log` (`branch`). `git_merge` and
+`git_archive` already used it. Left as they are, because they are git's own words for something else:
+`target` of `git_checkout` and `git_reset` (a revision **or a file path**, and with `create` the new branch),
+`upstream`/`onto` of `git_rebase`, `since` of `git_squash`, `start_point`, and `branch` where a branch
+(not any revision) is required (`git_branch_delete`, `git_push`, `git_pull`, `git_clone`).
+
+`git_push` `tags` (an array of tag names) became `tag_names`, because `git_fetch` `tags` is a boolean: it
+was the only parameter name with two types. And `debug_get_output` and `ide_get_exceptions` are no longer
+marked read-only: their `clear` flag drops the buffer they returned, and a client that lets read-only
+tools through unasked would clear it unasked (they are in the `g` list of `McpToolScope`: no file).
+
+**Selectors and verbs (1.8.1).** The rule for a parameter that picks one of a list: `action` for the verb
+of a tool that does several things (`git_stash`, `form_history`, `git_remote`, and now `code_edit_statement`,
+which called it `op`); `kind` for what category of thing (`debug_step`, `project_create_unit`,
+`code_extract_method`); `mode` for how an operation behaves (`git_reset`, `git_pull`); `scope` and `section`
+stay where they are the domain's own word. Two names broke it and are renamed through the table:
+`code_edit_statement` `op` → `action`, and `package_create` `type` → `package_type` (`package_set_settings`
+already called the same thing `package_type`). The answer of `code_edit_statement` now says `action` too.
+`git_merge` `ff` and `git_pull` `mode` are the same idea with different values (merge: auto/only/never;
+pull: ff-only/merge/rebase) and are left apart on purpose: a pull is a fetch plus one of these, and the
+two vocabularies are git's own; each description points to the other.
+
+**Destructive marks (1.8.1).** `destructiveHint:false` is given only to a tool whose effect can be reliably
+undone: the form deletes (`form_history`) and the tools that add or change something that can be changed
+back. Marked destructive now: `debug_remove_breakpoint`, `debug_remove_watch`, `debug_stop`,
+`package_remove_file`, `package_remove_dependency`, `project_remove_package`, `project_remove_file`:
+nothing takes them back, and a removed breakpoint or requirement loses its condition, pass count or
+version limits. `project_close` stays non-destructive: it is saved first (it is refused with unsaved
+changes) and `project_open` brings the project back. This amends ADR-009's note that all breakpoint tools
+are non-destructive.

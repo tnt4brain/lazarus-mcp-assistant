@@ -105,7 +105,7 @@ begin
     and the disk agree, so there is nothing to review (the editor's final empty line
     after the last line break is not a difference) }
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(FFile) +
-    ',"old_string":"two","new_string":"SAME"}', []);
+    ',"old_text":"two","new_text":"SAME"}', []);
   CheckTrue(Pos('replaced', T) > 0, T);
   Sleep(2100);
   WriteDisk('one' + LineEnding + 'SAME' + LineEnding + 'three');
@@ -119,7 +119,7 @@ var
   T : string;
 begin
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(FFile) +
-    ',"old_string":"two","new_string":"UNSAVED EDIT"}', []);
+    ',"old_text":"two","new_text":"UNSAVED EDIT"}', []);
   CheckTrue(Pos('replaced', T) > 0, T);
   Sleep(2100);
   WriteDisk('one' + LineEnding + 'two' + LineEnding + 'CHANGED ON DISK');
@@ -135,7 +135,7 @@ var
   T : string;
 begin
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(FFile) +
-    ',"old_string":"two","new_string":"UNSAVED EDIT"}', []);
+    ',"old_text":"two","new_text":"UNSAVED EDIT"}', []);
   CheckTrue(Pos('replaced', T) > 0, T);
   Sleep(2100);
   WriteDisk('one' + LineEnding + 'two' + LineEnding + 'CHANGED ON DISK');
@@ -220,7 +220,7 @@ var
   T : string;
 begin
   T := CallToolText('editor_edit_text', '{"file":' + JsonStr(FFile) +
-    ',"old_string":"two","new_string":"UNSAVED EDIT"}', []);
+    ',"old_text":"two","new_text":"UNSAVED EDIT"}', []);
   CheckTrue(Pos('replaced', T) > 0, T);
   T := CallToolText('ide_rebuild', '{"save_unsaved":false}', []);
   CheckTrue(Pos('not_started', T) > 0, 'refused: ' + T);

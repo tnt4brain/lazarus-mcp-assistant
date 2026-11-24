@@ -242,7 +242,7 @@ begin
     T := Call('editor_open', '{"file_path":' + JsonStr(F) + '}');
     CheckNoError(Self, 'editor_open', T);
     T := Call('editor_edit_text', '{"file":' + JsonStr(F) +
-              ',"old_string":"interface","new_string":"interface\n// changed"}');
+              ',"old_text":"interface","new_text":"interface\n// changed"}');
     CheckNoError(Self, 'editor_edit_text', T);
     T := Call('project_create', '{"project_dir":' + JsonStr(Dir + 'p') +
               ',"project_name":"mcpnever"}');
@@ -413,7 +413,7 @@ begin
       ',"mask":"*.txt"}');
     CheckTrue(Pos('notes.txt', T) > 0, 'mask: ' + T);
     Call('editor_edit_text', '{"file":' + JsonStr(F) +
-      ',"old_string":"// alpha on disk","new_string":"// zeta only in the editor"}');
+      ',"old_text":"// alpha on disk","new_text":"// zeta only in the editor"}');
     T := Call('project_search', '{"query":"zeta only","directory":' + JsonStr(Dir) + '}');
     CheckTrue(Pos('"line":2', T) > 0, 'unsaved edit found: ' + T);
     T := Call('project_search', '{"query":"x","directory":' + JsonStr(Dir + 'missing') + '}');
@@ -747,7 +747,7 @@ begin
     try
       Call('editor_open', '{"file":' + JsonStr(F) + '}');
       Call('editor_edit_text', '{"file":' + JsonStr(F) +
-           ',"old_string":"interface","new_string":"// unsaved\ninterface"}');
+           ',"old_text":"interface","new_text":"// unsaved\ninterface"}');
       T := Call('code_add_uses', '{"file":' + JsonStr(F) + ',"unit_name":"Classes"}');
       CheckNoError(Self, 'code_add_uses', T);
       CheckEquals(Orig, DiskText, 'file on disk unchanged');
@@ -794,8 +794,8 @@ begin
   CheckTrue(Pos('did you mean new_text', T) > 0, 'a near name is suggested: ' + T);
   T := Call('editor_open', '{"form_file":"x.pas"}');
   CheckTrue(Pos('did you mean file', T) > 0, 'one name inside the other: ' + T);
-  T := Call('git_log', '{"max_cnt":3}');
-  CheckTrue(Pos('did you mean max_count', T) > 0, 'a typo is suggested: ' + T);
+  T := Call('git_log', '{"limt":3}');
+  CheckTrue(Pos('did you mean limit', T) > 0, 'a typo is suggested: ' + T);
   T := Call('git_log', '{"zzzzzz":3}');
   CheckTrue((Pos('Unknown parameter(s): zzzzzz.', T) > 0) and (Pos('did you mean', T) = 0),
     'nothing near, no guess: ' + T);

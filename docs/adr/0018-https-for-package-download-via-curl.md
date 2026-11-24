@@ -40,3 +40,18 @@ relied on the catalog's MD5 alone (both come unencrypted).
 - A system without OpenSSL and without curl still falls back to HTTP, with the note.
 - Verified with `Lists` (1.9 KB): `transport: https (curl)`, MD5 verified.
 - Not in the automated suite: it needs network access.
+
+## Amendment 1 (1.8.1): no plain-HTTP fallback
+
+The last step of decision 1 is removed. `package_download` now tries in-process HTTPS, then
+curl, and if both fail it refuses with a message (install the OpenSSL DLLs or curl, or use the
+IDE's Online Package Manager). Nothing is fetched over plain `http://`.
+
+Why: `packages.lazarus-ide.org` answers HTTPS with a valid certificate (checked 2026-11-22:
+`packagelist.json` and `Abbrevia.zip`, whose MD5 equals the catalog's `RepositoryFileHash`), so the
+fallback only helped an attacker on the network: archive and catalog hash both came unencrypted
+and could be swapped together. The cost is a refused download on a machine with neither OpenSSL
+nor curl; Windows 10 (1803) and later ship `curl.exe`.
+
+The `transport_note` for plain HTTP is gone from the result. The consent dialog still shows
+"HTTP (unencrypted)" for a marker file written by an older version.

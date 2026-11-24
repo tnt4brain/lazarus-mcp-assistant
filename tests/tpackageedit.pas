@@ -29,6 +29,7 @@ type
     procedure TestNameOfAnUnloadedPackage;
     procedure TestConsentGuard;
     procedure TestDownloadUnknownPackage;
+    procedure TestDownloadNeverPlainHttp;
   end;
 
 implementation
@@ -254,6 +255,29 @@ begin
   if Pos('No Online Package Manager catalog', T) > 0 then
     Ignore('no OPM catalog here: ' + T);
   CheckTrue(Pos('is not in the catalog', T) > 0, 'unknown package: ' + T);
+end;
+
+procedure TTestPackageEdit.TestDownloadNeverPlainHttp;
+{ ADR-018 amendment 1: the download has no plain-HTTP step. The network path cannot run in
+  the suite, so this guards the source: no code builds an 'http://' address there. }
+var
+  FN, Src : string;
+  SL      : TStringList;
+  I       : Integer;
+begin
+  FN := ExtractFilePath(ParamStr(0)) + '..' + PathDelim + 'src' + PathDelim + 'McpToolsPackages.pas';
+  if not FileExists(FN) then
+    Ignore('McpToolsPackages.pas is not next to the test program');
+  SL := TStringList.Create;
+  try
+    SL.LoadFromFile(FN);
+    Src := LowerCase(SL.Text);
+  finally
+    SL.Free;
+  end;
+  I := Pos('''http://''', Src);
+  CheckTrue(I = 0, 'McpToolsPackages.pas builds a plain http:// address near offset ' + IntToStr(I));
+  CheckTrue(Pos('opm_repository_url = ''https://', Src) > 0, 'the repository address is https');
 end;
 
 procedure TTestPackageEdit.TestConsentGuard;

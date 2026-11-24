@@ -168,7 +168,7 @@ const
     '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Pascal class type that owns the method (not a form component class); omit for a standalone procedure"},' +
-    '"line":{"type":"integer","description":"A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
+    '"line":{"type":"integer","description":"1-based. A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
     '"text":{"type":"string","description":"Pascal text to insert at the start of the procedure body, immediately after begin"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","proc_name","text"]}';
@@ -178,7 +178,7 @@ const
     '"file":{"type":"string","description":"Absolute path"},' +
     '"proc_name":{"type":"string","description":"Procedure or function name, without class prefix"},' +
     '"class_name":{"type":"string","description":"Pascal class type that owns the method (not a form component class); omit for a standalone procedure"},' +
-    '"line":{"type":"integer","description":"A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
+    '"line":{"type":"integer","description":"1-based. A line inside the routine you mean: needed when proc_name is overloaded or exists in several classes (the error lists them)"},' +
     '"new_body":{"type":"string","description":"New body content placed between begin and end; replaces everything currently there"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
     '"required":["file","proc_name","new_body"]}';
@@ -205,13 +205,13 @@ const
   SCHEMA_EDIT_STATEMENT =
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path"},' +
-    '"line":{"type":"integer","description":"Line of the statement, as code_get_procedure_ast reported it"},' +
-    '"col":{"type":"integer","description":"Column of the statement, as reported; needed only when several statements start on that line"},' +
-    '"op":{"type":"string","enum":["replace","delete","insert_before","insert_after","wrap"],"description":"replace: new text instead of the statement. delete: remove it (only where it is one of a list). insert_before / insert_after: new statements next to it (only where it is one of a list). wrap: put it inside another construct, see with"},' +
+    '"line":{"type":"integer","description":"1-based line of the statement, as code_get_procedure_ast reported it"},' +
+    '"col":{"type":"integer","description":"1-based column of the statement, as reported; needed only when several statements start on that line"},' +
+    '"action":{"type":"string","enum":["replace","delete","insert_before","insert_after","wrap"],"description":"replace: new text instead of the statement. delete: remove it (only where it is one of a list). insert_before / insert_after: new statements next to it (only where it is one of a list). wrap: put it inside another construct, see with"},' +
     '"with":{"type":"string","enum":["begin","try_finally","try_except","if","while","for","with"],"description":"For wrap: the construct"},' +
     '"text":{"type":"string","description":"replace/insert: the statement(s), without the indentation of the file (it is added). wrap: try_finally the cleanup, try_except the handler, if/while the condition, for the loop header such as I := 0 to 9, with the expression; not needed for begin"},' +
     '"auto_save":{"type":"boolean","description":"Also save to disk (default false)"}},' +
-    '"required":["file","line","op"]}';
+    '"required":["file","line","action"]}';
 
   SCHEMA_COMPLETE_CODE =
     '{"type":"object","properties":{' +
@@ -1219,7 +1219,7 @@ begin
     Ctx.Error := True; Ctx.Result := 'Missing params'; Exit;
   end;
   FilePath := Ctx.Params.Get('file', '');
-  Op       := Ctx.Params.Get('op', '');
+  Op       := Ctx.Params.Get('action', '');
   W        := Ctx.Params.Get('with', '');
   Text     := Ctx.Params.Get('text', '');
   Line     := Ctx.Params.Get('line', 0);
@@ -1227,7 +1227,7 @@ begin
   AutoSave := Ctx.Params.Get('auto_save', False);
   if (FilePath = '') or (Op = '') or (Line < 1) then
   begin
-    Ctx.Error := True; Ctx.Result := 'file, op and line required'; Exit;
+    Ctx.Error := True; Ctx.Result := 'file, action and line required'; Exit;
   end;
   Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
   if not LazarusIDE.BeginCodeTools then
@@ -1288,7 +1288,7 @@ begin
   try
     Obj.Add('file',      FilePath);
     Obj.Add('procedure', ProcName);
-    Obj.Add('op',        LowerCase(Op));
+    Obj.Add('action',    LowerCase(Op));
     Obj.Add('line',      Edit.StartLine);
     Obj.Add('end_line',  Edit.StartLine + Added);
     if AutoSave then Obj.Add('saved', True);

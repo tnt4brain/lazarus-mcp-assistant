@@ -331,7 +331,7 @@ begin
   Git(['commit', '-q', '-m', 'add b']);
   Hash := Trim(Git(['rev-parse', 'HEAD']));
   Git(['checkout', '-q', Main]);
-  T := Tool('git_cherry_pick', '"commit":' + JsonStr(Hash));
+  T := Tool('git_cherry_pick', '"ref":' + JsonStr(Hash));
   CheckFalse(IsError(T), T);
   CheckTrue(FileExists(FDir + 'b.txt'), 'the file arrived');
   CheckEquals('add b', Trim(Git(['log', '-1', '--format=%s'])), 'one new commit on top');
@@ -341,14 +341,14 @@ begin
   Git(['commit', '-q', '-am', 'clash on a']);
   Hash := Trim(Git(['rev-parse', 'HEAD']));
   Git(['checkout', '-q', Main]);
-  T := Tool('git_cherry_pick', '"commit":' + JsonStr(Hash));
+  T := Tool('git_cherry_pick', '"ref":' + JsonStr(Hash));
   CheckTrue(IsError(T) and (Pos('abort=true', T) > 0), 'stopped on the conflict: ' + T);
   T := Tool('git_cherry_pick', '"abort":true');
   CheckFalse(IsError(T), T);
   CheckEquals('two', ReadA, 'the file is back');
   CheckEquals('', Trim(Git(['status', '--porcelain', '--untracked-files=no'])), 'clean again');
   { an option is no commit }
-  T := Tool('git_cherry_pick', '"commit":"--abort"');
+  T := Tool('git_cherry_pick', '"ref":"--abort"');
   CheckTrue(IsError(T), 'option refused: ' + T);
   T := Tool('git_cherry_pick', '');
   CheckTrue(IsError(T), 'nothing to pick: ' + T);
@@ -383,10 +383,10 @@ procedure TTestGitWrite.TestLog;
 var
   T : string;
 begin
-  T := Tool('git_log', '"max_count":1');
+  T := Tool('git_log', '"limit":1');
   CheckFalse(IsError(T), T);
   CheckTrue(Pos('second', T) > 0, T);
-  CheckEquals(0, Pos('first', T), 'max_count honoured: ' + T);
+  CheckEquals(0, Pos('first', T), 'limit honoured: ' + T);
 end;
 
 { A directory with a file in it, outside the repository of SetUp. }
