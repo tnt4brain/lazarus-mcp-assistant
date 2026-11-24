@@ -57,12 +57,13 @@ uses
   Controls, ComCtrls, ExtCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
   LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEExternToolIntf,
   SynEdit, SynHighlighterPas, IDEOptEditorIntf, McpMarkdownHighlight,
-  McpMarkdown, McpImageInfo, McpMessages
+  McpMarkdown, McpImageInfo, McpMessages, McpIdeState
   {$IF lcl_fullversion >= 4090000}, EditorOptionsIntf{$ENDIF};
 
 const
   MD_FORM_ID = 'McpMarkdownFormID';
   MD_MAX_FILE_BYTES = 8 * 1024 * 1024;
+  MIN_PAGE_SIZE = 40;      { pixels: a smaller tab is a collapsed dock, nothing is laid out in it }
 
 type
   { One document: its panel, its images, the handlers of its panel }
@@ -76,12 +77,22 @@ type
     FFile    : string;     { the file this tab shows ('' = a document from ide_show_markdown) }
     FSource  : string;     { the text last rendered for FFile (LF line ends, no BOM) }
     FStamp   : string;     { age and size of FFile when it was last read from disk }
+    FText    : string;     { the Markdown last given to SetDocument, rendered again on a zoom }
+    FDeferred   : Boolean;  { SetDocument found no room: FText is rendered once the tab has a size }
+    FZoomSteps  : Integer;  { wheel notches (Ctrl) not yet applied }
+    FZoomQueued : Boolean;
+    procedure ApplyZoom(Data: PtrInt);
+    procedure HookWheel(AControl: TWinControl);
+    procedure WheelZoom(Sender: TObject; Shift: TShiftState; WheelDelta: Integer;
+      MousePos: TPoint; var Handled: Boolean);
     procedure RestoreScroll(Data: PtrInt);
     procedure ApplyColors;
     function  LoadImage(const AUrl: string; out AWhy: string): TPicture;
     procedure GetImage(Sender: TIpHtmlNode; const URL: string; var Picture: TPicture);
     function  CanHandle(Sender: TObject; const URL: string): Boolean;
     procedure HotClick(Sender: TObject);
+  protected
+    procedure Resize; override;
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
@@ -492,6 +503,22 @@ begin
   OpenURL(Url);
 end;
 
+{ The text size in points before any zoom: the IDE's font plus 2 (IPro's default is too small). }
+function MdBaseSize: Integer;
+begin
+  Result := Screen.SystemFont.Size + 2;
+end;
+
+{ What a new tab starts with: the base size and the zoom the view last had (kept in the settings,
+  so it survives an IDE restart; stored as an offset, so a change of the IDE's font keeps it sane). }
+function MdFontSize: Integer;
+begin
+  Result := MdBaseSize;
+  if Assigned(McpSettings) then Inc(Result, McpSettings.MarkdownZoom);
+  if Result < 6 then Result := 6;
+  if Result > 48 then Result := 48;
+end;
+
 constructor TMdTab.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
@@ -503,7 +530,7 @@ begin
   { IPro's own defaults are Times and a letter-spaced Courier: use the UI font, and a real
     monospace font for code }
   FPanel.DefaultTypeFace := Screen.SystemFont.Name;
-  FPanel.DefaultFontSize := Screen.SystemFont.Size + 2;
+  FPanel.DefaultFontSize := MdFontSize;
   FPanel.FixedTypeface := MonospaceFont;
   FPanel.FontQuality := fqCleartype;
   ApplyColors;
@@ -517,8 +544,73 @@ begin
   FPanel.OnHotClick := @HotClick;
 end;
 
+{ Ctrl + wheel zooms this tab.  IPro makes a new inner panel (the control that takes the
+  wheel) for every page it renders, so the handler is put on the controls below FPanel after
+  each SetHtmlFromStr; the old ones are gone.  Remove first: hooking twice would zoom twice. }
+procedure TMdTab.HookWheel(AControl: TWinControl);
+var
+  I : Integer;
+  C : TControl;
+begin
+  for I := 0 to AControl.ControlCount - 1 do
+  begin
+    C := AControl.Controls[I];
+    if not (C is TWinControl) then Continue;
+    TWinControl(C).RemoveHandlerOnMouseWheel(@WheelZoom);
+    TWinControl(C).AddHandlerOnMouseWheel(@WheelZoom, True);
+    HookWheel(TWinControl(C));
+  end;
+end;
+
+{ Runs inside the inner panel's own wheel handling, which the re-render frees: only note
+  the step here and do the work once the event is over. }
+procedure TMdTab.WheelZoom(Sender: TObject; Shift: TShiftState; WheelDelta: Integer;
+  MousePos: TPoint; var Handled: Boolean);
+begin
+  if not (ssCtrl in Shift) or (WheelDelta = 0) then Exit;
+  if WheelDelta > 0 then Inc(FZoomSteps) else Dec(FZoomSteps);
+  if not FZoomQueued then
+  begin
+    FZoomQueued := True;
+    Application.QueueAsyncCall(@ApplyZoom, 0);
+  end;
+  Handled := True;
+end;
+
+{ One point per notch, 6 to 48; the page is rendered again at the same relative place. }
+procedure TMdTab.ApplyZoom(Data: PtrInt);
+var
+  Old, New, Y : Integer;
+begin
+  FZoomQueued := False;
+  Old := FPanel.DefaultFontSize;
+  New := Old + FZoomSteps;
+  FZoomSteps := 0;
+  if New < 6 then New := 6;
+  if New > 48 then New := 48;
+  if (New = Old) or (Old <= 0) or (FText = '') then Exit;
+  Y := FPanel.VScrollPos * New div Old;
+  FPanel.DefaultFontSize := New;
+  if Assigned(McpSettings) then
+  begin
+    McpSettings.MarkdownZoom := New - MdBaseSize;  { the next tab, and the next IDE start }
+    McpSettings.SaveSettings;
+  end;
+  SetDocument(FText);
+  FPanel.VScrollPos := Y;
+  Application.QueueAsyncCall(@RestoreScroll, Y);
+end;
+
+procedure TMdTab.Resize;
+begin
+  inherited Resize;
+  if FDeferred and (Width >= MIN_PAGE_SIZE) and (Height >= MIN_PAGE_SIZE) then
+    SetDocument(FText);          { clears FDeferred }
+end;
+
 destructor TMdTab.Destroy;
 begin
+  Application.RemoveAsyncCalls(Self);    { a queued zoom or scroll restore }
   FImages.Free;
   inherited Destroy;
 end;
@@ -550,6 +642,11 @@ var
   C : TMarkdownHtml;
   Html : string;
 begin
+  FText := AMarkdown;
+  { a window docked as a bare title bar (or not sized yet) has no room: IPro divides by the
+    width and height while it lays out, so the page waits until the tab has a size (Resize) }
+  FDeferred := (Width < MIN_PAGE_SIZE) or (Height < MIN_PAGE_SIZE);
+  if FDeferred then Exit;
   ApplyColors;
   C := TMarkdownHtml.Create;
   try
@@ -558,6 +655,7 @@ begin
     C.Free;
   end;
   FPanel.SetHtmlFromStr(Html);
+  HookWheel(FPanel);       { the page has a new inner panel }
 end;
 
 { Text as the tab compares it: LF line ends, no byte order mark. }
@@ -783,7 +881,8 @@ procedure TMdForm.CloseTab(Sender: TObject);
 var
   P : TTabSheet;
 begin
-  P := FPages.ActivePage;
+  { Sender is the tab whose button was clicked (other widgetsets), not always the active one. }
+  if Sender is TTabSheet then P := TTabSheet(Sender) else P := FPages.ActivePage;
   if P <> nil then P.Free;
   if FPages.PageCount = 0 then Close;
 end;

@@ -55,6 +55,7 @@ begin
     CheckFalse(S.AllowPackageInstall, 'installing packages is off by default');
     CheckEquals('127.0.0.1', S.ListenAddress, 'listens on the loopback by default');
     CheckEquals('ask', S.ReviewPolicy, 'a changed file with unsaved edits asks by default');
+    CheckEquals(0, S.MarkdownZoom, 'the Markdown view starts at its default size');
   finally
     S.Free;
   end;
@@ -80,6 +81,7 @@ begin
     S.AllowPackageInstall := True;
     S.ListenAddress       := '192.168.1.5';
     S.ReviewPolicy        := 'disk';
+    S.MarkdownZoom        := -3;
     S.SaveSettings;
   finally
     S.Free;
@@ -102,6 +104,7 @@ begin
     CheckTrue(S.AllowPackageInstall);
     CheckEquals('192.168.1.5', S.ListenAddress);
     CheckEquals('disk', S.ReviewPolicy);
+    CheckEquals(-3, S.MarkdownZoom, 'a zoom below the default survives too');
   finally
     S.Free;
   end;
