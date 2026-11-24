@@ -8,6 +8,7 @@ An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). In
 > | Lazarus | Windows 11 | Debian 12 |
 > |---|---|---|
 > | **4.6** (the reference version) | passes | GTK2: passes |
+> | **4.8** (the `lazarus_4_8` tag, stable) | passes | GTK2: passes |
 > | **5.0RC1** (the `lazarus_5_0_RC1` tag) | passes | GTK3: passes (GTK2 is not usable with 5.0RC1 here) |
 >
 > **Not supported:** Lazarus trunk (4.99). It is known not to compile: the editor and
@@ -67,7 +68,7 @@ the opening of projects to folders you list. Details, and what the limits do not
 
 ## Requirements
 
-- **Lazarus IDE** 4.6 or 5.0RC1 (see the table at the top; trunk is not supported); macOS is not tested
+- **Lazarus IDE** 4.6, 4.8 or 5.0RC1 (see the table at the top; trunk is not supported); macOS is not tested
 - **Free Pascal Compiler** 3.2.2 (bundled with Lazarus)
 - **Claude Code** (or any MCP client that supports Streamable HTTP transport)
 
