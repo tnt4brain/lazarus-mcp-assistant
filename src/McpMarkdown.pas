@@ -1788,7 +1788,7 @@ function TMarkdownHtml.TableHtml(ALines: TStrings; var I: Integer): string;
 var
   B : TStringBuilder;
   Head, Sep, Row : TStringList;
-  Align : array of string;
+  Align : array of string = nil;
   Cols, K : Integer;
   S, A : string;
 
@@ -1820,7 +1820,6 @@ begin
     SplitRow(ALines[I], Head);
     SplitRow(ALines[I + 1], Sep);
     Cols := Head.Count;
-    Align := nil;
     SetLength(Align, Cols);
     for K := 0 to Cols - 1 do
     begin

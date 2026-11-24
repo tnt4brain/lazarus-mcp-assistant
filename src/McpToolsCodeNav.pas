@@ -181,7 +181,7 @@ function CollectDescendants(Code: TCodeBuffer; X, Y: Integer; const RootName: st
   Files: TStringList; Direct: Boolean; MaxResults: Integer; out Infos: TClassInfos;
   out Capped: Boolean; out Err: string): Boolean;
 var
-  Queue  : TClassInfos;
+  Queue  : TClassInfos = nil;
   Qi     : Integer;
   Tree   : TAVLTree;
   Node   : TAVLTreeNode;
@@ -193,7 +193,6 @@ begin
   Capped := False;
   Err := '';
   Infos := nil;
-  Queue := nil;
   SetLength(Queue, 1);
   Queue[0].Name := RootName; Queue[0].Code := Code; Queue[0].X := X; Queue[0].Y := Y;
   Queue[0].Parent := ''; Queue[0].Depth := 0;
@@ -502,8 +501,9 @@ end;
   Edges are the indexes in Adj[I] (a TList of PtrInt). }
 procedure FindCycles(Count: Integer; Adj: TFPList; Groups: TJSONArray; Units: TFPList);
 var
-  Index, Low : array of Integer;
-  OnStack    : array of Boolean;
+  Index      : array of Integer = nil;
+  Low        : array of Integer = nil;
+  OnStack    : array of Boolean = nil;
   Stack      : TFPList;
   Counter    : Integer;
 
@@ -556,7 +556,6 @@ var
 var
   I : Integer;
 begin
-  Index := nil; Low := nil; OnStack := nil;
   SetLength(Index, Count); SetLength(Low, Count); SetLength(OnStack, Count);
   for I := 0 to Count - 1 do begin Index[I] := -1; OnStack[I] := False; end;
   Counter := 0;
@@ -907,7 +906,7 @@ var
   Code     : TCodeBuffer;
   Tool, Tool2 : TCodeTool;
   Files, Texts, Cand : TStringList;
-  C        : TCands;
+  C        : TCands = nil;
   I, J, MaxSym, Checked, Refs, CleanPos : Integer;
   Used, Trunc : Boolean;
   Searched : Integer;
@@ -931,7 +930,6 @@ begin
   if not CodeToolBoss.Explore(Code, Tool, False, False) then
     Exit(Fail(Ctx, 'Parse error: ' + CodeToolBoss.ErrorMessage));
   GIncludePublished := Ctx.Params.Get('include_published', False);
-  C := nil;
   CollectCandidates(Tool, Tool.Tree.Root, '', False, False, C);
   MaxSym := Ctx.Params.Get('max_symbols', 200);
   Files := TStringList.Create;

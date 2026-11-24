@@ -76,13 +76,12 @@ end;
 procedure TReviewGutterPart.CompareWithDisk;
 var
   Hunk : TDiffHunk;
-  Mine  : TDiffLines;
+  Mine  : TDiffLines = nil;
   Hunks : TDiffHunks;
   I, J, N : Integer;
 begin
   N := SynEdit.Lines.Count;
   if (N > 0) and (SynEdit.Lines[N - 1] = '') then Dec(N);
-  Mine := nil;
   SetLength(Mine, N);
   for I := 0 to N - 1 do Mine[I] := SynEdit.Lines[I];
   SetLength(FKind, 0);

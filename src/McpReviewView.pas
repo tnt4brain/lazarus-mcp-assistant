@@ -1158,7 +1158,8 @@ end;
 procedure TReviewPage.TakeBeside(ASide, AHunk: Integer);
 var
   Hunk : TDiffHunk;
-  Side, Fresh, Joined : TDiffLines;
+  Side, Fresh : TDiffLines;
+  Joined : TDiffLines = nil;
   At, I, N, Span : Integer;
 begin
   if FEditing then Exit;
@@ -1174,7 +1175,6 @@ begin
   end;
   Fresh := Slice(Side, Hunk.BStart, Hunk.BLen);
   At := Hunk.AStart + Hunk.ALen;
-  Joined := nil;
   SetLength(Joined, Length(FResult) + Length(Fresh));
   N := 0;
   for I := 0 to At - 1 do
@@ -1574,10 +1574,9 @@ end;
 { The side's version of one change goes into the result. }
 procedure TReviewPage.TakeHunk(ASide, AHunk: Integer);
 var
-  Take: array of Boolean;
+  Take: array of Boolean = nil;
   I, Span : Integer;
 begin
-  Take := nil;
   if ASide = 0 then SetLength(Take, Length(FRows.LeftHunks))
   else SetLength(Take, Length(FRows.RightHunks));
   for I := 0 to High(Take) do Take[I] := I = AHunk;

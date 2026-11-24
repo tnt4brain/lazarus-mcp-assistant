@@ -550,7 +550,7 @@ function CheckIconParam(Proj: TProject; const AValue: string): string;
 var
   F   : string;
   S   : TFileStream;
-  Hdr : array[0..3] of Byte;
+  Hdr : array[0..3] of Byte = (0, 0, 0, 0);   { a file under 4 bytes is refused below }
 begin
   Result := '';
   F := IconParamFile(Proj, AValue);
@@ -560,7 +560,6 @@ begin
     S := TFileStream.Create(F, fmOpenRead or fmShareDenyNone);
     try
       if S.Size > ICON_MAX_BYTES then Exit('icon: file is larger than 1 MB');
-      Hdr[0] := 0; Hdr[1] := 0; Hdr[2] := 0; Hdr[3] := 0;  { a file under 4 bytes is refused below }
       if S.Size >= 4 then S.ReadBuffer(Hdr, 4);
       { ICONDIR: reserved 0, type 1 = icon }
       if (Hdr[0] <> 0) or (Hdr[1] <> 0) or (Hdr[2] <> 1) or (Hdr[3] <> 0) then

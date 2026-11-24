@@ -287,7 +287,7 @@ end;
 function McpCanonicalJson(AData: TJSONData): string;
 var
   I     : Integer;
-  Order : array of Integer;
+  Order : array of Integer = nil;
   Obj   : TJSONObject;
 begin
   if AData = nil then Exit('null');
@@ -295,7 +295,6 @@ begin
     jtObject:
       begin
         Obj := TJSONObject(AData);
-        Order := nil;
         SetLength(Order, Obj.Count);
         if Obj.Count > 0 then SortedMembers(Obj, Order);
         Result := '{';
@@ -337,7 +336,7 @@ end;
 
 function McpArgsPrint(AArgs: TJSONObject): TMcpArgsPrint;
 var
-  Order : array of Integer;
+  Order : array of Integer = nil;
   I     : Integer;
   Canon : string;
 begin
@@ -346,7 +345,6 @@ begin
     Canon := '{}'
   else
   begin
-    Order := nil;
     SetLength(Order, AArgs.Count);
     SortedMembers(AArgs, Order);
     SetLength(Result.Keys, AArgs.Count);

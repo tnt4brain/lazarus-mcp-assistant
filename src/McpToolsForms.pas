@@ -1351,7 +1351,7 @@ function ArrangeControls(ADesigner: TIDesigner; AParams: TJSONObject;
   out AErr: string): TJSONArray;
 var
   Names     : TJSONArray;
-  Ctls      : array of TControl;
+  Ctls      : array of TControl = nil;
   N, I      : Integer;
   First     : TControl;
   SameSize  : string;
@@ -1364,7 +1364,7 @@ var
   C         : TComponent;
   Obj       : TJSONObject;
   RefL, RefT, RefR, RefB, RefW, RefH : Integer;
-  Old       : array of TRect;
+  Old       : array of TRect = nil;
   Group     : TUndoGroup;
 begin
   Result := nil;
@@ -1376,7 +1376,6 @@ begin
     Exit;
   end;
   N := Names.Count;
-  Ctls := nil;
   SetLength(Ctls, N);
   for I := 0 to N - 1 do
   begin
@@ -1422,7 +1421,6 @@ begin
     AErr := First.Name + ' has no parent';
     Exit;
   end;
-  Old := nil;
   SetLength(Old, N);
   for I := 0 to N - 1 do
     Old[I] := Ctls[I].BoundsRect;

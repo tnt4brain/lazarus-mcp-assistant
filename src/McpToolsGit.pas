@@ -254,7 +254,7 @@ end;
 function FileLineBreak(const AFileName: string; out ABom: string): string;
 var
   FS  : TFileStream;
-  Buf : string;
+  Buf : string = '';
   P   : Integer;
 begin
   Result := LineEnding;
@@ -262,7 +262,6 @@ begin
   try
     FS := TFileStream.Create(AFileName, fmOpenRead or fmShareDenyNone);
     try
-      Buf := '';
       SetLength(Buf, Min(FS.Size, 65536));
       if Buf <> '' then
         SetLength(Buf, FS.Read(Buf[1], Length(Buf)));

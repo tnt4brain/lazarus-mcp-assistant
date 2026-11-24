@@ -130,14 +130,14 @@ end;
 
 function McpHmacSha1(const AKey, AMsg: string): string;
 var
-  K, Ipad, Opad : string;
+  K : string;
+  Ipad : string = '';
+  Opad : string = '';
   I : Integer;
 begin
   K := AKey;
   if Length(K) > 64 then K := Sha1Raw(K);
   K := K + StringOfChar(#0, 64 - Length(K));
-  Ipad := '';
-  Opad := '';
   SetLength(Ipad, 64);
   SetLength(Opad, 64);
   for I := 1 to 64 do
@@ -151,12 +151,12 @@ end;
 function McpTotp(const AKey: string; AUnixTime: Int64; ADigits: Integer; AStepS: Integer): string;
 var
   Counter : Int64;
-  Msg, H  : string;
+  Msg     : string = '';
+  H       : string;
   I, Off  : Integer;
   Bin, Modulus : QWord;
 begin
   Counter := AUnixTime div AStepS;
-  Msg := '';
   SetLength(Msg, 8);
   for I := 8 downto 1 do
   begin

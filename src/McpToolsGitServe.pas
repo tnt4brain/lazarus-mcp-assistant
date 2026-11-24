@@ -537,7 +537,7 @@ function SnapshotWithFiles(const G: TGit; const ABase, AHead: string; ASpecs: TS
   out ASha: string; AAdded: TStrings; out AWhy: string): Boolean;
 var
   Idx, Env, Text, Tree : string;
-  AddArgs : array of string;
+  AddArgs : array of string = nil;
   I : Integer;
 
   function Run(const Args: array of string; AUseIndex: Boolean): Boolean;
@@ -561,7 +561,6 @@ begin
       AWhy := 'read-tree: ' + Trim(Text);
       Exit;
     end;
-    AddArgs := nil;
     SetLength(AddArgs, ASpecs.Count + 2);
     AddArgs[0] := 'add';
     AddArgs[1] := '--';

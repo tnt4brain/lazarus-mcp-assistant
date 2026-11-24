@@ -111,7 +111,7 @@ const
 var
   S      : TFileStream;
   Size   : Int64;
-  Buf    : string;
+  Buf    : string = '';
   Cut    : Integer;
 begin
   Result := '';
@@ -126,7 +126,6 @@ begin
     try
       Size := S.Size;
       if Size > MAX_READ then S.Position := Size - MAX_READ;
-      Buf := '';
       SetLength(Buf, S.Size - S.Position);
       if Length(Buf) > 0 then S.ReadBuffer(Buf[1], Length(Buf));
       if Size > MAX_READ then
@@ -198,12 +197,10 @@ end;
 function McpComposeReport(const AParts: TMcpReportParts; const AStamp: string;
   AMaxBytes: Integer): string;
 var
-  Bodies : array of TStringList;
-  Cut    : array of Integer;
+  Bodies : array of TStringList = nil;
+  Cut    : array of Integer = nil;
   I, Big, BigCount, Drop : Integer;
 begin
-  Bodies := nil;
-  Cut    := nil;
   SetLength(Bodies, Length(AParts));
   SetLength(Cut, Length(AParts));
   for I := 0 to High(AParts) do

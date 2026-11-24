@@ -176,7 +176,7 @@ type
 function TTreeWriter.Text(H: HWND): string;
 var
   Len : DWORD_PTR;
-  W   : WideString;
+  W   : WideString = '';
 begin
   Result := '';
   { an edit's text is not its caption: it answers WM_GETTEXT }
@@ -184,7 +184,6 @@ begin
                  ANSWER_TIMEOUT, @Len) <> 0) then
   begin
     Len := Min(Len, 200);
-    W := '';
     SetLength(W, Len + 1);
     if SendMessageTimeoutW(H, WM_GETTEXT, Len + 1, McpPtrToInt(PWideChar(W)),
          SMTO_ABORTIFHUNG or SMTO_BLOCK, ANSWER_TIMEOUT, @Len) <> 0 then

@@ -187,16 +187,14 @@ function MyersMarks(const A, B: TDiffLines; AOff, N, BOff, M: Integer;
   var ADel, BIns: array of Boolean): Boolean;
 var
   DMax, Off, D, K, X, Y, PrevK, PrevX, PrevY: Integer;
-  V    : array of Integer;
-  Trace: array of array of Integer;
+  V    : array of Integer = nil;
+  Trace: array of array of Integer = nil;
   Found: Boolean;
 begin
   Result := False;
   DMax := N + M;
   if DMax > McpDiffMaxEdits then DMax := McpDiffMaxEdits;
   Off := DMax + 1;
-  V     := nil;
-  Trace := nil;
   SetLength(V, 2 * DMax + 3);
   SetLength(Trace, DMax + 1);
   V[Off + 1] := 0;
@@ -262,7 +260,8 @@ end;
 function DiffLines(const A, B: TDiffLines): TDiffHunks;
 var
   Pre, Suf, N, M, I, J, Cnt, SI, SJ: Integer;
-  ADel, BIns: array of Boolean;
+  ADel : array of Boolean = nil;
+  BIns : array of Boolean = nil;
 begin
   Result := nil;
   Pre := 0;
@@ -277,8 +276,6 @@ begin
   if (N = 0) and (M = 0) then Exit;
   if (N = 0) or (M = 0) then
     Exit(OneHunk(Pre, N, Pre, M));
-  ADel := nil;
-  BIns := nil;
   SetLength(ADel, N);
   SetLength(BIns, M);
   for I := 0 to N - 1 do ADel[I] := False;
@@ -559,7 +556,8 @@ end;
 function AlignRows3(const Editor, Middle, Disk: TDiffLines): TAligned3;
 var
   AL, AR     : TAlignedRows;
-  MapL, MapR : array of Integer;      { the row of each row of AL / AR }
+  MapL : array of Integer = nil;      { the row of each row of AL }
+  MapR : array of Integer = nil;      { the row of each row of AR }
   I, J, Cnt  : Integer;
   EL, ER     : array of Integer;      { the rows of AL / AR waiting in a gap }
   K, NE, H   : Integer;
@@ -593,8 +591,6 @@ begin
   Result.RK := nil;
   AL := AlignRows(Middle, Editor);       { Left: the result's side, Right: the editor's }
   AR := AlignRows(Middle, Disk);
-  MapL := nil;
-  MapR := nil;
   SetLength(MapL, Length(AL.Left));
   SetLength(MapR, Length(AR.Left));
   Cnt := 0;

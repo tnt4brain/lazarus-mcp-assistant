@@ -929,14 +929,13 @@ end;
 function FileHasWord(const AFile, LowIdent: string): Boolean;
 var
   Stream : TFileStream;
-  Text   : string;
+  Text   : string = '';
   P, L   : Integer;
 begin
   Result := False;
   try
     Stream := TFileStream.Create(AFile, fmOpenRead or fmShareDenyNone);
     try
-      Text := '';
       SetLength(Text, Stream.Size);
       if Length(Text) > 0 then Stream.ReadBuffer(Text[1], Length(Text));
     finally
@@ -1095,14 +1094,13 @@ end;
 function BodyStatements(Tool: TCodeTool; CodeBuf: TCodeBuffer;
   BeginNode: TCodeTreeNode): TStmtNode;
 var
-  Toks : TStmtTokens;
+  Toks : TStmtTokens = nil;
   N    : Integer;
   XY   : TCodeXYPosition;
   Txt  : string;
   Ch   : Char;
   I    : Integer;
 begin
-  Toks := nil;
   N := 0;
   Tool.MoveCursorToCleanPos(BeginNode.StartPos);
   repeat

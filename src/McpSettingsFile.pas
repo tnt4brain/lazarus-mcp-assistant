@@ -180,13 +180,12 @@ end;
 
 procedure TMcpIdeSettings.LoadTokens;
 var
-  Items : TMcpClientTokens;
+  Items : TMcpClientTokens = nil;
   I, N  : Integer;
   P     : string;
 begin
   N := FXmlConfig.GetValue('Tokens/Count', 0);
   if N > MCP_MAX_TOKENS then N := MCP_MAX_TOKENS;
-  Items := nil;
   for I := 1 to N do
   begin
     P := 'Tokens/Item' + IntToStr(I) + '/';
