@@ -67,6 +67,13 @@ function JoinLines(const Lines: TDiffLines; const EOL: string;
 
 function DiffLines(const A, B: TDiffLines): TDiffHunks;
 
+{ The same, found as McpLineDiff always did (code_format, code_complete): lines common to
+  both versions are matched by a longest common subsequence between the common head and
+  tail, and where that part is too large for a table, lines that occur once in each
+  version anchor it (patience diff).  A hunk that only adds or only removes lines is moved
+  down as far as the unchanged lines after it allow, as git does. }
+function DiffLinesLcs(const A, B: TDiffLines): TDiffHunks;
+
 { The text A with the hunks that have Take[i] = True replaced by B's lines;
   the others stay as in A.  All taken gives B, none gives A. }
 function ApplyHunks(const A, B: TDiffLines; const Hunks: TDiffHunks;
@@ -119,6 +126,8 @@ function Slice(const Lines: TDiffLines; AStart, ALen: Integer): TDiffLines;
 procedure DifferingSpan(const A, B: string; out AFrom, ATo, BFrom, BTo: Integer);
 
 implementation
+
+uses Classes;
 
 function SplitLines(const S: string; out FinalNewline: Boolean): TDiffLines;
 var
@@ -315,6 +324,234 @@ begin
     Result[Cnt].BLen   := J - SJ;
     Inc(Cnt);
   end;
+end;
+
+{ The lines A[Lo..Hi-1], sorted, each with its index; compared byte by byte, as the
+  matching does. }
+function LineIndex(const A: TDiffLines; Lo, Hi: Integer): TStringList;
+var
+  I : Integer;
+begin
+  Result := TStringList.Create;
+  Result.CaseSensitive := True;
+  Result.UseLocale := False;
+  Result.Capacity := Hi - Lo;
+  for I := Lo to Hi - 1 do
+    Result.AddObject(A[I], TObject(PtrInt(I)));
+  Result.Sorted := True;
+end;
+
+{ The index of S if it occurs exactly once in Index, otherwise -1. }
+function UniqueAt(Index: TStringList; const S: string): Integer;
+var
+  X : Integer;
+begin
+  Result := -1;
+  if not Index.Find(S, X) then Exit;
+  if (X > 0) and (Index[X - 1] = S) then Exit;
+  if (X < Index.Count - 1) and (Index[X + 1] = S) then Exit;
+  Result := PtrInt(Index.Objects[X]);
+end;
+
+function DiffLinesLcs(const A, B: TDiffLines): TDiffHunks;
+const
+  MaxCells = 4000000;  { the largest table for one exact match }
+var
+  MA, MB : array of Integer;  { matched line pairs, increasing }
+  MC     : Integer;
+  K, Limit, PA, PB : Integer;
+
+  procedure AddMatch(I, J: Integer);
+  begin
+    if MC = Length(MA) then
+    begin
+      SetLength(MA, 2 * MC + 64);
+      SetLength(MB, 2 * MC + 64);
+    end;
+    MA[MC] := I;
+    MB[MC] := J;
+    Inc(MC);
+  end;
+
+  { Longest common subsequence of A[ALo..AHi-1] and B[BLo..BHi-1]. }
+  procedure TableMatch(ALo, AHi, BLo, BHi: Integer);
+  var
+    N, M, I, J : Integer;
+    L          : array of Integer = nil;
+
+    function Cell(AI, AJ: Integer): Integer; inline;
+    begin
+      Result := L[AI * (M + 1) + AJ];
+    end;
+
+  begin
+    N := AHi - ALo;
+    M := BHi - BLo;
+    SetLength(L, (N + 1) * (M + 1));
+    for I := N - 1 downto 0 do
+      for J := M - 1 downto 0 do
+        if A[ALo + I] = B[BLo + J] then
+          L[I * (M + 1) + J] := Cell(I + 1, J + 1) + 1
+        else if Cell(I + 1, J) >= Cell(I, J + 1) then
+          L[I * (M + 1) + J] := Cell(I + 1, J)
+        else
+          L[I * (M + 1) + J] := Cell(I, J + 1);
+    I := 0;
+    J := 0;
+    while (I < N) and (J < M) do
+      if A[ALo + I] = B[BLo + J] then
+      begin
+        AddMatch(ALo + I, BLo + J);
+        Inc(I);
+        Inc(J);
+      end
+      else if Cell(I + 1, J) >= Cell(I, J + 1) then
+        Inc(I)
+      else
+        Inc(J);
+  end;
+
+  procedure Match(ALo, AHi, BLo, BHi: Integer); forward;
+
+  { Lines that occur once in each range, in the longest run whose positions
+    increase in both, with the parts between them matched recursively.
+    False if there is no such line. }
+  function AnchorMatch(ALo, AHi, BLo, BHi: Integer): Boolean;
+  var
+    InA, InB      : TStringList;
+    I, J, X, Lo, Hi, Mid, Len : Integer;
+    CandA, CandB  : array of Integer;
+    Tails         : array of Integer = nil;
+    Prev          : array of Integer = nil;
+    Chain         : array of Integer = nil;
+    PrevA, PrevB  : Integer;
+  begin
+    InA := LineIndex(A, ALo, AHi);
+    InB := LineIndex(B, BLo, BHi);
+    try
+      CandA := nil;
+      CandB := nil;
+      for I := ALo to AHi - 1 do
+        if (UniqueAt(InA, A[I]) = I) and (UniqueAt(InB, A[I]) >= 0) then
+        begin
+          J := UniqueAt(InB, A[I]);
+          SetLength(CandA, Length(CandA) + 1);
+          SetLength(CandB, Length(CandB) + 1);
+          CandA[High(CandA)] := I;
+          CandB[High(CandB)] := J;
+        end;
+    finally
+      InA.Free;
+      InB.Free;
+    end;
+    Result := Length(CandA) > 0;
+    if not Result then Exit;
+    { longest increasing run of CandB (patience sorting) }
+    SetLength(Tails, Length(CandB));
+    SetLength(Prev, Length(CandB));
+    Len := 0;
+    for X := 0 to High(CandB) do
+    begin
+      Lo := 0;
+      Hi := Len;
+      while Lo < Hi do
+      begin
+        Mid := (Lo + Hi) div 2;
+        if CandB[Tails[Mid]] < CandB[X] then Lo := Mid + 1 else Hi := Mid;
+      end;
+      if Lo > 0 then Prev[X] := Tails[Lo - 1] else Prev[X] := -1;
+      Tails[Lo] := X;
+      if Lo = Len then Inc(Len);
+    end;
+    SetLength(Chain, Len);
+    X := Tails[Len - 1];
+    for I := Len - 1 downto 0 do
+    begin
+      Chain[I] := X;
+      X := Prev[X];
+    end;
+    PrevA := ALo;
+    PrevB := BLo;
+    for I := 0 to Len - 1 do
+    begin
+      Match(PrevA, CandA[Chain[I]], PrevB, CandB[Chain[I]]);
+      AddMatch(CandA[Chain[I]], CandB[Chain[I]]);
+      PrevA := CandA[Chain[I]] + 1;
+      PrevB := CandB[Chain[I]] + 1;
+    end;
+    Match(PrevA, AHi, PrevB, BHi);
+  end;
+
+  procedure Match(ALo, AHi, BLo, BHi: Integer);
+  var
+    Tail, X : Integer;
+  begin
+    while (ALo < AHi) and (BLo < BHi) and (A[ALo] = B[BLo]) do
+    begin
+      AddMatch(ALo, BLo);
+      Inc(ALo);
+      Inc(BLo);
+    end;
+    Tail := 0;
+    while (Tail < AHi - ALo) and (Tail < BHi - BLo) and
+          (A[AHi - 1 - Tail] = B[BHi - 1 - Tail]) do
+      Inc(Tail);
+    if (AHi - Tail > ALo) and (BHi - Tail > BLo) then
+      if Int64(AHi - Tail - ALo + 1) * (BHi - Tail - BLo + 1) <= MaxCells then
+        TableMatch(ALo, AHi - Tail, BLo, BHi - Tail)
+      else
+        AnchorMatch(ALo, AHi - Tail, BLo, BHi - Tail);  { none: one hunk }
+    for X := Tail downto 1 do
+      AddMatch(AHi - X, BHi - X);
+  end;
+
+  procedure AddHunk(AEnd, BEnd: Integer);
+  begin
+    if (AEnd <= PA) and (BEnd <= PB) then Exit;
+    SetLength(Result, Length(Result) + 1);
+    with Result[High(Result)] do
+    begin
+      AStart := PA; ALen := AEnd - PA;
+      BStart := PB; BLen := BEnd - PB;
+    end;
+  end;
+
+begin
+  Result := nil;
+  MC := 0;
+  MA := nil;
+  MB := nil;
+  Match(0, Length(A), 0, Length(B));
+  { the hunks are the gaps between matched lines }
+  PA := 0;
+  PB := 0;
+  for K := 0 to MC - 1 do
+  begin
+    AddHunk(MA[K], MB[K]);
+    PA := MA[K] + 1;
+    PB := MB[K] + 1;
+  end;
+  AddHunk(Length(A), Length(B));
+  { a hunk that only adds or only removes lines slides down as far as the lines after
+    it allow, as git does }
+  for K := 0 to High(Result) do
+    with Result[K] do
+      if ALen = 0 then
+      begin
+        if K < High(Result) then Limit := Result[K + 1].BStart else Limit := Length(B);
+        while (BStart + BLen < Limit) and (B[BStart] = B[BStart + BLen]) do
+        begin
+          Inc(AStart); Inc(BStart);
+        end;
+      end
+      else if BLen = 0 then
+      begin
+        if K < High(Result) then Limit := Result[K + 1].AStart else Limit := Length(A);
+        while (AStart + ALen < Limit) and (A[AStart] = A[AStart + ALen]) do
+        begin
+          Inc(AStart); Inc(BStart);
+        end;
+      end;
 end;
 
 procedure AddLine(var R: TDiffLines; var N: Integer; const S: string);
