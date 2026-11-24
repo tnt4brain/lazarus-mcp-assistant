@@ -377,12 +377,8 @@ begin
 end;
 
 function WithEol(const ANewText, AEol: string; AFinalNewline: Boolean): string;
-var
-  Lines : TDiffLines;
-  Dummy : Boolean;
 begin
-  Lines  := SplitLines(ANewText, Dummy);
-  Result := JoinLines(Lines, AEol, AFinalNewline);
+  Result := JoinLines(LinesOf(ANewText), AEol, AFinalNewline);
 end;
 
 end.

@@ -28,12 +28,60 @@ type
     procedure TestPathIsUnder;
     procedure TestPathHasSegment;
     procedure TestRepoRoot;
+    procedure TestProgramIsFoundThroughPath;
   end;
 
 implementation
 
 uses
-  SysUtils, Sockets, fpjson, jsonparser;
+  {$IFDEF WINDOWS}Windows{$ELSE}BaseUnix{$ENDIF},   { first: SysUtils must win the shared names }
+  SysUtils, Classes, Sockets, fpjson, jsonparser, LazFileUtils, FileUtil;
+
+{$IFNDEF WINDOWS}
+function setenv(AName, AValue: PChar; AOverwrite: LongInt): LongInt; cdecl; external 'c' name 'setenv';
+{$ENDIF}
+
+procedure SetPath(const AValue: string);
+begin
+  {$IFDEF WINDOWS}
+  Windows.SetEnvironmentVariable('PATH', PChar(AValue));
+  {$ELSE}
+  setenv('PATH', PChar(AValue), 1);
+  {$ENDIF}
+end;
+
+{ The plugin finds git, lazbuild and curl with FindDefaultExecutablePath(name).  Lazarus 5.0
+  stops searching the current directory on Windows for it; a program on PATH must be found on
+  4.x and 5.x alike, which is all the plugin relies on. }
+procedure TTestUtils.TestProgramIsFoundThroughPath;
+var
+  Dir, Fake, OldPath : string;
+  F : TStringList;
+begin
+  Dir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcppathtest';
+  ForceDirectories(Dir);
+  Fake := IncludeTrailingPathDelimiter(Dir) + 'mcpfaketool' + {$IFDEF WINDOWS}'.exe'{$ELSE}''{$ENDIF};
+  F := TStringList.Create;
+  try
+    F.Text := 'not a real program';
+    F.SaveToFile(Fake);
+    {$IFNDEF WINDOWS}
+    FpChmod(Fake, &755);
+    {$ENDIF}
+    OldPath := GetEnvironmentVariable('PATH');
+    try
+      SetPath(Dir + PathSeparator + OldPath);
+      AssertEquals('found by its bare name', Fake, FindDefaultExecutablePath('mcpfaketool'));
+    finally
+      SetPath(OldPath);
+    end;
+    AssertEquals('and not once PATH is back', '', FindDefaultExecutablePath('mcpfaketool'));
+  finally
+    F.Free;
+    DeleteFile(Fake);
+    RemoveDir(Dir);
+  end;
+end;
 
 procedure TTestUtils.TestPathIsUnder;
 var
