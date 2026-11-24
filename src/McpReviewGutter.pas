@@ -76,7 +76,7 @@ end;
 procedure TReviewGutterPart.CompareWithDisk;
 var
   Hunk : TDiffHunk;
-  Mine  : TDiffLines;
+  Mine  : TDiffLines = nil;
   Hunks : TDiffHunks;
   I, J, N : Integer;
 begin

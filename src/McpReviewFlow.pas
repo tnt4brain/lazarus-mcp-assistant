@@ -365,6 +365,8 @@ begin
   GMcpReviewNotice := GMcpReviewNotice + S;
 end;
 
+{ a menu handler: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure McpReviewActiveEditor(Sender: TObject);
 var
   Ed   : TSourceEditorInterface;
@@ -390,6 +392,7 @@ begin
     List.Free;
   end;
 end;
+{$POP}
 
 { The disk's version of the file is the one seen now. }
 procedure MarkSeen(const AFile, ADiskText: string);

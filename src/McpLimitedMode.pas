@@ -105,7 +105,7 @@ end;
 
 procedure McpLimitSetFoldersFrom(AList: TStrings);
 var
-  A : array of string;
+  A : array of string = nil;
   I : Integer;
 begin
   SetLength(A, AList.Count);

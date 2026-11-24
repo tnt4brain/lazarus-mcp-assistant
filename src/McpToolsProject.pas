@@ -304,12 +304,15 @@ begin
   FTimer.Enabled := True;
 end;
 
+{ a menu click: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpCloseProjectClick.Fire(Sender: TObject);
 begin
   FTimer.Enabled := False;
   if Assigned(Item) and Assigned(Item.MenuItem) then
     Item.MenuItem.Click;
 end;
+{$POP}
 
 destructor TMcpCloseProjectClick.Destroy;
 begin
@@ -550,7 +553,7 @@ function CheckIconParam(Proj: TProject; const AValue: string): string;
 var
   F   : string;
   S   : TFileStream;
-  Hdr : array[0..3] of Byte;
+  Hdr : array[0..3] of Byte = (0, 0, 0, 0);   { a file under 4 bytes is refused below }
 begin
   Result := '';
   F := IconParamFile(Proj, AValue);
@@ -560,7 +563,6 @@ begin
     S := TFileStream.Create(F, fmOpenRead or fmShareDenyNone);
     try
       if S.Size > ICON_MAX_BYTES then Exit('icon: file is larger than 1 MB');
-      FillChar(Hdr, SizeOf(Hdr), 0);
       if S.Size >= 4 then S.ReadBuffer(Hdr, 4);
       { ICONDIR: reserved 0, type 1 = icon }
       if (Hdr[0] <> 0) or (Hdr[1] <> 0) or (Hdr[2] <> 1) or (Hdr[3] <> 0) then

@@ -187,8 +187,8 @@ function MyersMarks(const A, B: TDiffLines; AOff, N, BOff, M: Integer;
   var ADel, BIns: array of Boolean): Boolean;
 var
   DMax, Off, D, K, X, Y, PrevK, PrevX, PrevY: Integer;
-  V    : array of Integer;
-  Trace: array of array of Integer;
+  V    : array of Integer = nil;
+  Trace: array of array of Integer = nil;
   Found: Boolean;
 begin
   Result := False;
@@ -260,7 +260,8 @@ end;
 function DiffLines(const A, B: TDiffLines): TDiffHunks;
 var
   Pre, Suf, N, M, I, J, Cnt, SI, SJ: Integer;
-  ADel, BIns: array of Boolean;
+  ADel : array of Boolean = nil;
+  BIns : array of Boolean = nil;
 begin
   Result := nil;
   Pre := 0;
@@ -555,7 +556,8 @@ end;
 function AlignRows3(const Editor, Middle, Disk: TDiffLines): TAligned3;
 var
   AL, AR     : TAlignedRows;
-  MapL, MapR : array of Integer;      { the row of each row of AL / AR }
+  MapL : array of Integer = nil;      { the row of each row of AL }
+  MapR : array of Integer = nil;      { the row of each row of AR }
   I, J, Cnt  : Integer;
   EL, ER     : array of Integer;      { the rows of AL / AR waiting in a gap }
   K, NE, H   : Integer;

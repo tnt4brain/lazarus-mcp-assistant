@@ -111,7 +111,7 @@ const
 var
   S      : TFileStream;
   Size   : Int64;
-  Buf    : string;
+  Buf    : string = '';
   Cut    : Integer;
 begin
   Result := '';
@@ -197,8 +197,8 @@ end;
 function McpComposeReport(const AParts: TMcpReportParts; const AStamp: string;
   AMaxBytes: Integer): string;
 var
-  Bodies : array of TStringList;
-  Cut    : array of Integer;
+  Bodies : array of TStringList = nil;
+  Cut    : array of Integer = nil;
   I, Big, BigCount, Drop : Integer;
 begin
   SetLength(Bodies, Length(AParts));

@@ -15,8 +15,8 @@ program mcpserver_tests;
 uses
   {$IFDEF UNIX} cthreads, {$ENDIF}  { the debugger tests start threads }
   SysUtils, Classes, fphttpclient,
-  fpcunit, testregistry, testutils,
-  consoletestrunner, fpcunitreport, plaintestreport,
+  fpcunit, testregistry,
+  consoletestrunner, fpcunitreport,
   THttpHelper,
   TUtils, TProtocol, TAuth, TTestInfra,
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,

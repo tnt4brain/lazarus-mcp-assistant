@@ -19,6 +19,7 @@ unit McpRefKeeper;
   steps that replace a whole component (McpToolsForms, "Undo by snapshot"). }
 
 {$mode objfpc}{$H+}
+{$WARN 5024 OFF}  { OnAdded has the signature of the designer's notification }
 
 interface
 

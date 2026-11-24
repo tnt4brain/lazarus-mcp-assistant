@@ -1788,7 +1788,7 @@ function TMarkdownHtml.TableHtml(ALines: TStrings; var I: Integer): string;
 var
   B : TStringBuilder;
   Head, Sep, Row : TStringList;
-  Align : array of string;
+  Align : array of string = nil;
   Cols, K : Integer;
   S, A : string;
 

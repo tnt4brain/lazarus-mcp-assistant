@@ -287,7 +287,7 @@ end;
 function McpCanonicalJson(AData: TJSONData): string;
 var
   I     : Integer;
-  Order : array of Integer;
+  Order : array of Integer = nil;
   Obj   : TJSONObject;
 begin
   if AData = nil then Exit('null');
@@ -336,7 +336,7 @@ end;
 
 function McpArgsPrint(AArgs: TJSONObject): TMcpArgsPrint;
 var
-  Order : array of Integer;
+  Order : array of Integer = nil;
   I     : Integer;
   Canon : string;
 begin

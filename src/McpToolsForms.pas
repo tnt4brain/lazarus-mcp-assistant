@@ -1114,7 +1114,7 @@ begin
   end;
 end;
 
-function ControlInfo(AComp: TComponent; ARoot: TComponent): TJSONObject;
+function ControlInfo(AComp: TComponent): TJSONObject;
 var
   C    : TControl;
   L, T : Integer;
@@ -1351,7 +1351,7 @@ function ArrangeControls(ADesigner: TIDesigner; AParams: TJSONObject;
   out AErr: string): TJSONArray;
 var
   Names     : TJSONArray;
-  Ctls      : array of TControl;
+  Ctls      : array of TControl = nil;
   N, I      : Integer;
   First     : TControl;
   SameSize  : string;
@@ -1364,7 +1364,7 @@ var
   C         : TComponent;
   Obj       : TJSONObject;
   RefL, RefT, RefR, RefB, RefW, RefH : Integer;
-  Old       : array of TRect;
+  Old       : array of TRect = nil;
   Group     : TUndoGroup;
 begin
   Result := nil;
@@ -2016,7 +2016,7 @@ begin
           end;
           Arr := TJSONArray.Create;
           for I := 0 to Root.ComponentCount - 1 do
-            Arr.Add(ControlInfo(Root.Components[I], Root));
+            Arr.Add(ControlInfo(Root.Components[I]));
           Obj.Add('components', Arr);
           Ctx.Result := Obj.AsJSON;
         finally
@@ -2217,7 +2217,7 @@ begin
           Group := NewUndoGroup(Designer);
           AddUndo(Group, NewComp, uopAdd, 'Name', '', NewComp.Name);
           Obj.Add('status', 'ok');
-          Obj.Add('component', ControlInfo(NewComp, Root));
+          Obj.Add('component', ControlInfo(NewComp));
           if Arr.Count > 0 then
             Obj.Add('results', Arr)
           else

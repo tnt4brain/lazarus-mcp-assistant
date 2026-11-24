@@ -393,7 +393,8 @@ var
 
 function EditDistance(const A, B: string): Integer;
 var
-  Prev, Cur : array of Integer;
+  Prev : array of Integer = nil;
+  Cur  : array of Integer = nil;
   I, J, Cost : Integer;
 begin
   SetLength(Prev, Length(B) + 1);

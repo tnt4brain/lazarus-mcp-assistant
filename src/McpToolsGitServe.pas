@@ -537,7 +537,7 @@ function SnapshotWithFiles(const G: TGit; const ABase, AHead: string; ASpecs: TS
   out ASha: string; AAdded: TStrings; out AWhy: string): Boolean;
 var
   Idx, Env, Text, Tree : string;
-  AddArgs : array of string;
+  AddArgs : array of string = nil;
   I : Integer;
 
   function Run(const Args: array of string; AUseIndex: Boolean): Boolean;
@@ -630,6 +630,7 @@ var
   L       : TLink;
   Obj, Cmds : TJSONObject;
 begin
+  L := Default(TLink);
   Peer := StrParam(Ctx, 'peer');
   Linked := False;
   if Peer = '' then

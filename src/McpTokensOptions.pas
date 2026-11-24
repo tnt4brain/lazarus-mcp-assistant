@@ -6,6 +6,7 @@ unit McpTokensOptions;
   live in McpSettings.ClientTokens; changes are stored at once, not with OK. }
 
 {$mode objfpc}{$H+}
+{$WARN 5024 OFF}  { the overrides and event handlers below have the signatures the IDE and the LCL fix }
 
 interface
 

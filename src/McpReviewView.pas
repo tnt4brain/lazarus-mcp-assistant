@@ -282,6 +282,8 @@ begin
   FTo := nil;
 end;
 
+{ SynEdit's markup overrides: the signatures are fixed, AnRtlInfo is not needed }
+{$PUSH}{$WARN 5024 OFF}
 function TWordMarkup.GetMarkupAttributeAtRowCol(const aRow: Integer;
   const aStartCol: TLazSynDisplayTokenBound;
   const AnRtlInfo: TLazSynDisplayRtlInfo): TMdMarkupColor;
@@ -305,6 +307,7 @@ begin
   if FFrom[aRow - 1] > aStartCol.Logical then ANextLog := FFrom[aRow - 1]
   else if FTo[aRow - 1] > aStartCol.Logical then ANextLog := FTo[aRow - 1];
 end;
+{$POP}
 
 { ── The window ───────────────────────────────────────────────────────────── }
 
@@ -472,6 +475,8 @@ begin
   PositionButtons(AParent);
 end;
 
+{ event handlers: the LCL fixes the signatures, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewPage.PositionButtons(Sender: TObject);
 begin
   if FBottom = nil then Exit;
@@ -503,6 +508,7 @@ begin
   Inc(X, FStripW);
   FPanR.SetBounds(X, 0, ClientWidth - X, H);
 end;
+{$POP}
 
 constructor TReviewPage.CreateReview(AOwner: TComponent; const AFile, ALeftTitle,
   ARightTitle: string; const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean;
@@ -1124,6 +1130,8 @@ begin
   end;
 end;
 
+{ a mouse event: the LCL fixes the signature, Sender and Shift are not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewPage.GutterMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
 var
   Ctl  : TGutterCtl;
@@ -1150,13 +1158,15 @@ begin
     Application.CancelHint;
   end;
 end;
+{$POP}
 
 { The side's lines of one change go below the result's lines there, which stay.  What the
   change is part of counts as decided. }
 procedure TReviewPage.TakeBeside(ASide, AHunk: Integer);
 var
   Hunk : TDiffHunk;
-  Side, Fresh, Joined : TDiffLines;
+  Side, Fresh : TDiffLines;
+  Joined : TDiffLines = nil;
   At, I, N, Span : Integer;
 begin
   if FEditing then Exit;
@@ -1475,6 +1485,8 @@ begin
   end;
 end;
 
+{ a mouse event: the LCL fixes the signature, Sender and Shift are not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewPage.StripMouseDown(Sender: TObject; Button: TMouseButton;
   Shift: TShiftState; X, Y: Integer);
 var
@@ -1508,6 +1520,7 @@ begin
       Exit;
     end;
 end;
+{$POP}
 
 { A change is known by the text on both sides, so it stays "kept" after the rows move. }
 function TReviewPage.HunkKey(ASide: Integer; const AHunk: TDiffHunk): string;
@@ -1540,6 +1553,8 @@ end;
 
 { Explain: a prompt with the differences between the result and the disk, on the
   clipboard, for the user to paste into the assistant. }
+{ a button click: the LCL fixes the signature, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewPage.ExplainClick(Sender: TObject);
 var
   Hunk : TDiffHunk;
@@ -1565,13 +1580,14 @@ begin
   Clipboard.AsText := S;
   ShowMessage('The prompt is on the clipboard: paste it into your assistant.');
 end;
+{$POP}
 
 { ── Changing the result ──────────────────────────────────────────────────── }
 
 { The side's version of one change goes into the result. }
 procedure TReviewPage.TakeHunk(ASide, AHunk: Integer);
 var
-  Take: array of Boolean;
+  Take: array of Boolean = nil;
   I, Span : Integer;
 begin
   if ASide = 0 then SetLength(Take, Length(FRows.LeftHunks))
@@ -1598,6 +1614,8 @@ begin
   FResult := SplitLines(FEdM.Lines.Text, Dummy);
 end;
 
+{ a button click: the LCL fixes the signature, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewPage.ToggleEdit(Sender: TObject);
 var
   Hunks : TDiffHunks;
@@ -1621,6 +1639,7 @@ begin
   FEditing := not FEditing;
   Rebuild;
 end;
+{$POP}
 
 procedure TReviewPage.GoToChange(ADirection: Integer);
 var
@@ -1655,6 +1674,8 @@ begin
   FEdM.TopLine := Row + 1;
 end;
 
+{ button clicks: the LCL fixes the signature, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewPage.PrevChange(Sender: TObject);
 begin
   GoToChange(-1);
@@ -1664,6 +1685,7 @@ procedure TReviewPage.NextChange(Sender: TObject);
 begin
   GoToChange(1);
 end;
+{$POP}
 
 function TReviewPage.WorkingText: string;
 begin
@@ -1682,6 +1704,8 @@ begin
       if FResult[I] <> FInitial[I] then Exit(True);
 end;
 
+{ button clicks: the LCL fixes the signature, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewPage.ApplyClick(Sender: TObject);
 begin
   Apply;
@@ -1691,6 +1715,7 @@ procedure TReviewPage.DiscardClick(Sender: TObject);
 begin
   Keep(True);
 end;
+{$POP}
 
 { The answer is final: the buttons go, and the owner of the review hears of it.  The
   window is not closed; the file stays in its tree, marked as done. }
@@ -1955,6 +1980,8 @@ begin
   end;
 end;
 
+{ tree events: the LCL fixes the signatures, Sender, State and DefaultDraw are not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewWindow.TreeChange(Sender: TObject; Node: TTreeNode);
 begin
   if (Node <> nil) and (Node.Data <> nil) then ShowPage(TReviewPage(Node.Data));
@@ -1967,6 +1994,7 @@ begin
   if (Node.Data <> nil) and TReviewPage(Node.Data).Finished then
     Sender.Canvas.Font.Color := clGrayText;
 end;
+{$POP}
 
 procedure TReviewWindow.PageChanged(Sender: TObject);
 begin
@@ -1976,6 +2004,8 @@ begin
     RefreshTree;
 end;
 
+{ event handlers: the LCL fixes the signatures, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TReviewWindow.ApplyCleanClick(Sender: TObject);
 var
   Ptr : Pointer;
@@ -2023,6 +2053,7 @@ begin
   end;
   if (FCurrent = nil) and (FPages.Count > 0) then ShowPage(NextPending) else RefreshTree;
 end;
+{$POP}
 
 function TReviewWindow.Add(const AFile, ALeftTitle, ARightTitle: string;
   const Mine, Theirs, Base: TDiffLines; AHasBase: Boolean;
@@ -2081,6 +2112,8 @@ end;
 
 { ── Window layout (docking) ──────────────────────────────────────────────── }
 
+{ the IDE's form creator: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure CreateReviewForm(Sender: TObject; aFormName: string;
   var AForm: TCustomForm; DoDisableAutoSizing: boolean);
 begin
@@ -2089,6 +2122,7 @@ begin
   AForm.Name := aFormName;
   GWindow := TReviewWindow(AForm);
 end;
+{$POP}
 
 procedure RegisterReviewWindow;
 begin

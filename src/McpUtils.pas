@@ -40,6 +40,12 @@ function McpValidListenAddress(const S: string): Boolean;
 { S is in 127.0.0.0/8. }
 function McpIsLoopback(const S: string): Boolean;
 
+{ A pointer kept in an integer slot (a list item, a window message's parameter) and back.  FPC
+  hints at every cast between the two ("not portable"), whatever the types; PtrInt is as wide as
+  a pointer, so these two are portable, and the hint is switched off in their bodies only. }
+function McpIntToPtr(AValue: PtrInt): Pointer;
+function McpPtrToInt(APtr: Pointer): PtrInt;
+
 { The address a client on this machine connects to for a server listening on
   AListen: 0.0.0.0 ("every interface") is reached through the loopback. }
 function McpClientHost(const AListen: string): string;
@@ -260,6 +266,18 @@ begin
   Result := McpValidListenAddress(S) and (Copy(S, 1, 4) = '127.');
 end;
 
+{$PUSH}{$HINTS OFF}
+function McpIntToPtr(AValue: PtrInt): Pointer;
+begin
+  Result := Pointer(AValue);
+end;
+
+function McpPtrToInt(APtr: Pointer): PtrInt;
+begin
+  Result := PtrInt(APtr);
+end;
+{$POP}
+
 function McpClientHost(const AListen: string): string;
 begin
   if (AListen = '') or (AListen = '0.0.0.0') or not McpValidListenAddress(AListen) then
@@ -280,7 +298,7 @@ begin
   try
     { connecting a datagram socket sends nothing: it only makes the system pick the
       local address for the route (192.0.2.1 is reserved for documentation) }
-    FillChar(Addr, SizeOf(Addr), 0);
+    Addr := Default(TInetSockAddr);
     Addr.sin_family := AF_INET;
     Addr.sin_port   := Swap16(9);
     Addr.sin_addr   := StrToNetAddr('192.0.2.1');
@@ -295,9 +313,9 @@ begin
 end;
 
 { A socket address for the dotted address S (loopback when it is not valid) }
-procedure FillAddr(var Addr: TInetSockAddr; const S: string; APort: Word);
+procedure FillAddr(out Addr: TInetSockAddr; const S: string; APort: Word);
 begin
-  FillChar(Addr, SizeOf(Addr), 0);
+  Addr := Default(TInetSockAddr);
   Addr.sin_family := AF_INET;
   Addr.sin_port   := Swap16(APort);
   if McpValidListenAddress(S) then
@@ -329,16 +347,18 @@ function IsPortFree(APort: Word; const AAddr: string): Boolean;
 var
   S      : LongInt;
   Addr   : TInetSockAddr;
+  {$IFNDEF MSWINDOWS}
   Enable : LongInt;
+  {$ENDIF}
 begin
   Result := False;
   S := fpSocket(AF_INET, SOCK_STREAM, 0);
   if S < 0 then Exit;
-  Enable := 1;
   { Unix: a port in TIME_WAIT counts as free, a listening one still blocks the bind.  Windows:
     the option lets this bind succeed on a port another program listens on (when that one set
     it too), so a busy port would look free (ADR-032). }
   {$IFNDEF MSWINDOWS}
+  Enable := 1;
   fpSetSockOpt(S, SOL_SOCKET, SO_REUSEADDR, @Enable, SizeOf(Enable));
   {$ENDIF}
   FillAddr(Addr, AAddr, APort);

@@ -38,6 +38,8 @@ uses
 
 { Called from the menu: makes a named token for a client on another machine and puts
   the config for it on the clipboard (ADR-021).  The primary token is never copied. }
+{ menu handlers: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure CopyMcpConfigToClipboard(Sender: TObject);
 begin
   if not IsServerRunning then
@@ -48,8 +50,11 @@ begin
   end;
   McpCreateClientToken;
 end;
+{$POP}
 
 { Called from the menu: starts the MCP server (if needed) and spawns claude. }
+{ menu handlers: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure LaunchMcpAssistant(Sender: TObject);
 var
   ConfigPath : string;
@@ -111,8 +116,11 @@ begin
     ShowMessage(Err + LineEnding +
       'Claude Code and terminal settings: Tools > Options > MCP Assistant.');
 end;
+{$POP}
 
 { Called from the menu: the bug-report bundle (ADR-022, Amendment 1), as ide_report does. }
+{ menu handlers: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure WriteMcpReport(Sender: TObject);
 var
   Path, Err : string;
@@ -123,18 +131,24 @@ begin
   else
     ShowMessage('Could not write the report: ' + Err);
 end;
+{$POP}
 
 { Called from the menu: the options dialog with only our pages.  The filter
   must name the group: without one the IDE filters by the frame's
   SupportedOptionsClass, which is nil here, and the dialog came up empty. }
+{ menu handlers: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure OpenMcpOptions(Sender: TObject);
 begin
   LazarusIDE.DoOpenIDEOptions(TMcpOptionsFrame, 'MCP Assistant Options',
     [TMcpOptionsGroup], []);
 end;
+{$POP}
 
 { Called from the menu: toggles whether assistants may install packages that
   are not installed yet (each install is still confirmed; ADR-013). }
+{ menu handlers: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure ToggleAllowPackageInstall(Sender: TObject);
 begin
   if not Assigned(McpSettings) then Exit;
@@ -142,6 +156,7 @@ begin
   McpSettings.SaveSettings;
   McpSyncAllowInstallMenu;
 end;
+{$POP}
 
 { ── Form ─────────────────────────────────────────────────────────────────── }
 
@@ -159,6 +174,8 @@ end;
 
 { ── Window creator callback ───────────────────────────────────────────────── }
 
+{ the IDE's form-creator callback: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure CreateMcpChatForm(Sender: TObject; aFormName: string;
   var AForm: TCustomForm; DoDisableAutoSizing: boolean);
 begin
@@ -169,6 +186,7 @@ begin
     AForm.Name := aFormName;
   end;
 end;
+{$POP}
 
 procedure RegisterChatPanel;
 begin
@@ -191,6 +209,8 @@ type
     procedure Run(Data: PtrInt);
   end;
 
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpAutoStarter.Run(Data: PtrInt);
 begin
   try
@@ -207,6 +227,7 @@ begin
   end;
   Free;
 end;
+{$POP}
 
 procedure Register;
 var

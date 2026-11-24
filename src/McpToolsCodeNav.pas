@@ -18,7 +18,7 @@ uses
   LazIDEIntf, SrcEditorIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeCache, CodeTree, AVL_Tree, BasicCodeTools,
   CustomCodeTool, ExtractProcTool, PascalReaderTool,
-  McpToolContext, McpToolsCodeTools;
+  McpToolContext, McpToolsCodeTools, McpUtils;
 
 const
   PKG_SCOPE =
@@ -181,7 +181,7 @@ function CollectDescendants(Code: TCodeBuffer; X, Y: Integer; const RootName: st
   Files: TStringList; Direct: Boolean; MaxResults: Integer; out Infos: TClassInfos;
   out Capped: Boolean; out Err: string): Boolean;
 var
-  Queue  : TClassInfos;
+  Queue  : TClassInfos = nil;
   Qi     : Integer;
   Tree   : TAVLTree;
   Node   : TAVLTreeNode;
@@ -192,7 +192,7 @@ begin
   Result := True;
   Capped := False;
   Err := '';
-  SetLength(Infos, 0);
+  Infos := nil;
   SetLength(Queue, 1);
   Queue[0].Name := RootName; Queue[0].Code := Code; Queue[0].X := X; Queue[0].Y := Y;
   Queue[0].Parent := ''; Queue[0].Depth := 0;
@@ -501,8 +501,9 @@ end;
   Edges are the indexes in Adj[I] (a TList of PtrInt). }
 procedure FindCycles(Count: Integer; Adj: TFPList; Groups: TJSONArray; Units: TFPList);
 var
-  Index, Low : array of Integer;
-  OnStack    : array of Boolean;
+  Index      : array of Integer = nil;
+  Low        : array of Integer = nil;
+  OnStack    : array of Boolean = nil;
   Stack      : TFPList;
   Counter    : Integer;
 
@@ -515,12 +516,12 @@ var
     Edges: TFPList;
   begin
     Index[V] := Counter; Low[V] := Counter; Inc(Counter);
-    Stack.Add(Pointer(PtrInt(V)));
+    Stack.Add(McpIntToPtr(V));
     OnStack[V] := True;
     Edges := TFPList(Adj[V]);
     for Ptr in Edges do
     begin
-      W := PtrInt(Ptr);
+      W := McpPtrToInt(Ptr);
       if Index[W] < 0 then
       begin
         Visit(W);
@@ -534,16 +535,16 @@ var
       Comp := TFPList.Create;
       try
         repeat
-          W := PtrInt(Stack[Stack.Count - 1]);
+          W := McpPtrToInt(Stack[Stack.Count - 1]);
           Stack.Delete(Stack.Count - 1);
           OnStack[W] := False;
-          Comp.Add(Pointer(PtrInt(W)));
+          Comp.Add(McpIntToPtr(W));
         until W = V;
         if Comp.Count > 1 then
         begin
           Arr := TJSONArray.Create;
           for K := Comp.Count - 1 downto 0 do
-            Arr.Add(TUnitRec(Units[PtrInt(Comp[K])]).Name);
+            Arr.Add(TUnitRec(Units[McpPtrToInt(Comp[K])]).Name);
           Groups.Add(Arr);
         end;
       finally
@@ -725,14 +726,14 @@ begin
           K := UnitIndex(Units, LowerCase(U.IntfUses[J]));
           if (K >= 0) and (K <> I) then
           begin
-            TFPList(AdjAll[I]).Add(Pointer(PtrInt(K)));
-            TFPList(AdjIntf[I]).Add(Pointer(PtrInt(K)));
+            TFPList(AdjAll[I]).Add(McpIntToPtr(K));
+            TFPList(AdjIntf[I]).Add(McpIntToPtr(K));
           end;
         end;
         for J := 0 to U.ImplUses.Count - 1 do
         begin
           K := UnitIndex(Units, LowerCase(U.ImplUses[J]));
-          if (K >= 0) and (K <> I) then TFPList(AdjAll[I]).Add(Pointer(PtrInt(K)));
+          if (K >= 0) and (K <> I) then TFPList(AdjAll[I]).Add(McpIntToPtr(K));
         end;
       end;
       MaxUnits := Ctx.Params.Get('max_units', 300);
@@ -905,7 +906,7 @@ var
   Code     : TCodeBuffer;
   Tool, Tool2 : TCodeTool;
   Files, Texts, Cand : TStringList;
-  C        : TCands;
+  C        : TCands = nil;
   I, J, MaxSym, Checked, Refs, CleanPos : Integer;
   Used, Trunc : Boolean;
   Searched : Integer;
@@ -929,7 +930,6 @@ begin
   if not CodeToolBoss.Explore(Code, Tool, False, False) then
     Exit(Fail(Ctx, 'Parse error: ' + CodeToolBoss.ErrorMessage));
   GIncludePublished := Ctx.Params.Get('include_published', False);
-  SetLength(C, 0);
   CollectCandidates(Tool, Tool.Tree.Root, '', False, False, C);
   MaxSym := Ctx.Params.Get('max_symbols', 200);
   Files := TStringList.Create;

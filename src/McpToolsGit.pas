@@ -13,7 +13,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, DateUtils, Math, Process, FileUtil, LazFileUtils,
+  Classes, SysUtils, DateUtils, Math, FileUtil, LazFileUtils,
   LazIDEIntf, SrcEditorIntf, CodeToolManager, CodeCache, LConvEncoding,
   fpjson,
   McpToolContext, McpIdeState, McpToolsCodeTools, McpConsent, McpGitRun,
@@ -254,7 +254,7 @@ end;
 function FileLineBreak(const AFileName: string; out ABom: string): string;
 var
   FS  : TFileStream;
-  Buf : string;
+  Buf : string = '';
   P   : Integer;
 begin
   Result := LineEnding;

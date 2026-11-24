@@ -34,12 +34,16 @@ type
     procedure TestSearchDirAndLimit;
     procedure TestAlsoUnknownScope;
     procedure TestAddToClassIndent;
+    procedure TestAddToClassPublishedAfterImplicit;
+    procedure TestRevertOfAMissingFile;
+    procedure TestAddUsesFileNotOpen;
+    procedure TestAddUsesMovedFromImplementation;
   end;
 
 implementation
 
 uses
-  Classes, SysUtils, FileUtil, fpjson, jsonparser;
+  Classes, SysUtils, StrUtils, FileUtil, fpjson, jsonparser;
 
 const
   HelperUnit =
@@ -330,5 +334,164 @@ begin
   end;
 end;
 
+function ReadLf(const AFile: string): string;
+var
+  SL : TStringList;
+begin
+  SL := TStringList.Create;
+  try
+    SL.LoadFromFile(AFile);
+    Result := StringReplace(SL.Text, #13#10, #10, [rfReplaceAll]);
+  finally
+    SL.Free;
+  end;
+end;
+
+function CountOf(const ASub, AText: string): Integer;
+var
+  P : Integer;
+begin
+  Result := 0;
+  P := Pos(ASub, AText);
+  while P > 0 do
+  begin
+    Inc(Result);
+    P := PosEx(ASub, AText, P + Length(ASub));
+  end;
+end;
+
+{ 1.8.2: a class with no visibility keyword at its start has an implicit published section first;
+  "published" must mean the explicit one further down, and the answer names the section. }
+procedure TTestFindDeclaration.TestAddToClassPublishedAfterImplicit;
+var
+  T, Src, Text : string;
+begin
+  Src := FDir + 'clspub.pas';
+  Save(Src,
+    'unit clspub;' + LineEnding +
+    '{$mode objfpc}{$H+}' + LineEnding +
+    'interface' + LineEnding +
+    'type' + LineEnding +
+    '  TBar = class(TObject)' + LineEnding +
+    '    procedure First;' + LineEnding +
+    '  private' + LineEnding +
+    '    FA: Integer;' + LineEnding +
+    '  published' + LineEnding +
+    '    procedure Last;' + LineEnding +
+    '  end;' + LineEnding +
+    'implementation' + LineEnding +
+    'procedure TBar.First; begin end;' + LineEnding +
+    'procedure TBar.Last; begin end;' + LineEnding +
+    'end.' + LineEnding);
+  try
+    T := CallToolText('code_add_to_class', '{"file":' + JsonStr(Src) +
+      ',"class_name":"TBar","section":"published","text":"procedure Added;","auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    CheckTrue(Pos('"section":"published"', T) > 0, 'the answer names the section: ' + T);
+    Text := ReadLf(Src);
+    CheckTrue(Pos('    procedure Last;'#10'    procedure Added;'#10, Text) > 0,
+      'in the explicit published section, after its last member: ' + Text);
+    CheckTrue(Pos('    procedure First;'#10'  private', Text) > 0, 'the implicit section is unchanged: ' + Text);
+  finally
+    CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
+    CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
+  end;
+end;
+
+{ 1.8.2: a file deleted behind an open editor: the IDE's revert opened a modal "Revert failed" box
+  that blocked every tool until a person clicked it.  Now a plain error, and no dialog. }
+procedure TTestFindDeclaration.TestRevertOfAMissingFile;
+var
+  T, Src : string;
+begin
+  Src := FDir + 'gone.pas';
+  Save(Src, 'unit gone;' + LineEnding + 'interface' + LineEnding + 'implementation' + LineEnding + 'end.' + LineEnding);
+  try
+    T := CallToolText('editor_open', '{"file":' + JsonStr(Src) + '}', []);
+    CheckFalse(IsError(T), T);
+    CheckTrue(DeleteFile(Src), 'the file is deleted behind the editor');
+    T := CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
+    CheckTrue(IsError(T), 'an error, not a success: ' + T);
+    CheckTrue(Pos('no longer on disk', T) > 0, T);
+    T := CallToolText('ide_get_open_dialogs', '{}', []);
+    CheckTrue(Pos('"count":0', T) > 0, 'no dialog was opened: ' + T);
+  finally
+    CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
+  end;
+end;
+
+{ 1.8.2: a file that is not open in the editor: the tool opened it, then inserted the text of an
+  out parameter that had been cleared, so it said "added" and changed nothing. }
+procedure TTestFindDeclaration.TestAddUsesFileNotOpen;
+var
+  T, Src, Text : string;
+begin
+  Src := FDir + 'usesopen.pas';
+  Save(Src,
+    'unit usesopen;' + LineEnding +
+    '{$mode objfpc}{$H+}' + LineEnding +
+    'interface' + LineEnding +
+    'uses' + LineEnding +
+    '  Classes;' + LineEnding +
+    'implementation' + LineEnding +
+    'uses' + LineEnding +
+    '  SysUtils;' + LineEnding +
+    'end.' + LineEnding);
+  try
+    T := CallToolText('code_add_uses', '{"file":' + JsonStr(Src) +
+      ',"unit_name":"StrUtils","in_interface":true,"auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    Text := ReadLf(Src);
+    CheckTrue(Pos('StrUtils', Text) > 0, 'the unit is in the file: ' + Text);
+    T := CallToolText('code_add_uses', '{"file":' + JsonStr(Src) +
+      ',"unit_name":"Contnrs","in_interface":false,"auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    Text := ReadLf(Src);
+    CheckTrue(Pos('Contnrs', Text) > 0, 'and the implementation one: ' + Text);
+    CheckEquals(1, CountOf('interface', Text), 'the file is otherwise as it was: ' + Text);
+  finally
+    CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
+    CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
+  end;
+end;
+
+{ 1.8.2: a unit that is in the implementation uses and is asked for the interface is MOVED by
+  CodeTools (an insertion and a deletion); the tool took everything between them for inserted
+  text and pasted it a second time. }
+procedure TTestFindDeclaration.TestAddUsesMovedFromImplementation;
+var
+  T, Src, Text : string;
+begin
+  Src := FDir + 'usesmove.pas';
+  Save(Src,
+    'unit usesmove;' + LineEnding +
+    '{$mode objfpc}{$H+}' + LineEnding +
+    'interface' + LineEnding +
+    'uses' + LineEnding +
+    '  Classes;' + LineEnding +
+    'type' + LineEnding +
+    '  TFoo = class(TObject)' + LineEnding +
+    '    procedure Run;' + LineEnding +
+    '  end;' + LineEnding +
+    'implementation' + LineEnding +
+    'uses' + LineEnding +
+    '  SysUtils, StrUtils;' + LineEnding +
+    'procedure TFoo.Run; begin end;' + LineEnding +
+    'end.' + LineEnding);
+  try
+    T := CallToolText('code_add_uses', '{"file":' + JsonStr(Src) +
+      ',"unit_name":"StrUtils","in_interface":true,"auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    Text := ReadLf(Src);
+    CheckEquals(1, CountOf('TFoo = class', Text), 'the class is declared once: ' + Text);
+    CheckEquals(1, CountOf('implementation', Text), 'one implementation part: ' + Text);
+    CheckEquals(1, CountOf('StrUtils', Text), 'the unit is named once: ' + Text);
+    CheckTrue(Pos('StrUtils', Text) < Pos('implementation', Text), 'and it is in the interface: ' + Text);
+    CheckTrue(Pos('SysUtils', Text) > Pos('implementation', Text), 'SysUtils stays where it was: ' + Text);
+  finally
+    CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
+    CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
+  end;
+end;
 
 end.

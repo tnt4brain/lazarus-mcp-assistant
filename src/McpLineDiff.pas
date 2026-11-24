@@ -105,7 +105,7 @@ var
   procedure TableMatch(ALo, AHi, BLo, BHi: Integer);
   var
     N, M, I, J : Integer;
-    L          : array of Integer;
+    L          : array of Integer = nil;
 
     function Cell(AI, AJ: Integer): Integer; inline;
     begin
@@ -149,8 +149,9 @@ var
     InA, InB      : TStringList;
     I, J, X, Lo, Hi, Mid, Len : Integer;
     CandA, CandB  : array of Integer;
-    Tails, Prev   : array of Integer;
-    Chain         : array of Integer;
+    Tails         : array of Integer = nil;
+    Prev          : array of Integer = nil;
+    Chain         : array of Integer = nil;
     PrevA, PrevB  : Integer;
   begin
     InA := LineIndex(A, ALo, AHi);

@@ -32,7 +32,7 @@ type
       by initialize to the session id to return in Mcp-Session-Id. }
     function  HandleRPC(const Body, AClientId: string; out ANewSession: string): string;
     function  HandleInitialize(ID: TJSONData; Params: TJSONObject;
-                               const AClientId: string; out ANewSession: string): string;
+                               out ANewSession: string): string;
     function  HandlePing(ID: TJSONData): string;
     function  HandleToolsList(ID: TJSONData): string;
     function  HandleToolsCall(ID: TJSONData; Params: TJSONObject;
@@ -129,6 +129,8 @@ type
     procedure AddAsync(Data: PtrInt);
   end;
 
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TToolPaneLine.AddAsync(Data: PtrInt);
 begin
   try
@@ -137,6 +139,7 @@ begin
     Free;
   end;
 end;
+{$POP}
 
 procedure QueuePaneLine(const ATool: string; ADurationMs: Int64; ASuccess: Boolean;
   const AError: string);
@@ -185,7 +188,7 @@ var
 begin
   S := fpSocket(AF_INET, SOCK_STREAM, 0);
   if S < 0 then Exit;
-  FillChar(Addr, SizeOf(Addr), 0);
+  Addr := Default(TInetSockAddr);
   Addr.sin_family := AF_INET;
   Addr.sin_port   := Swap16(APort); // host → network
   Addr.sin_addr   := StrToNetAddr(AHost);
@@ -204,9 +207,13 @@ function SetHandleInformation(hObject: PtrUInt; dwMask, dwFlags: DWord): LongBoo
   request, and waits forever for a reply nobody will send. }
 procedure MakeSocketNonInheritable(ASocket: LongInt);
 const
+  {$IFDEF MSWINDOWS}
   HANDLE_FLAG_INHERIT = 1;
+  {$ENDIF}
+  {$IFDEF UNIX}
   FD_CLOEXEC_FLAG     = 1;  { FD_CLOEXEC; 1 on Linux and the BSDs, but only the
                               BSD RTL declares it }
+  {$ENDIF}
 begin
   if ASocket < 0 then Exit;
   {$IFDEF MSWINDOWS}
@@ -340,6 +347,8 @@ begin
   end;
 end;
 
+{ the HTTP server's request event: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpServerThread.HandleRequest(Sender: TObject;
   var ARequest  : TFPHTTPConnectionRequest;
   var AResponse : TFPHTTPConnectionResponse);
@@ -455,6 +464,7 @@ begin
     AResponse.Content     := ResponseBody;
   end;
 end;
+{$POP}
 
 { ── JSON-RPC dispatch ─────────────────────────────────────────────────────── }
 
@@ -493,7 +503,7 @@ begin
     Method := Req.Get('method', '');
     case Method of
       'initialize':
-        Result := HandleInitialize(ID, Params, AClientId, ANewSession);
+        Result := HandleInitialize(ID, Params, ANewSession);
       'ping':
         Result := HandlePing(ID);
       'tools/list':
@@ -608,6 +618,8 @@ begin
   end;
 end;
 
+{ QueueAsyncCall fixes the signature of these two; Data is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpMainCall.LogAndFreeAsync(Data: PtrInt);
 begin
   LogAndFree;
@@ -617,6 +629,7 @@ procedure TMcpMainCall.RunAsync(Data: PtrInt);
 begin
   RunQueued;
 end;
+{$POP}
 
 procedure TMcpMainCall.RunQueued;
 var
@@ -871,7 +884,7 @@ begin
 end;
 
 function TMcpServerThread.HandleInitialize(ID: TJSONData;
-  Params: TJSONObject; const AClientId: string; out ANewSession: string): string;
+  Params: TJSONObject; out ANewSession: string): string;
 var
   Res      : TJSONObject;
   Caps     : TJSONObject;
@@ -2040,6 +2053,8 @@ type
     procedure OnIDEClose(Sender: TObject);
   end;
 
+{ the IDE's close event: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpIDEHook.OnIDEClose(Sender: TObject);
 begin
   McpShutdownDebugGuard;
@@ -2047,6 +2062,7 @@ begin
   { the tokens' last-used times are only in memory until now }
   if Assigned(McpSettings) then McpSettings.SaveSettings;
 end;
+{$POP}
 
 var
   IDEHook: TMcpIDEHook = nil;

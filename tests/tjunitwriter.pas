@@ -156,6 +156,8 @@ begin
   FSuiteStart := Now;
 end;
 
+{ ITestListener: the signatures are fixed, the suite is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TJUnitResultsWriter.EndTestSuite(ATestSuite: TTestSuite);
 begin
   if FDepth > 1 then
@@ -165,6 +167,7 @@ begin
   end;
   Dec(FDepth);
 end;
+{$POP}
 
 procedure TJUnitResultsWriter.StartTest(ATest: TTest);
 begin
@@ -185,6 +188,8 @@ begin
   FTestStart := Now;
 end;
 
+{ ITestListener: the signatures are fixed, the test is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TJUnitResultsWriter.EndTest(ATest: TTest);
 var
   ElapsedMs : Int64;
@@ -207,7 +212,10 @@ begin
   Inc(FSuites[FCurSuite].Count);
   FCurCase := -1;
 end;
+{$POP}
 
+{ ITestListener: the signatures are fixed, the test is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TJUnitResultsWriter.AddFailure(ATest: TTest; AFailure: TTestFailure);
 begin
   FFailed  := True;
@@ -221,6 +229,7 @@ begin
   FIsError := True;
   FFailMsg := AError.ExceptionMessage;
 end;
+{$POP}
 
 { ── XML output ──────────────────────────────────────────────────────────── }
 

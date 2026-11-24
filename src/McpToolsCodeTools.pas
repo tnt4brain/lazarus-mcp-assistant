@@ -353,6 +353,7 @@ var
   Node     : TCodeTreeNode;
   ClsNode  : TCodeTreeNode;
   SectNode : TCodeTreeNode;
+  Cand     : TCodeTreeNode;
   SectDesc : TCodeTreeNodeDesc;
   C        : Integer;
 begin
@@ -378,9 +379,15 @@ begin
         ClsNode := ClsNode.NextBrother;
       if Assigned(ClsNode) then
       begin
-        SectNode := ClsNode.FirstChild;
-        while Assigned(SectNode) and (SectNode.Desc <> SectDesc) do
-          SectNode := SectNode.NextBrother;
+        { The last section of that visibility: a class with no visibility keyword at its start has
+          an implicit published section FIRST, and an explicit "published" comes later (1.8.2). }
+        SectNode := nil;
+        Cand := ClsNode.FirstChild;
+        while Assigned(Cand) do
+        begin
+          if Cand.Desc = SectDesc then SectNode := Cand;
+          Cand := Cand.NextBrother;
+        end;
         if Assigned(SectNode) then
         begin
           if Assigned(SectNode.NextBrother) then
@@ -922,7 +929,7 @@ end;
 function FileHasWord(const AFile, LowIdent: string): Boolean;
 var
   Stream : TFileStream;
-  Text   : string;
+  Text   : string = '';
   P, L   : Integer;
 begin
   Result := False;
@@ -1087,14 +1094,13 @@ end;
 function BodyStatements(Tool: TCodeTool; CodeBuf: TCodeBuffer;
   BeginNode: TCodeTreeNode): TStmtNode;
 var
-  Toks : TStmtTokens;
+  Toks : TStmtTokens = nil;
   N    : Integer;
   XY   : TCodeXYPosition;
   Txt  : string;
   Ch   : Char;
   I    : Integer;
 begin
-  SetLength(Toks, 0);
   N := 0;
   Tool.MoveCursorToCleanPos(BeginNode.StartPos);
   repeat
@@ -1766,8 +1772,9 @@ begin
       begin
         Ctx.Error := True; Ctx.Result := 'ApplyChanges failed'; Exit;
       end;
-      { Diff OrigSource vs NewSource to find the single insertion point.
-        CodeTools always produces one contiguous insertion for this operation. }
+      { Diff OrigSource vs NewSource to find the one changed range: the common start and the common
+        end are left alone.  Usually an insertion; a unit that moves between the two uses clauses
+        also deletes, which the range below covers. }
       Snippet := CodeBuf.Source;  { NewSource }
       I := 1;
       while (I <= Length(PasName)) and (I <= Length(Snippet))
@@ -1783,12 +1790,19 @@ begin
       { Convert absolute position I in PasName to line/col }
       CodeBuf.Source := PasName;  { restore so AbsoluteToLineCol is consistent }
       CodeBuf.AbsoluteToLineCol(I, NewY, NewX);
+      { The old text CodeTools replaced: empty for a plain insertion.  It is not empty when the
+        unit was already in the other uses clause and CodeTools moved it (an insertion in one place,
+        a deletion in the other): then everything between the two is part of the change, and the
+        editor must replace that range, not insert the whole span a second time (1.8.2). }
+      CodeBuf.AbsoluteToLineCol(Length(PasName) - J + 1, DeclPt.Y, DeclPt.X);
       { Open editor if not already open }
       if not Assigned(Ed) then
       begin
-        if not McpCheckFileToOpen(FilePath, NewName) then
+        { its message is an out parameter, cleared on entry: not NewName, which holds the
+          text to insert (code_add_uses) or the section (code_add_to_class) (1.8.2) }
+        if not McpCheckFileToOpen(FilePath, Why) then
         begin
-          Ctx.Error := True; Ctx.Result := NewName; Exit;
+          Ctx.Error := True; Ctx.Result := Why; Exit;
         end;
         if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
              [ofOnlyIfExists, ofRegularFile]) <> mrOK then
@@ -1797,8 +1811,8 @@ begin
         end;
         Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(FilePath);
       end;
-      { Insert into editor buffer — lands on undo stack, no disk write }
-      Ed.ReplaceText(Point(NewX, NewY), Point(NewX, NewY), NewName);
+      { Replace the changed range in the editor buffer — lands on undo stack, no disk write }
+      Ed.ReplaceText(Point(NewX, NewY), DeclPt, NewName);
       if AutoSave then LazarusIDE.DoSaveEditorFile(FilePath, []);
       Obj := TJSONObject.Create;
       try
@@ -1854,9 +1868,11 @@ begin
       end;
       if not Assigned(Ed) then
       begin
-        if not McpCheckFileToOpen(FilePath, NewName) then
+        { its message is an out parameter, cleared on entry: not NewName, which holds the
+          text to insert (code_add_uses) or the section (code_add_to_class) (1.8.2) }
+        if not McpCheckFileToOpen(FilePath, Why) then
         begin
-          Ctx.Error := True; Ctx.Result := NewName; Exit;
+          Ctx.Error := True; Ctx.Result := Why; Exit;
         end;
         if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
              [ofOnlyIfExists, ofRegularFile]) <> mrOK then
@@ -1924,9 +1940,11 @@ begin
       end;
       if not Assigned(Ed) then
       begin
-        if not McpCheckFileToOpen(FilePath, NewName) then
+        { its message is an out parameter, cleared on entry: not NewName, which holds the
+          text to insert (code_add_uses) or the section (code_add_to_class) (1.8.2) }
+        if not McpCheckFileToOpen(FilePath, Why) then
         begin
-          Ctx.Error := True; Ctx.Result := NewName; Exit;
+          Ctx.Error := True; Ctx.Result := Why; Exit;
         end;
         if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
              [ofOnlyIfExists, ofRegularFile]) <> mrOK then
@@ -1994,9 +2012,11 @@ begin
       end;
       if not Assigned(Ed) then
       begin
-        if not McpCheckFileToOpen(FilePath, NewName) then
+        { its message is an out parameter, cleared on entry: not NewName, which holds the
+          text to insert (code_add_uses) or the section (code_add_to_class) (1.8.2) }
+        if not McpCheckFileToOpen(FilePath, Why) then
         begin
-          Ctx.Error := True; Ctx.Result := NewName; Exit;
+          Ctx.Error := True; Ctx.Result := Why; Exit;
         end;
         if LazarusIDE.DoOpenEditorFile(FilePath, -1, -1,
              [ofOnlyIfExists, ofRegularFile]) <> mrOK then

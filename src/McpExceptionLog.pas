@@ -121,12 +121,15 @@ begin
   end;
 end;
 
+{ the application's exception event: the signature is fixed, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
 procedure TExcLogger.OnException(Sender: TObject; E: Exception);
 begin
   McpLogException(E);
   { what LCL does when no handler is registered }
   Application.ShowException(E);
 end;
+{$POP}
 
 procedure McpLogException(E: Exception);
 var
