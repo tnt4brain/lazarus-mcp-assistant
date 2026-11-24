@@ -208,7 +208,7 @@ debugger call runs at a time. See [ADR-012](adr/0012-multiple-clients.md).
 | `package_save` | Write unsaved packages to disk: the named one, or all modified ones; refused, naming the cause, when the IDE would have to ask a question |
 | `package_set_info` | Version, description, author and/or license of a `.lpk`, as on the package options' Package page; returns old and new values |
 | `package_search_online` | Search the online package repository (Online Package Manager catalog, read locally): description, license, compatibility, install state, and the `.lpk` path if OPM already downloaded it |
-| `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS in-process or through curl; plain HTTP only when neither works) |
+| `package_download` | Download a package from the online repository into the Online Package Manager's folder: MD5 checked against the catalog, archive checked before extracting; installs nothing (HTTPS in-process or through curl; refused when neither works, never plain HTTP) |
 | `package_compile` | Compile a package (`package_name` or `.lpk`): with the IDE's compiler when it is open there (errors as data, also in the Messages window), else `lazbuild` — a smoke test before `ide_rebuild` |
 | `package_install` / `package_uninstall` | Install or uninstall, then rebuild and restart the IDE, as `ide_rebuild` does |
 

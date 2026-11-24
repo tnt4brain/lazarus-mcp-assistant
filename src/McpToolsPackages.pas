@@ -618,8 +618,8 @@ begin
   end;
 end;
 
-{ Fetch AUrl into AStream; HTTPS first, plain HTTP only when OpenSSL is not
-  available (the IDE on Windows often has no OpenSSL DLLs). }
+{ Fetch AUrl into AStream over HTTPS: in-process, and through the curl executable
+  when the IDE has no OpenSSL (on Windows it often has none). Never plain HTTP. }
 function FetchArchive(const AHttpsUrl: string; AStream: TMemoryStream;
   out AUrl, ATransport, AErr: string): Boolean;
 
@@ -660,9 +660,12 @@ begin
   ATransport := 'https (curl)';
   if CurlGet(AUrl, AStream, AErr) then
     Exit(True);
-  AUrl := 'http://' + Copy(AHttpsUrl, Length('https://') + 1, MaxInt);
-  ATransport := 'http';
-  Result := Get(AUrl, AErr);
+  { never downgrade to plain HTTP: the server answers HTTPS (checked 2026-11-22),
+    and an archive that comes unencrypted could be swapped together with its MD5 }
+  AErr := 'No TLS available: this IDE has no OpenSSL libraries and curl failed (' + AErr +
+    '). Install the OpenSSL DLLs next to the IDE or put curl on the PATH, or install ' +
+    'the package through the IDE''s Online Package Manager. Nothing was downloaded over plain HTTP.';
+  Result := False;
 end;
 
 procedure TOpmDownload.Run;
@@ -795,9 +798,6 @@ begin
       Obj.Add('package', Job.PkgName);
       Obj.Add('url', Job.Url);
       Obj.Add('transport', Job.Transport);
-      if Job.Transport = 'http' then
-        Obj.Add('transport_note', 'HTTPS was not available (no OpenSSL in the IDE, no curl); the ' +
-          'archive came unencrypted and was checked against the catalog''s MD5 only');
       Obj.Add('md5_verified', True);
       Obj.Add('directory', Job.Target);
       Arr := TJSONArray.Create;
