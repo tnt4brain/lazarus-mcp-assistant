@@ -346,6 +346,8 @@ type
     procedure Run(Data: PtrInt);
   end;
 
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpDeferredReload.Run(Data: PtrInt);
 begin
   try
@@ -354,6 +356,7 @@ begin
     Free;
   end;
 end;
+{$POP}
 
 { The text a dialog shows: its labels, check boxes and the lines of its lists (the files
   of "Some files have changed on disk"), a few dozen lines at most. }
@@ -468,6 +471,8 @@ type
     procedure Apply(Data: PtrInt);
   end;
 
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpAutoAnswer.Apply(Data: PtrInt);
 var
   Btn : TCustomButton;
@@ -491,6 +496,7 @@ begin
   end;
   Free;
 end;
+{$POP}
 
 procedure TMcpIdeHookManager.AutoAnswer(AForm: TCustomForm; AResult: TModalResult);
 var
@@ -505,15 +511,14 @@ begin
 end;
 
 procedure TMcpIdeHookManager.OnFormRemoved(Sender: TObject; Form: TCustomForm);
-var
-  Reload: TMcpDeferredReload;
 begin
   McpUntrackModalForm(Form);
   if Assigned(Form) and Form.ClassNameIs('TDiskDiffsDlg') then
   begin
-    { the IDE has done its own reload; now the files it left alone go to the review }
-    Reload := TMcpDeferredReload.Create;
-    Application.QueueAsyncCall(@Reload.Run, 0);
+    { the IDE has done its own reload; now the files it left alone go to the review.  The
+      object frees itself when it has run. }
+    with TMcpDeferredReload.Create do
+      Application.QueueAsyncCall(@Run, 0);
   end;
   if Assigned(Form) and Form.ClassNameIs('TIDEExceptionDlg') then
   begin

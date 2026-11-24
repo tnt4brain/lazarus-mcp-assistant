@@ -7,6 +7,8 @@ unit McpOptions;
   state (token, port, last config path) is not shown. }
 
 {$mode objfpc}{$H+}
+{$HINTS OFF}  { the overrides and handlers here have the signatures the IDE's options editor and
+                the LCL fix, so their parameters go unused; a WARN 5024 switch had no effect in this unit }
 
 interface
 

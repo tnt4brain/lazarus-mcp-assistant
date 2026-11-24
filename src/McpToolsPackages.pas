@@ -578,6 +578,7 @@ begin
     P.Parameters.AddStrings(['-fsSL', '--max-time', '120', '--connect-timeout', '15',
                              '-o', Tmp, AUrl]);
     P.Options := [poUsePipes, poNoConsole];
+    Buf[0] := 0;
     try
       P.Execute;
       while P.Running or (P.Stderr.NumBytesAvailable > 0) do

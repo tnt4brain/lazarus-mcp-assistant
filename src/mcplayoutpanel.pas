@@ -191,6 +191,8 @@ type
     procedure Run(Data: PtrInt);
   end;
 
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMcpAutoStarter.Run(Data: PtrInt);
 begin
   try
@@ -207,6 +209,7 @@ begin
   end;
   Free;
 end;
+{$POP}
 
 procedure Register;
 var

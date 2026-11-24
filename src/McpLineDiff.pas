@@ -115,6 +115,7 @@ var
   begin
     N := AHi - ALo;
     M := BHi - BLo;
+    L := nil;
     SetLength(L, (N + 1) * (M + 1));
     for I := N - 1 downto 0 do
       for J := M - 1 downto 0 do
@@ -174,6 +175,8 @@ var
     Result := Length(CandA) > 0;
     if not Result then Exit;
     { longest increasing run of CandB (patience sorting) }
+    Tails := nil;
+    Prev  := nil;
     SetLength(Tails, Length(CandB));
     SetLength(Prev, Length(CandB));
     Len := 0;
@@ -190,6 +193,7 @@ var
       Tails[Lo] := X;
       if Lo = Len then Inc(Len);
     end;
+    Chain := nil;
     SetLength(Chain, Len);
     X := Tails[Len - 1];
     for I := Len - 1 downto 0 do

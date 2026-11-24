@@ -195,6 +195,8 @@ begin
   DMax := N + M;
   if DMax > McpDiffMaxEdits then DMax := McpDiffMaxEdits;
   Off := DMax + 1;
+  V     := nil;
+  Trace := nil;
   SetLength(V, 2 * DMax + 3);
   SetLength(Trace, DMax + 1);
   V[Off + 1] := 0;
@@ -275,6 +277,8 @@ begin
   if (N = 0) and (M = 0) then Exit;
   if (N = 0) or (M = 0) then
     Exit(OneHunk(Pre, N, Pre, M));
+  ADel := nil;
+  BIns := nil;
   SetLength(ADel, N);
   SetLength(BIns, M);
   for I := 0 to N - 1 do ADel[I] := False;
@@ -589,6 +593,8 @@ begin
   Result.RK := nil;
   AL := AlignRows(Middle, Editor);       { Left: the result's side, Right: the editor's }
   AR := AlignRows(Middle, Disk);
+  MapL := nil;
+  MapR := nil;
   SetLength(MapL, Length(AL.Left));
   SetLength(MapR, Length(AR.Left));
   Cnt := 0;

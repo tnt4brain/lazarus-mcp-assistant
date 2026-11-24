@@ -25,6 +25,10 @@ uses LCLVersion;
 
 implementation
 
+{ Warning 5079 (experimental unit) is reported at the end of the uses clause, so it is switched
+  off around the whole clause: the one experimental unit is IdeDebuggerWatchValueIntf, used on
+  purpose for DefaultWatchDisplayFormat. }
+{$PUSH}{$WARN 5079 OFF}
 uses
   Classes, SysUtils, Math, Forms, Controls, LazLogger,
   LazIDEIntf, LazFileUtils, SrcEditorIntf, ProjectIntf, CompOptsIntf,
@@ -34,7 +38,7 @@ uses
   Debugger,                  { TIDEBreakPoint, TIDEBreakPoints }
   IdeDebuggerBase,           { TWatchValue / TLocalsValue .ResultData }
   IdeDebuggerWatchResult,    { TWatchResultData }
-  IdeDebuggerWatchValueIntf, { DefaultWatchDisplayFormat }
+  IdeDebuggerWatchValueIntf, { DefaultWatchDisplayFormat; the IDE marks it "experimental" }
   IdeDebuggerWatchResPrinter,{ TWatchResultPrinter }
   LazDebuggerIntfBaseTypes,  { TDBGState; last, so that it wins over the deprecated copies above }
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
@@ -45,6 +49,7 @@ uses
   McpIdeState,               { McpDbgStateStr }
   McpIdeListeners,           { GMcpExceptionDialogHwnd }
   McpToolContext;
+{$POP}
 
 
 { ── Sync helper class ────────────────────────────────────────────────────── }
@@ -214,11 +219,14 @@ begin
     DebugBoss.DoStopProject;
 end;
 
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TDbgSyncHelper.StopLater(Data: PtrInt);
 begin
   if Assigned(DebugBoss) then
     DebugBoss.DoStopProject;
 end;
+{$POP}
 
 { Render a watch/local result the way the IDE's hints and Watches window do.
   The plain Value string is empty for structured values (objects, records). }
@@ -1271,7 +1279,7 @@ begin
   for I := Low(Plain) to High(Plain) do
     if N = Plain[I] then Exit(True);
   { r8..r15 and ARM r0..r15, ARM64 x0..x30 }
-  Result := (Length(N) in [2, 3]) and (N[1] in ['r', 'x']) and
+  Result := (Length(N) >= 2) and (Length(N) <= 3) and ((N[1] = 'r') or (N[1] = 'x')) and
             (StrToIntDef(Copy(N, 2, MaxInt), -1) >= 0);
 end;
 
@@ -1344,7 +1352,9 @@ var
   GCmdExcSeq : Integer = -1;  { exception sequence when the last command was issued }
   GHitsBefore : Integer = 0;    { breakpoint hits when the last command was issued }
   GLaunchFailed : Boolean = False;   { the last PollForPause never saw a session start }
+  {$IFDEF UNIX}
   GAttachedPid  : Integer = 0;       { the process debug_attach attached to, until stopped or detached }
+  {$ENDIF}
 
 { A session the user started may be waiting in the exception dialog.  Answer
   it with Break and wait (up to 5 s) until the program is paused at the
@@ -1572,7 +1582,9 @@ begin
             if GAttachedPid > 0 then fpkill(GAttachedPid, SIGKILL);
             {$ENDIF}
           end;
+          {$IFDEF UNIX}
           GAttachedPid := 0;
+          {$ENDIF}
         end;
       end;
       Ctx.Result := MakeStateJSON(dsStop, '', 0, '');
@@ -2089,7 +2101,9 @@ begin
             'ptrace must be allowed for the IDE.';
           Exit;
         end;
+        {$IFDEF UNIX}
         GAttachedPid := StrToIntDef(Value, 0);
+        {$ENDIF}
         if S = dsPause then MoveToMainThread;
         Finish('attached');
         if S = dsPause then AddThreadNote('Attaching');

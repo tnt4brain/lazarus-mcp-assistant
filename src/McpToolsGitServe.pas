@@ -561,6 +561,7 @@ begin
       AWhy := 'read-tree: ' + Trim(Text);
       Exit;
     end;
+    AddArgs := nil;
     SetLength(AddArgs, ASpecs.Count + 2);
     AddArgs[0] := 'add';
     AddArgs[1] := '--';
@@ -630,6 +631,7 @@ var
   L       : TLink;
   Obj, Cmds : TJSONObject;
 begin
+  L := Default(TLink);
   Peer := StrParam(Ctx, 'peer');
   Linked := False;
   if Peer = '' then

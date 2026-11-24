@@ -51,7 +51,7 @@ implementation
 uses
   Classes, SysUtils, SyncObjs, TypInfo, System.UITypes, Forms
   {$IFDEF WINDOWS}, Windows{$ENDIF},
-  LCLStrConsts, LazMsgWorker;
+  LCLStrConsts, McpUtils, LazMsgWorker;
 
 type
   TOpenDialog_ = record
@@ -300,7 +300,7 @@ var
   C : PNativeCollect;
   T : string;
 begin
-  C := PNativeCollect(ALParam);
+  C := PNativeCollect(McpIntToPtr(ALParam));
   T := WindowText(AWnd);
   if T <> '' then
     if WindowClass(AWnd) = 'Button' then
@@ -325,14 +325,14 @@ var
   Cls : string;
 begin
   Result := True;
-  C := PNativeCollect(ALParam);
+  C := PNativeCollect(McpIntToPtr(ALParam));
   if not IsWindowVisible(AWnd) then Exit;
   Cls := WindowClass(AWnd);
   if Cls <> '#32770' then Exit;   { the dialog box window class }
   Col.Dialogs := nil;
   Col.Texts   := '';
   Col.Buttons := '';
-  EnumChildWindows(AWnd, @EnumChildProc, LPARAM(@Col));
+  EnumChildWindows(AWnd, @EnumChildProc, McpPtrToInt(@Col));
   O := TJSONObject.Create;
   O.Add('caption', WindowText(AWnd));
   O.Add('text',    Col.Texts);
@@ -460,7 +460,7 @@ begin
   {$IFDEF WINDOWS}
   Col.Dialogs := TJSONArray.Create;
   try
-    EnumThreadWindows(MainThreadID, @EnumThreadProc, LPARAM(@Col));
+    EnumThreadWindows(MainThreadID, @EnumThreadProc, McpPtrToInt(@Col));
     for I := 0 to Col.Dialogs.Count - 1 do
     begin
       O := TJSONObject(Col.Dialogs[I]);

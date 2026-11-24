@@ -13,7 +13,7 @@ interface
 implementation
 
 uses
-  Classes, SysUtils, DateUtils, Math, Process, FileUtil, LazFileUtils,
+  Classes, SysUtils, DateUtils, Math, FileUtil, LazFileUtils,
   LazIDEIntf, SrcEditorIntf, CodeToolManager, CodeCache, LConvEncoding,
   fpjson,
   McpToolContext, McpIdeState, McpToolsCodeTools, McpConsent, McpGitRun,
@@ -262,6 +262,7 @@ begin
   try
     FS := TFileStream.Create(AFileName, fmOpenRead or fmShareDenyNone);
     try
+      Buf := '';
       SetLength(Buf, Min(FS.Size, 65536));
       if Buf <> '' then
         SetLength(Buf, FS.Read(Buf[1], Length(Buf)));

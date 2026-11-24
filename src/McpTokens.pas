@@ -50,7 +50,7 @@ type
 
 { Random bytes from the operating system (BCryptGenRandom, /dev/urandom);
   raises if there are none: a weak token is worse than no token. }
-procedure McpRandomBytes(var ABuf; ALen: Integer);
+procedure McpRandomBytes(out ABuf; ALen: Integer);
 
 { 64 hex characters (the primary token). }
 function McpNewPrimaryToken: string;
@@ -90,7 +90,7 @@ uses
 function BCryptGenRandom(hAlgorithm: Pointer; pbBuffer: PByte; cbBuffer: ULONG;
   dwFlags: ULONG): LongInt; stdcall; external 'bcrypt.dll';
 
-procedure McpRandomBytes(var ABuf; ALen: Integer);
+procedure McpRandomBytes(out ABuf; ALen: Integer);
 const
   BCRYPT_USE_SYSTEM_PREFERRED_RNG = 2;
 begin
@@ -99,7 +99,7 @@ begin
     raise Exception.Create('The system random number generator failed');
 end;
 {$ELSE}
-procedure McpRandomBytes(var ABuf; ALen: Integer);
+procedure McpRandomBytes(out ABuf; ALen: Integer);
 var
   F    : THandle;
   Got  : Integer;
@@ -132,6 +132,7 @@ const
 var
   I : Integer;
 begin
+  Result := '';
   SetLength(Result, Length(ABytes) * 2);
   for I := 0 to High(ABytes) do
   begin

@@ -651,7 +651,7 @@ begin
           SyncPos := PosEx(SyncOldStr, SyncText, SyncPos);
           if SyncPos > 0 then
           begin
-            SyncMatchPositions.Add(Pointer(PtrInt(SyncPos)));
+            SyncMatchPositions.Add(McpIntToPtr(SyncPos));
             SyncPos := SyncPos + Length(SyncOldStr);
           end;
         until SyncPos = 0;
@@ -670,7 +670,7 @@ begin
         end;
         for I := SyncMatchPositions.Count - 1 downto 0 do
         begin
-          SyncPos := PtrInt(SyncMatchPositions[I]);
+          SyncPos := McpPtrToInt(SyncMatchPositions[I]);
           McpOffsetToLineCol(SyncText, SyncPos, SyncMatchLine, SyncMatchCol);
           McpOffsetToLineCol(SyncText, SyncPos + Length(SyncOldStr), SyncEndLine, SyncEndCol);
           Ed.ReplaceText(Point(SyncMatchCol, SyncMatchLine),
@@ -778,6 +778,15 @@ begin
           Ctx.Error := True; Ctx.Result := 'No active editor'; Exit;
         end;
         SyncFilePath := Ed.FileName;
+      end;
+      { A reload needs the file: for a missing one the IDE opens a modal "Revert failed" box that
+        blocks every tool until a person answers it (1.8.2).  The editor is left as it is. }
+      if not FileExists(SyncFilePath) then
+      begin
+        Ctx.Error := True;
+        Ctx.Result := 'The file is no longer on disk, so there is nothing to reload: ' + SyncFilePath +
+          '. The editor keeps its text; editor_save writes it back, editor_close discards it.';
+        Exit;
       end;
       if LazarusIDE.DoRevertEditorFile(SyncFilePath) <> mrOK then
       begin

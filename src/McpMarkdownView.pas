@@ -54,7 +54,7 @@ function McpLoadMarkdownPicture(const AUrl, ABaseDir: string; AImages: TStrings;
 implementation
 
 uses
-  Controls, ComCtrls, ExtCtrls, IpHtml, IpHtmlNodes, IpFileBroker,
+  Controls, ComCtrls, ExtCtrls, FPImage, IpHtml, IpHtmlNodes, IpFileBroker,
   LCLIntf, LazFileUtils, base64, IDEWindowIntf, Dialogs, SrcEditorIntf, IDEExternToolIntf,
   SynEdit, SynHighlighterPas, IDEOptEditorIntf, McpMarkdownHighlight,
   McpMarkdown, McpImageInfo, McpMessages, McpIdeState
@@ -66,6 +66,21 @@ const
   MIN_PAGE_SIZE = 40;      { pixels: a smaller tab is a collapsed dock, nothing is laid out in it }
 
 type
+  { LCL's TGIFImage leaves GetWriterClass abstract (there is no GIF writer).  The viewer only
+    reads pictures, so a class that says "no writer" is all it needs. }
+  TMdGifImage = class(TGIFImage)
+  public
+    class function GetWriterClass: TFPCustomImageWriterClass; override;
+  end;
+
+  { IPro's data provider leaves DoGetStream abstract.  The viewer answers pictures through
+    OnGetImage and links through OnHotClick, so no page is ever fetched here: say "no stream"
+    instead of raising an abstract error should IPro ask. }
+  TMdDataProvider = class(TIpHtmlDataProvider)
+  public
+    function DoGetStream(const URL: string): TStream; override;
+  end;
+
   { One document: its panel, its images, the handlers of its panel }
   TMdTab = class(TTabSheet)
   private
@@ -308,7 +323,7 @@ begin
 end;
 { ── The image handler ────────────────────────────────────────────────────── }
 
-function Placeholder(ANode: TIpHtmlNode; const AWhy: string): TPicture;
+function Placeholder(ANode: TIpHtmlNode): TPicture;
 var
   Alt : string;
   Bmp : TBitmap;
@@ -424,7 +439,7 @@ begin
   case Kind of
     'png':  Gr := TPortableNetworkGraphic.Create;
     'jpeg': Gr := TJPEGImage.Create;
-    'gif':  Gr := TGIFImage.Create;
+    'gif':  Gr := TMdGifImage.Create;
   else
     Gr := TBitmap.Create;
   end;
@@ -458,7 +473,7 @@ begin
   end;
   if Picture = nil then
     try
-      Picture := Placeholder(Sender, Why);
+      Picture := Placeholder(Sender);
     except
       Picture := TPicture.Create;
       Picture.Bitmap.SetSize(1, 1);
@@ -519,6 +534,18 @@ begin
   if Result > 48 then Result := 48;
 end;
 
+class function TMdGifImage.GetWriterClass: TFPCustomImageWriterClass;
+begin
+  Result := nil;
+end;
+
+{$PUSH}{$WARN 5024 OFF}   { the URL is of no use: nothing is ever fetched here }
+function TMdDataProvider.DoGetStream(const URL: string): TStream;
+begin
+  Result := nil;
+end;
+{$POP}
+
 constructor TMdTab.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
@@ -537,7 +564,7 @@ begin
   FPanel.MarginWidth := 24;
   FPanel.MarginHeight := 16;
   FPanel.FactBAParag := 1.25;      { Bootstrap's line height of 1.5 }
-  FProv := TIpHtmlDataProvider.Create(Self);
+  FProv := TMdDataProvider.Create(Self);
   FProv.OnGetImage := @GetImage;
   FProv.OnCanHandle := @CanHandle;
   FPanel.DataProvider := FProv;
@@ -564,6 +591,7 @@ end;
 
 { Runs inside the inner panel's own wheel handling, which the re-render frees: only note
   the step here and do the work once the event is over. }
+{$PUSH}{$WARN 5024 OFF}   { the signature of the wheel event: MousePos is not needed }
 procedure TMdTab.WheelZoom(Sender: TObject; Shift: TShiftState; WheelDelta: Integer;
   MousePos: TPoint; var Handled: Boolean);
 begin
@@ -576,8 +604,11 @@ begin
   end;
   Handled := True;
 end;
+{$POP}
 
 { One point per notch, 6 to 48; the page is rendered again at the same relative place. }
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMdTab.ApplyZoom(Data: PtrInt);
 var
   Old, New, Y : Integer;
@@ -600,6 +631,7 @@ begin
   FPanel.VScrollPos := Y;
   Application.QueueAsyncCall(@RestoreScroll, Y);
 end;
+{$POP}
 
 procedure TMdTab.Resize;
 begin
@@ -830,10 +862,13 @@ end;
 
 { The IDE re-creates its windows at start when they were open at exit; documents are not
   kept, so a window that comes back empty goes away again. }
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMdForm.CloseIfEmpty(Data: PtrInt);
 begin
   if FPages.PageCount = 0 then Close;
 end;
+{$POP}
 
 function TMdForm.FindTab(const AId: string): TMdTab;
 var
@@ -857,6 +892,8 @@ begin
       Exit(TMdTab(FPages.Pages[I]));
 end;
 
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TMdForm.OpenLink(Data: PtrInt);
 var
   Err : string;
@@ -866,6 +903,7 @@ begin
     McpAddMessage(mluImportant, 'Markdown: ' + Err);
   FLink := '';
 end;
+{$POP}
 
 function TMdForm.NewTab: TMdTab;
 begin

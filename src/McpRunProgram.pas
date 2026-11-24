@@ -66,7 +66,9 @@ type
     FTruncated : Boolean;
     FDone      : TEvent;
     FExitCode  : Integer;
+    {$IFDEF UNIX}
     FStopped   : Boolean;     { Stop killed it }
+    {$ENDIF}
     FGone      : Boolean;     { Unix: the process vanished without TProcess seeing it end }
     FPid       : Integer;
     function Pump(Stream: TInputPipeStream; var Buf: string): Boolean;

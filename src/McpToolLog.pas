@@ -295,6 +295,7 @@ begin
     jtObject:
       begin
         Obj := TJSONObject(AData);
+        Order := nil;
         SetLength(Order, Obj.Count);
         if Obj.Count > 0 then SortedMembers(Obj, Order);
         Result := '{';
@@ -345,6 +346,7 @@ begin
     Canon := '{}'
   else
   begin
+    Order := nil;
     SetLength(Order, AArgs.Count);
     SortedMembers(AArgs, Order);
     SetLength(Result.Keys, AArgs.Count);

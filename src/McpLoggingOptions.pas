@@ -6,6 +6,7 @@ unit McpLoggingOptions;
   line in the Messages window.  Values live in McpSettings; OK stores them. }
 
 {$mode objfpc}{$H+}
+{$WARN 5024 OFF}  { the overrides below have the signatures the IDE's options editor fixes }
 
 interface
 

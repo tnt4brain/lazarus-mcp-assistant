@@ -6,6 +6,7 @@ unit McpFoldersOptions;
   picked, never typed, so none can be relative or mistyped.  OK stores them. }
 
 {$mode objfpc}{$H+}
+{$WARN 5024 OFF}  { the overrides below have the signatures the IDE's options editor fixes }
 
 interface
 

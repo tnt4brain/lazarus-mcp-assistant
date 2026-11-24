@@ -1114,7 +1114,7 @@ begin
   end;
 end;
 
-function ControlInfo(AComp: TComponent; ARoot: TComponent): TJSONObject;
+function ControlInfo(AComp: TComponent): TJSONObject;
 var
   C    : TControl;
   L, T : Integer;
@@ -1376,6 +1376,7 @@ begin
     Exit;
   end;
   N := Names.Count;
+  Ctls := nil;
   SetLength(Ctls, N);
   for I := 0 to N - 1 do
   begin
@@ -1421,6 +1422,7 @@ begin
     AErr := First.Name + ' has no parent';
     Exit;
   end;
+  Old := nil;
   SetLength(Old, N);
   for I := 0 to N - 1 do
     Old[I] := Ctls[I].BoundsRect;
@@ -2016,7 +2018,7 @@ begin
           end;
           Arr := TJSONArray.Create;
           for I := 0 to Root.ComponentCount - 1 do
-            Arr.Add(ControlInfo(Root.Components[I], Root));
+            Arr.Add(ControlInfo(Root.Components[I]));
           Obj.Add('components', Arr);
           Ctx.Result := Obj.AsJSON;
         finally
@@ -2217,7 +2219,7 @@ begin
           Group := NewUndoGroup(Designer);
           AddUndo(Group, NewComp, uopAdd, 'Name', '', NewComp.Name);
           Obj.Add('status', 'ok');
-          Obj.Add('component', ControlInfo(NewComp, Root));
+          Obj.Add('component', ControlInfo(NewComp));
           if Arr.Count > 0 then
             Obj.Add('results', Arr)
           else

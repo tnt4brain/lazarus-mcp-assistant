@@ -396,6 +396,8 @@ var
   Prev, Cur : array of Integer;
   I, J, Cost : Integer;
 begin
+  Prev := nil;
+  Cur  := nil;
   SetLength(Prev, Length(B) + 1);
   SetLength(Cur, Length(B) + 1);
   for J := 0 to Length(B) do Prev[J] := J;

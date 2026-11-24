@@ -126,6 +126,7 @@ begin
     try
       Size := S.Size;
       if Size > MAX_READ then S.Position := Size - MAX_READ;
+      Buf := '';
       SetLength(Buf, S.Size - S.Position);
       if Length(Buf) > 0 then S.ReadBuffer(Buf[1], Length(Buf));
       if Size > MAX_READ then
@@ -201,6 +202,8 @@ var
   Cut    : array of Integer;
   I, Big, BigCount, Drop : Integer;
 begin
+  Bodies := nil;
+  Cut    := nil;
   SetLength(Bodies, Length(AParts));
   SetLength(Cut, Length(AParts));
   for I := 0 to High(AParts) do

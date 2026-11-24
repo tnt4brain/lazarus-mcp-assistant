@@ -1820,6 +1820,7 @@ begin
     SplitRow(ALines[I], Head);
     SplitRow(ALines[I + 1], Sep);
     Cols := Head.Count;
+    Align := nil;
     SetLength(Align, Cols);
     for K := 0 to Cols - 1 do
     begin

@@ -42,7 +42,7 @@ implementation
 
 {$IFDEF WINDOWS}
 uses
-  Classes, SysUtils, Windows, McpIdeListeners;  { MainThreadID; NormalizeButtonCaption }
+  Classes, SysUtils, Windows, McpIdeListeners, McpUtils;  { MainThreadID; NormalizeButtonCaption }
 
 const
   DialogWindowClass = '#32770';
@@ -89,7 +89,7 @@ var
   Cap : string;
 begin
   Result := True;
-  F := PFindDialog(ALParam);
+  F := PFindDialog(McpIntToPtr(ALParam));
   if not IsWindowVisible(AWnd) then Exit;
   if GetWinClass(AWnd) <> DialogWindowClass then Exit;
   Cap := GetWinText(AWnd);
@@ -115,7 +115,7 @@ var
   Text : string;
 begin
   Result := True;
-  F := PFindButton(ALParam);
+  F := PFindButton(McpIntToPtr(ALParam));
   if GetWinClass(AWnd) <> 'Button' then Exit;
   Text := NormalizeButtonCaption(GetWinText(AWnd));
   if Text = '' then Exit;
@@ -140,7 +140,7 @@ begin
 
   FD := Default(TFindDialog);
   FD.ExpectCaption := AExpectCaption;
-  EnumThreadWindows(MainThreadID, @EnumDialogProc, LPARAM(@FD));
+  EnumThreadWindows(MainThreadID, @EnumDialogProc, McpPtrToInt(@FD));
 
   if FD.Found = 0 then
   begin
@@ -161,7 +161,7 @@ begin
 
   FB := Default(TFindButton);
   FB.Wanted := NormalizeButtonCaption(AWantedButton);
-  EnumChildWindows(FD.Found, @EnumButtonProc, LPARAM(@FB));
+  EnumChildWindows(FD.Found, @EnumButtonProc, McpPtrToInt(@FB));
   if FB.Found = 0 then
   begin
     AErr := Format('No button "%s" on "%s". Available: %s',

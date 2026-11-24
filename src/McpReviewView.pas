@@ -16,6 +16,8 @@ unit McpReviewView;
   differences (conflicts, and the user's changes the disk lacks). }
 
 {$mode objfpc}{$H+}
+{$HINTS OFF}  { the event handlers and overrides here have the signatures the LCL fixes, so their
+                parameters go unused; a WARN 5024 switch had no effect in this unit }
 
 interface
 
@@ -1172,6 +1174,7 @@ begin
   end;
   Fresh := Slice(Side, Hunk.BStart, Hunk.BLen);
   At := Hunk.AStart + Hunk.ALen;
+  Joined := nil;
   SetLength(Joined, Length(FResult) + Length(Fresh));
   N := 0;
   for I := 0 to At - 1 do
@@ -1574,6 +1577,7 @@ var
   Take: array of Boolean;
   I, Span : Integer;
 begin
+  Take := nil;
   if ASide = 0 then SetLength(Take, Length(FRows.LeftHunks))
   else SetLength(Take, Length(FRows.RightHunks));
   for I := 0 to High(Take) do Take[I] := I = AHunk;

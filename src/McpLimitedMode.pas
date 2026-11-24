@@ -108,6 +108,7 @@ var
   A : array of string;
   I : Integer;
 begin
+  A := nil;
   SetLength(A, AList.Count);
   for I := 0 to AList.Count - 1 do A[I] := AList[I];
   McpLimitSetFolders(A);

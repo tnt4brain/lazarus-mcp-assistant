@@ -18,7 +18,7 @@ uses
   LazIDEIntf, SrcEditorIntf, LazFileUtils, FileUtil,
   CodeToolManager, CodeCache, CodeTree, AVL_Tree, BasicCodeTools,
   CustomCodeTool, ExtractProcTool, PascalReaderTool,
-  McpToolContext, McpToolsCodeTools;
+  McpToolContext, McpToolsCodeTools, McpUtils;
 
 const
   PKG_SCOPE =
@@ -192,7 +192,8 @@ begin
   Result := True;
   Capped := False;
   Err := '';
-  SetLength(Infos, 0);
+  Infos := nil;
+  Queue := nil;
   SetLength(Queue, 1);
   Queue[0].Name := RootName; Queue[0].Code := Code; Queue[0].X := X; Queue[0].Y := Y;
   Queue[0].Parent := ''; Queue[0].Depth := 0;
@@ -515,12 +516,12 @@ var
     Edges: TFPList;
   begin
     Index[V] := Counter; Low[V] := Counter; Inc(Counter);
-    Stack.Add(Pointer(PtrInt(V)));
+    Stack.Add(McpIntToPtr(V));
     OnStack[V] := True;
     Edges := TFPList(Adj[V]);
     for Ptr in Edges do
     begin
-      W := PtrInt(Ptr);
+      W := McpPtrToInt(Ptr);
       if Index[W] < 0 then
       begin
         Visit(W);
@@ -534,16 +535,16 @@ var
       Comp := TFPList.Create;
       try
         repeat
-          W := PtrInt(Stack[Stack.Count - 1]);
+          W := McpPtrToInt(Stack[Stack.Count - 1]);
           Stack.Delete(Stack.Count - 1);
           OnStack[W] := False;
-          Comp.Add(Pointer(PtrInt(W)));
+          Comp.Add(McpIntToPtr(W));
         until W = V;
         if Comp.Count > 1 then
         begin
           Arr := TJSONArray.Create;
           for K := Comp.Count - 1 downto 0 do
-            Arr.Add(TUnitRec(Units[PtrInt(Comp[K])]).Name);
+            Arr.Add(TUnitRec(Units[McpPtrToInt(Comp[K])]).Name);
           Groups.Add(Arr);
         end;
       finally
@@ -555,6 +556,7 @@ var
 var
   I : Integer;
 begin
+  Index := nil; Low := nil; OnStack := nil;
   SetLength(Index, Count); SetLength(Low, Count); SetLength(OnStack, Count);
   for I := 0 to Count - 1 do begin Index[I] := -1; OnStack[I] := False; end;
   Counter := 0;
@@ -725,14 +727,14 @@ begin
           K := UnitIndex(Units, LowerCase(U.IntfUses[J]));
           if (K >= 0) and (K <> I) then
           begin
-            TFPList(AdjAll[I]).Add(Pointer(PtrInt(K)));
-            TFPList(AdjIntf[I]).Add(Pointer(PtrInt(K)));
+            TFPList(AdjAll[I]).Add(McpIntToPtr(K));
+            TFPList(AdjIntf[I]).Add(McpIntToPtr(K));
           end;
         end;
         for J := 0 to U.ImplUses.Count - 1 do
         begin
           K := UnitIndex(Units, LowerCase(U.ImplUses[J]));
-          if (K >= 0) and (K <> I) then TFPList(AdjAll[I]).Add(Pointer(PtrInt(K)));
+          if (K >= 0) and (K <> I) then TFPList(AdjAll[I]).Add(McpIntToPtr(K));
         end;
       end;
       MaxUnits := Ctx.Params.Get('max_units', 300);
@@ -929,7 +931,7 @@ begin
   if not CodeToolBoss.Explore(Code, Tool, False, False) then
     Exit(Fail(Ctx, 'Parse error: ' + CodeToolBoss.ErrorMessage));
   GIncludePublished := Ctx.Params.Get('include_published', False);
-  SetLength(C, 0);
+  C := nil;
   CollectCandidates(Tool, Tool.Tree.Root, '', False, False, C);
   MaxSym := Ctx.Params.Get('max_symbols', 200);
   Files := TStringList.Create;

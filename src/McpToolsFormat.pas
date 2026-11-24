@@ -11,6 +11,7 @@ unit McpToolsFormat;
   lines that changed, in one undo block (one Ctrl+Z).  Main thread. }
 
 {$mode objfpc}{$H+}
+{$WARN 5024 OFF}  { the callbacks of the code formatter have the signatures it fixes }
 
 interface
 

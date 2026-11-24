@@ -24,7 +24,7 @@ uses
   Classes, SysUtils, SyncObjs, StrUtils, Math, base64, FPImage, FPWritePNG,
   MacroIntf, LazFileUtils,
   fpjson,
-  McpToolContext;
+  McpToolContext, McpUtils;
 
 const
   SCHEMA_GET_WINDOWS =
@@ -184,8 +184,9 @@ begin
                  ANSWER_TIMEOUT, @Len) <> 0) then
   begin
     Len := Min(Len, 200);
+    W := '';
     SetLength(W, Len + 1);
-    if SendMessageTimeoutW(H, WM_GETTEXT, Len + 1, LPARAM(PWideChar(W)),
+    if SendMessageTimeoutW(H, WM_GETTEXT, Len + 1, McpPtrToInt(PWideChar(W)),
          SMTO_ABORTIFHUNG or SMTO_BLOCK, ANSWER_TIMEOUT, @Len) <> 0 then
       Result := UTF8Encode(Copy(W, 1, Len))
     else
@@ -208,6 +209,7 @@ var
   S, T  : string;
   Child : HWND;
 begin
+  R := Default(TRect);
   GetWindowRect(H, R);
   if Parent <> 0 then
     MapWindowPoints(0, Parent, R, 2);
@@ -312,6 +314,7 @@ var
 begin
   Result := '';
   FromScreen := True;
+  WR := Default(TRect);
   if not GetWindowRect(H, WR) then Exit;
   { without the invisible resize border and shadow }
   if DwmGetWindowAttribute(H, DWMWA_EXTENDED_FRAME_BOUNDS, @FR, SizeOf(FR)) <> S_OK then
@@ -331,7 +334,7 @@ begin
   SrcDC  := CreateCompatibleDC(ScreenDC);
   OutDC  := CreateCompatibleDC(ScreenDC);
   SrcBmp := CreateCompatibleBitmap(ScreenDC, W, Hh);
-  FillChar(BI, SizeOf(BI), 0);
+  BI := Default(TBitmapInfo);
   BI.bmiHeader.biSize     := SizeOf(BI.bmiHeader);
   BI.bmiHeader.biWidth    := DW;
   BI.bmiHeader.biHeight   := -DH;   { top-down }

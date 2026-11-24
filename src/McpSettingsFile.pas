@@ -186,7 +186,7 @@ var
 begin
   N := FXmlConfig.GetValue('Tokens/Count', 0);
   if N > MCP_MAX_TOKENS then N := MCP_MAX_TOKENS;
-  SetLength(Items, 0);
+  Items := nil;
   for I := 1 to N do
   begin
     P := 'Tokens/Item' + IntToStr(I) + '/';

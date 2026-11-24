@@ -316,6 +316,8 @@ begin
 end;
 
 { A page cannot be removed while one of its buttons is still running. }
+{ QueueAsyncCall fixes the signature; Data is not needed here }
+{$PUSH}{$WARN 5024 OFF}
 procedure TOwner.DropPending(Data: PtrInt);
 var
   Name : string;
@@ -324,6 +326,7 @@ begin
     McpReviewDrop(Name);
   FDropLater.Clear;
 end;
+{$POP}
 
 procedure TOwner.Done(const AFile: string; AApplied: Boolean; const ANewText: string);
 var

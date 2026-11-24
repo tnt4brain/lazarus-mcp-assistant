@@ -96,7 +96,7 @@ implementation
 
 uses
   {$IFDEF UNIX}UnixType,{$ENDIF}
-  sha1, base64, Process, zstream, McpTokens;
+  sha1, base64, Process, zstream, McpTokens, McpUtils;
 
 const
   MAX_CONNS        = 2;
@@ -123,6 +123,7 @@ var
   D : TSHA1Digest;
 begin
   D := SHA1String(S);
+  Result := '';
   SetLength(Result, 20);
   Move(D, Result[1], 20);
 end;
@@ -135,6 +136,8 @@ begin
   K := AKey;
   if Length(K) > 64 then K := Sha1Raw(K);
   K := K + StringOfChar(#0, 64 - Length(K));
+  Ipad := '';
+  Opad := '';
   SetLength(Ipad, 64);
   SetLength(Opad, 64);
   for I := 1 to 64 do
@@ -153,6 +156,7 @@ var
   Bin, Modulus : QWord;
 begin
   Counter := AUnixTime div AStepS;
+  Msg := '';
   SetLength(Msg, 8);
   for I := 8 downto 1 do
   begin
@@ -232,7 +236,7 @@ begin
     Parts.Free;
   end;
   Addr := StrToNetAddr(S);
-  FillChar(A, SizeOf(A), 0);
+  A := Default(TInetSockAddr);
   A.sin_family := AF_INET;
   A.sin_addr   := Addr;
   Result := True;
@@ -266,7 +270,7 @@ begin
       Exit;
     end;
     Len := SizeOf(Mine);
-    FillChar(Mine, SizeOf(Mine), 0);
+    Mine := Default(TInetSockAddr);
     if fpgetsockname(S, @Mine, @Len) <> 0 then
     begin
       AWhy := 'The local address for ' + APeer + ' could not be found.';
@@ -454,6 +458,7 @@ begin
   try
     Src.Write(AData[11], Length(AData) - 10);
     Src.Position := 0;
+    Buf[0] := 0;
     Dec := TDecompressionStream.Create(Src, True);
     try
       try
@@ -542,6 +547,7 @@ begin
     if AAdvertise and not AV2 then
       SendAll('001e# service=git-upload-pack' + #10 + '0000');
 
+    Buf[0] := 0;
     while True do
     begin
       if FOwner.FStopping or (GetTickCount64 - Started > REQUEST_MS) then
@@ -799,7 +805,7 @@ begin
   FLock.Enter;
   try
     for I := 0 to FConns.Count - 1 do
-      fpshutdown(TSocket(PtrUInt(FConns[I])), 2);
+      fpshutdown(TSocket(McpPtrToInt(FConns[I])), 2);
   finally
     FLock.Leave;
   end;
@@ -854,9 +860,9 @@ begin
   FLock.Enter;
   try
     if AAdd then
-      FConns.Add(Pointer(PtrUInt(ASock)))
+      FConns.Add(McpIntToPtr(ASock))
     else
-      FConns.Remove(Pointer(PtrUInt(ASock)));
+      FConns.Remove(McpIntToPtr(ASock));
   finally
     FLock.Leave;
   end;

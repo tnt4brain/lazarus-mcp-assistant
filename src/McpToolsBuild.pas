@@ -337,9 +337,6 @@ type
   end;
 
 var
-  GServerRestarter : TServerRestarter = nil;
-
-var
   GRestartNotice : string = '';
 
 procedure TServerRestarter.Tick(Sender: TObject);
@@ -359,10 +356,11 @@ procedure ScheduleServerRestart(AMs: Integer; const ANotice: string);
 begin
   if GRestartTimer = nil then
   begin
-    GServerRestarter := TServerRestarter.Create;
     GRestartTimer := TTimer.Create(nil);
     GRestartTimer.Enabled := False;
-    GRestartTimer.OnTimer := @GServerRestarter.Tick;
+    { the handler object lives as long as the timer: the IDE session }
+    with TServerRestarter.Create do
+      GRestartTimer.OnTimer := @Tick;
   end;
   GRestartNotice := ANotice;
   GRestartTimer.Enabled := False;
