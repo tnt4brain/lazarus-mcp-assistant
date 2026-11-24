@@ -144,13 +144,6 @@ begin
       Exit(TSession(Ptr));
 end;
 
-function LinesOf(const AText: string): TDiffLines;
-var
-  Dummy: Boolean;
-begin
-  Result := SplitLines(AText, Dummy);
-end;
-
 procedure TFlow.GutterClick(const AFile: string);
 begin
   McpReviewFocus(AFile);
