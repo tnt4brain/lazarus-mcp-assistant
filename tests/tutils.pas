@@ -14,9 +14,8 @@ uses
 type
   TTestUtils = class(TTestCase)
   published
-    procedure TestGenerateTokenIs64Chars;
-    procedure TestGenerateTokenAllHex;
-    procedure TestGenerateTokenIsUnique;
+    procedure TestHexRoundTrip;
+    procedure TestHexToStrStopsAtBadInput;
     procedure TestFindFreePortNonZero;
     procedure TestFindFreePortIsUsable;
     procedure TestIsPortFreeForBoundPort;
@@ -95,27 +94,26 @@ begin
   AssertTrue(McpPathHasSegment('/a/b/.git', '.git'));
 end;
 
-procedure TTestUtils.TestGenerateTokenIs64Chars;
-begin
-  CheckEquals(64, Length(GenerateToken),
-    'GenerateToken must return exactly 64 characters');
-end;
-
-procedure TTestUtils.TestGenerateTokenAllHex;
+procedure TTestUtils.TestHexRoundTrip;
 var
-  T : string;
-  I : Integer;
+  B : array[0..3] of Byte = ($00, $0F, $A5, $FF);
+  S : string;
 begin
-  T := GenerateToken;
-  for I := 1 to Length(T) do
-    CheckTrue(T[I] in ['0'..'9', 'A'..'F', 'a'..'f'],
-      'GenerateToken char ' + IntToStr(I) + ' is not hex: ' + T[I]);
+  CheckEquals('000fa5ff', McpBytesToHex(B, SizeOf(B)), 'lower case, two characters per byte');
+  SetString(S, PChar(@B[0]), SizeOf(B));
+  CheckEquals('000fa5ff', McpStrToHex(S));
+  CheckTrue(McpHexToStr('000fa5ff') = S, 'back');
+  CheckTrue(McpHexToStr('000FA5FF') = S, 'upper case is read too');
+  CheckEquals('', McpStrToHex(''));
+  CheckEquals('', McpBytesToHex(B, 0));
+  CheckEquals('', McpHexToStr(''));
 end;
 
-procedure TTestUtils.TestGenerateTokenIsUnique;
+procedure TTestUtils.TestHexToStrStopsAtBadInput;
 begin
-  CheckNotEquals(GenerateToken, GenerateToken,
-    'Two consecutive GenerateToken calls must return different values');
+  CheckEquals(2, Length(McpHexToStr('4142zz43')), 'stops at the first bad pair');
+  CheckEquals('AB', McpHexToStr('4142zz43'));
+  CheckEquals('A', McpHexToStr('414'), 'a half pair at the end is dropped');
 end;
 
 { Where the server may listen: IPv4 addresses only, the loopback is the default }

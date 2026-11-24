@@ -24,7 +24,7 @@ implementation
 
 uses
   Classes, SysUtils, StrUtils, SyncObjs, fpjson, base64, McpIdeState, McpGitRun,
-  McpToolsGitRemote, McpGitServe, McpTokens;
+  McpToolsGitRemote, McpGitServe, McpTokens, McpUtils;
 
 const
   MCP_ANN_SERVE = '{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":true}';
@@ -127,31 +127,9 @@ var
 
 { ── the links, in the settings (main thread) ─────────────────────────────── }
 
-function ToHex(const S: string): string;
-var
-  I : Integer;
-begin
-  Result := '';
-  for I := 1 to Length(S) do
-    Result := Result + LowerCase(IntToHex(Ord(S[I]), 2));
-end;
-
-function FromHex(const H: string): string;
-var
-  I : Integer;
-begin
-  Result := '';
-  I := 1;
-  while I < Length(H) do
-  begin
-    Result := Result + Chr(StrToIntDef('$' + Copy(H, I, 2), 0));
-    Inc(I, 2);
-  end;
-end;
-
 function LinkText(const L: TLink): string;
 begin
-  Result := L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + '|' + ToHex(L.Key);
+  Result := L.Peer + '|' + L.Host + '|' + IntToStr(L.Port) + '|' + McpStrToHex(L.Key);
 end;
 
 function ParseLink(const S: string; out L: TLink): Boolean;
@@ -168,7 +146,7 @@ begin
     L.Peer := P[0];
     L.Host := P[1];
     L.Port := StrToIntDef(P[2], 0);
-    L.Key  := FromHex(P[3]);
+    L.Key  := McpHexToStr(P[3]);
     Result := (L.Peer <> '') and (L.Port > 0) and (Length(L.Key) = 20);
   finally
     P.Free;
@@ -338,8 +316,8 @@ begin
       Windows lists Git Credential Manager, which would open a window and ask for a password) }
     ' && git config --unset-all credential.helper; git config credential.helper ""' +
     ' && if command -v instantfpc >/dev/null 2>&1; then' +
-    ' git config --add credential.helper "!instantfpc ~/.git-credential-mcp.pas ' + ToHex(L.Key) + '";' +
-    ' else git config --add credential.helper "!sh ~/.git-credential-mcp ' + ToHex(L.Key) + '"; fi';
+    ' git config --add credential.helper "!instantfpc ~/.git-credential-mcp.pas ' + McpStrToHex(L.Key) + '";' +
+    ' else git config --add credential.helper "!sh ~/.git-credential-mcp ' + McpStrToHex(L.Key) + '"; fi';
 end;
 
 const

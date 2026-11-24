@@ -45,15 +45,11 @@ implementation
 
 uses
   {$IFDEF WINDOWS} Windows, {$ENDIF}
-  Classes, SysUtils, FileUtil, Process, base64, McpGitServe;
+  Classes, SysUtils, FileUtil, Process, base64, McpGitServe, McpUtils;
 
 function Hex(const S: string): string;
-var
-  I : Integer;
 begin
-  Result := '';
-  for I := 1 to Length(S) do
-    Result := Result + LowerCase(IntToHex(Ord(S[I]), 2));
+  Result := McpStrToHex(S);
 end;
 
 procedure TTestGitServe.SetUp;

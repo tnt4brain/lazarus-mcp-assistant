@@ -1860,7 +1860,7 @@ begin
   Token := McpSettings.ServerToken;
   if Token = '' then
   begin
-    Token := GenerateToken;
+    Token := McpNewPrimaryToken;
     McpSettings.ServerToken := Token;
     McpSettings.SaveSettings;
   end;

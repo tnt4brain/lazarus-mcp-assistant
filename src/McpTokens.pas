@@ -82,7 +82,7 @@ implementation
 
 uses
   {$IFDEF WINDOWS} Windows, {$ENDIF}
-  Math, base64, sha1, DateUtils;
+  Math, McpUtils, base64, sha1, DateUtils;
 
 { ── Random ───────────────────────────────────────────────────────────────── }
 
@@ -126,27 +126,12 @@ begin
 end;
 {$ENDIF}
 
-function HexOf(const ABytes: array of Byte): string;
-const
-  Digits = '0123456789abcdef';
-var
-  I : Integer;
-begin
-  Result := '';
-  SetLength(Result, Length(ABytes) * 2);
-  for I := 0 to High(ABytes) do
-  begin
-    Result[I * 2 + 1] := Digits[(ABytes[I] shr 4) + 1];
-    Result[I * 2 + 2] := Digits[(ABytes[I] and 15) + 1];
-  end;
-end;
-
 function McpNewPrimaryToken: string;
 var
   B : array[0..31] of Byte;
 begin
   McpRandomBytes(B, SizeOf(B));
-  Result := HexOf(B);
+  Result := McpBytesToHex(B, SizeOf(B));
 end;
 
 function McpNewClientToken: string;
@@ -245,7 +230,7 @@ begin
       end;
     AToken := McpNewClientToken;
     McpRandomBytes(Id, SizeOf(Id));
-    T.Id       := HexOf(Id);
+    T.Id       := McpBytesToHex(Id, SizeOf(Id));
     T.Name     := Trim(AName);
     T.Hash     := McpHashToken(AToken);
     T.Hint     := Copy(AToken, Length(AToken) - 3, 4);
