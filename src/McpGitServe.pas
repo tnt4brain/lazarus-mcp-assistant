@@ -799,7 +799,7 @@ begin
   FLock.Enter;
   try
     for I := 0 to FConns.Count - 1 do
-      fpshutdown(TSocket(PtrInt(FConns[I])), 2);
+      fpshutdown(TSocket(PtrUInt(FConns[I])), 2);
   finally
     FLock.Leave;
   end;
@@ -854,9 +854,9 @@ begin
   FLock.Enter;
   try
     if AAdd then
-      FConns.Add(Pointer(PtrInt(ASock)))
+      FConns.Add(Pointer(PtrUInt(ASock)))
     else
-      FConns.Remove(Pointer(PtrInt(ASock)));
+      FConns.Remove(Pointer(PtrUInt(ASock)));
   finally
     FLock.Leave;
   end;

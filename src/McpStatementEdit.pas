@@ -349,7 +349,7 @@ begin
     end;
   end;
 
-  Result := Fail('Unknown op "' + AOp + '": replace, delete, insert_before, insert_after or wrap');
+  Result := Fail('Unknown action "' + AOp + '": replace, delete, insert_before, insert_after or wrap');
 end;
 
 end.

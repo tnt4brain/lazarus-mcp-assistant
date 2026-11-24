@@ -2594,7 +2594,7 @@ begin
     SCHEMA_SET_BREAKPOINT, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('debug_remove_breakpoint',
     'Remove the breakpoint at a location, given as for debug_set_breakpoint.',
-    SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_WRITE_IDEM));
+    SCHEMA_REMOVE_BREAKPOINT, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('debug_list_breakpoints',
     'List all breakpoints: kind and location, condition, pass count, hit count, ' +
     'enabled and valid.',
@@ -2630,7 +2630,7 @@ begin
     'Stop the debug session unconditionally. Non-blocking; safe in any ' +
     'state including after a timed-out step. For a program that debug_attach ' +
     'attached to, stopping ends the program; detach=true lets it keep running.',
-    SCHEMA_STOP, MCP_ANN_WRITE_IDEM));
+    SCHEMA_STOP, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('debug_step',
     'Single-step the paused program: kind "over" the current line (F8), "into" the call on it ' +
     '(F7) or "out" of the current procedure (Shift+F8). Blocks until the debugger pauses again.',
@@ -2676,7 +2676,7 @@ begin
     SCHEMA_WATCH_EXPRESSION, MCP_ANN_WRITE));
   Tools.Add(MakeTool('debug_remove_watch',
     'Remove a watch expression from the Watches window, or all with "*".',
-    SCHEMA_REMOVE_WATCH, MCP_ANN_WRITE_IDEM));
+    SCHEMA_REMOVE_WATCH, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('debug_list_watches',
     'List the Watches window entries. While paused, each comes with its value ' +
     'and type in the selected (or given) thread and stack frame.',

@@ -287,7 +287,7 @@ end;
 
 procedure TTestStatementEdit.TestRefusals;
 begin
-  AssertTrue(Pos('Unknown op', Run(Src, 'frobnicate', '', '', 3, 0)) > 0);
+  AssertTrue(Pos('Unknown action', Run(Src, 'frobnicate', '', '', 3, 0)) > 0);
   AssertTrue(Pos('needs text', Run(Src, 'replace', '', '', 3, 0)) > 0);
   AssertTrue(Pos('needs text', Run(Src, 'insert_before', '', '', 3, 0)) > 0);
   AssertTrue(Pos('needs "with"', Run(Src, 'wrap', '', '', 3, 0)) > 0);

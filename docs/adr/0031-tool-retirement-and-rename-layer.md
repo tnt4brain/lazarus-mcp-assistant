@@ -153,3 +153,23 @@ and `git_cherry_pick` (`commit`, which also took a range) and `git_log` (`branch
 was the only parameter name with two types. And `debug_get_output` and `ide_get_exceptions` are no longer
 marked read-only: their `clear` flag drops the buffer they returned, and a client that lets read-only
 tools through unasked would clear it unasked (they are in the `g` list of `McpToolScope`: no file).
+
+**Selectors and verbs (1.8.1).** The rule for a parameter that picks one of a list: `action` for the verb
+of a tool that does several things (`git_stash`, `form_history`, `git_remote`, and now `code_edit_statement`,
+which called it `op`); `kind` for what category of thing (`debug_step`, `project_create_unit`,
+`code_extract_method`); `mode` for how an operation behaves (`git_reset`, `git_pull`); `scope` and `section`
+stay where they are the domain's own word. Two names broke it and are renamed through the table:
+`code_edit_statement` `op` → `action`, and `package_create` `type` → `package_type` (`package_set_settings`
+already called the same thing `package_type`). The answer of `code_edit_statement` now says `action` too.
+`git_merge` `ff` and `git_pull` `mode` are the same idea with different values (merge: auto/only/never;
+pull: ff-only/merge/rebase) and are left apart on purpose: a pull is a fetch plus one of these, and the
+two vocabularies are git's own; each description points to the other.
+
+**Destructive marks (1.8.1).** `destructiveHint:false` is given only to a tool whose effect can be reliably
+undone: the form deletes (`form_history`) and the tools that add or change something that can be changed
+back. Marked destructive now: `debug_remove_breakpoint`, `debug_remove_watch`, `debug_stop`,
+`package_remove_file`, `package_remove_dependency`, `project_remove_package`, `project_remove_file`:
+nothing takes them back, and a removed breakpoint or requirement loses its condition, pass count or
+version limits. `project_close` stays non-destructive: it is saved first (it is refused with unsaved
+changes) and `project_open` brings the project back. This amends ADR-009's note that all breakpoint tools
+are non-destructive.

@@ -40,7 +40,7 @@ const
     '{"type":"object","properties":{' +
     '"ref":{"type":"string","description":"What to merge into the current branch: a branch, a remote-tracking branch (origin/x), a tag or a commit"},' +
     '"ff":{"type":"string","enum":["auto","only","never"],"description":"auto (default): fast-forward when possible, else a merge commit. only: fail rather than make a merge commit. never: always make a merge commit"},' +
-    '"squash":{"type":"boolean","description":"Take the changes in without committing (git merge --squash); commit them with git_commit. Needs ff=auto"},' +
+    '"squash":{"type":"boolean","description":"Take the changes in without committing (git merge --squash); commit them with git_commit. Needs ff=auto. git_pull has the same choice as its mode"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository (default: the project''s directory)"}},' +
     '"required":["ref"]}';
 

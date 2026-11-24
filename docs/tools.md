@@ -8,7 +8,11 @@ with a human-readable `title` ("Debugger: get call stack") and annotations:
   or opening a tab counts as read-only.
 - `destructiveHint` only for changes that neither Ctrl+Z nor `form_history` can
   take back: closing or reverting an editor with unsaved changes,
-  `git_checkout`, `git_reset`, rebuilds and installs.
+  `git_checkout`, `git_reset`, rebuilds and installs, and every remove or delete tool
+  except the form ones (`form_delete_*` are undone with `form_history`): removing a
+  breakpoint, a watch, a file or a package requirement loses its settings, and
+  `debug_stop` ends the session. A tool is marked non-destructive only when its effect
+  can be reliably undone.
 - `idempotentHint` where repeating a call with the same arguments changes
   nothing more.
 

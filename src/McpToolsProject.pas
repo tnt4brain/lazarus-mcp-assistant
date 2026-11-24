@@ -1969,7 +1969,7 @@ begin
   Tools.Add(MakeTool('project_remove_file',
     'Remove a source file from the active project without deleting it from disk. ' +
     'Saves the project afterwards.',
-    SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_WRITE_IDEM));
+    SCHEMA_REMOVE_FILE_FROM_PROJECT, MCP_ANN_DEST_IDEM));
   Tools.Add(MakeTool('project_clean',
     'Find (and, unless dry_run, delete) stray .ppu/.o files left directly in a ' +
     'project''s or package''s own source directory outside its configured unit ' +

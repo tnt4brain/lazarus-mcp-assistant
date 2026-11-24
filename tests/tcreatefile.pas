@@ -277,7 +277,7 @@ begin
   Args[1][0] := 'code_add_to_class';     Args[1][1] := '{"file":' + F + ',"class_name":"TX","text":"x"}';
   Args[2][0] := 'code_insert_in_procedure'; Args[2][1] := '{"file":' + F + ',"proc_name":"P","text":"x"}';
   Args[3][0] := 'code_replace_procedure_body'; Args[3][1] := '{"file":' + F + ',"proc_name":"P","new_body":"x"}';
-  Args[4][0] := 'code_edit_statement';   Args[4][1] := '{"file":' + F + ',"line":1,"op":"delete"}';
+  Args[4][0] := 'code_edit_statement';   Args[4][1] := '{"file":' + F + ',"line":1,"action":"delete"}';
   Args[5][0] := 'code_complete';         Args[5][1] := '{"file":' + F + ',"line":1,"col":1}';
   Args[6][0] := 'code_format';           Args[6][1] := '{"file":' + F + '}';
   Args[7][0] := 'code_rename_identifier'; Args[7][1] := '{"file":' + F + ',"line":1,"col":1,"new_name":"Zed"}';

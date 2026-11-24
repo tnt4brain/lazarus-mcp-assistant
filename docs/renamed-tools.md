@@ -1,6 +1,6 @@
 # Renamed tools and parameters
 
-Version 1.7.0 gave the tools one name for each idea (ADR-031); 1.8.1 added `old_text`/`new_text`, `limit`, `watch_expression`, `ref` and `tag_names`. **Every old name still works
+Version 1.7.0 gave the tools one name for each idea (ADR-031); 1.8.1 added `old_text`/`new_text`, `limit`, `watch_expression`, `ref`, `tag_names`, `action` (`code_edit_statement`) and `package_type` (`package_create`). **Every old name still works
 through all of 1.x and is refused from 2.0 on.** A call with an old name is translated to the
 new one; the first time a session uses it, the result carries one extra line:
 
@@ -42,6 +42,8 @@ matching; replace it with the new name (`mcp__lazarus-ide__debug_step`).
 | `git_cherry_pick`, `git_tag` | `commit` | `ref` |
 | `git_log` | `branch` | `ref` |
 | `git_push` | `tags` | `tag_names` |
+| `code_edit_statement` | `op` | `action` |
+| `package_create` | `type` | `package_type` |
 
 Giving the old and the new parameter together is fine if the values are equal and an error if
 they differ.

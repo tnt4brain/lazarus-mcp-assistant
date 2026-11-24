@@ -140,8 +140,8 @@ begin
   CheckTrue(Pos('Package not found: NoSuchPackageXyz', T) > 0, T);
   CheckFalse(FileExists(Dir + 'McpTmpPkgB.lpk'), 'nothing written');
   T := Call('package_create', '{"name":"McpTmpPkgB","directory":' + JsonStr(Dir) +
-            ',"type":"Bogus"}');
-  CheckTrue(Pos('type must be', T) > 0, T);
+            ',"package_type":"Bogus"}');
+  CheckTrue(Pos('package_type must be', T) > 0, T);
 end;
 
 procedure TTestPackageManage.TestListAndInfoErrors;

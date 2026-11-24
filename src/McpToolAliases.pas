@@ -50,7 +50,7 @@ procedure McpAliasForgetSessions;           { tests: tell everything again }
 implementation
 
 const
-  ALIASES : array[0..34] of TMcpAlias = (
+  ALIASES : array[0..36] of TMcpAlias = (
     { one name for each idea (1.7.0): seconds to wait, text for stdin, the variable }
     (Kind: akParam; Tool: 'project_run';        Old: 'wait_seconds'; New: 'timeout_s'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'project_run_output'; Old: 'wait_seconds'; New: 'timeout_s'; FixedKey: ''; FixedVal: ''),
@@ -93,7 +93,10 @@ const
     (Kind: akParam; Tool: 'git_cherry_pick';         Old: 'commit';     New: 'ref'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'git_tag';                 Old: 'commit';     New: 'ref'; FixedKey: ''; FixedVal: ''),
     (Kind: akParam; Tool: 'git_log';                 Old: 'branch';     New: 'ref'; FixedKey: ''; FixedVal: ''),
-    (Kind: akParam; Tool: 'git_push';                Old: 'tags';       New: 'tag_names'; FixedKey: ''; FixedVal: ''));
+    (Kind: akParam; Tool: 'git_push';                Old: 'tags';       New: 'tag_names'; FixedKey: ''; FixedVal: ''),
+    { the verb of a tool is "action" (git_stash, form_history, ...); the type of a package is "package_type" }
+    (Kind: akParam; Tool: 'code_edit_statement';     Old: 'op';         New: 'action'; FixedKey: ''; FixedVal: ''),
+    (Kind: akParam; Tool: 'package_create';          Old: 'type';       New: 'package_type'; FixedKey: ''; FixedVal: ''));
 
 var
   GLock     : TRTLCriticalSection;

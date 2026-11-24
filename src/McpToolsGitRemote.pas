@@ -82,7 +82,7 @@ const
     '{"type":"object","properties":{' +
     '"remote":{"type":"string","description":"Name of a configured remote. Default: the current branch''s remote, or the only remote"},' +
     '"branch":{"type":"string","description":"The remote branch to take in. Default: the one the current branch tracks"},' +
-    '"mode":{"type":"string","enum":["ff-only","merge","rebase"],"description":"ff-only (default): fast-forward or fail. merge: always make a merge commit. rebase: replay your commits on top"},' +
+    '"mode":{"type":"string","enum":["ff-only","merge","rebase"],"description":"ff-only (default): fast-forward or fail. merge: always make a merge commit. rebase: replay your commits on top. git_merge has the same choice as its ff (auto/only/never)"},' +
     '"work_dir":{"type":"string","description":"A directory inside the repository (default: the project''s directory)"}},' +
     '"required":[]}';
 

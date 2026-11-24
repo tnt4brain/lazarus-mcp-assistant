@@ -66,7 +66,7 @@ const
     '{"type":"object","properties":{' +
     '"name":{"type":"string","description":"Package name, a Pascal identifier"},' +
     '"directory":{"type":"string","description":"Absolute directory; name.lpk is written there"},' +
-    '"type":{"type":"string","description":"RunTime (default), DesignTime, ' +
+    '"package_type":{"type":"string","description":"RunTime (default), DesignTime, ' +
       'RunAndDesignTime or RunTimeOnly"},' +
     '"requires":{"type":"array","items":{"type":"string"},"description":"Packages to ' +
       'require (default [\"FCL\"]); each must be loaded or known to the IDE"},' +
@@ -302,13 +302,13 @@ begin
   Dir      := Trim(AParams.Get('directory', ''));
   UnitName := Trim(AParams.Get('unit_name', ''));
   Ver      := Trim(AParams.Get('version', ''));
-  TypeIdent := Trim(AParams.Get('type', 'RunTime'));
+  TypeIdent := Trim(AParams.Get('package_type', 'RunTime'));
   if not IsValidIdent(Name) then
   begin AErr := 'name must be a Pascal identifier, got "' + Name + '"'; Exit; end;
   if not FilenameIsAbsolute(Dir) then
   begin AErr := 'directory must be an absolute path'; Exit; end;
   if not TypeFromIdent(TypeIdent, PkgType) then
-  begin AErr := 'type must be RunTime, DesignTime, RunAndDesignTime or RunTimeOnly'; Exit; end;
+  begin AErr := 'package_type must be RunTime, DesignTime, RunAndDesignTime or RunTimeOnly'; Exit; end;
   if (UnitName <> '') and not IsValidIdent(UnitName) then
   begin AErr := 'unit_name must be a Pascal identifier, got "' + UnitName + '"'; Exit; end;
   Dir := AppendPathDelim(CleanAndExpandDirectory(Dir));

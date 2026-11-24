@@ -202,3 +202,6 @@ gate because nothing runs:
   `rebuilding`, and the IDE rebuilt and restarted. `package_get_info` then
   reported the probe installed and loaded from that file. The refusal while
   installs are off is also tested automatically (`TTestConsent`, ADR-005).
+
+### Amendment (1.8.1): transport is HTTPS only
+The "Transport" bullet above (fall back to plain HTTP) no longer applies: see ADR-018, amendment 1.
