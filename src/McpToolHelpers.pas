@@ -10,7 +10,7 @@ unit McpToolHelpers;
 interface
 
 uses
-  Classes, SysUtils, LazFileUtils, FileUtil, Process, fpjson, jsonparser;
+  Classes, SysUtils, LazFileUtils, FileUtil, fpjson, jsonparser;
 
 { Read the interface section of a Pascal unit (everything above 'implementation'). }
 function McpGetUnitInterface(const FilePath: string; out IsError: Boolean): string;
@@ -93,7 +93,8 @@ function McpCheckPackageWritable(const AName, ALpk: string; out AErr: string): B
 implementation
 
 uses
-  LazIDEIntf, ProjectIntf, PackageIntf, MacroIntf, SrcEditorIntf, McpUtils, McpLimitedMode;
+  LazIDEIntf, ProjectIntf, PackageIntf, MacroIntf, SrcEditorIntf, McpUtils,
+  McpLimitedMode, McpProcess;
 
 procedure AddRoot(ARoots: TStrings; const ADir: string);
 var
@@ -445,11 +446,9 @@ function McpRunLazbuild(const LpkPath: string; out IsError: Boolean;
   AClean: Boolean = False): string;
 var
   LazbuildExe : string;
-  Proc        : TProcess;
-  Chunk       : string = '';
-  BytesRead   : LongInt;
-const
-  BufSize = 4096;
+  Args        : TStringArray = nil;
+  Code        : Integer;
+  Ended       : TMcpRunEnd;
 begin
   IsError := False;
   LazbuildExe := LazbuildPath;
@@ -460,33 +459,14 @@ begin
     Exit;
   end;
 
-  Result := '';
-  Proc   := TProcess.Create(nil);
-  try
-    Proc.Executable := LazbuildExe;
-    if LazbuildPcpArg <> '' then
-      Proc.Parameters.Add(LazbuildPcpArg);
-    if AClean then
-      Proc.Parameters.Add('-B');   { rebuild everything }
-    Proc.Parameters.Add(LpkPath);
-    Proc.Options    := [poUsePipes, poStdErrToOutput, poNoConsole];
-    Proc.ShowWindow := swoHide;
-    Proc.Execute;
-    repeat
-      SetLength(Chunk, BufSize);
-      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
-      if BytesRead > 0 then
-      begin
-        SetLength(Chunk, BytesRead);
-        Result := Result + Chunk;
-      end;
-    until (BytesRead = 0) and not Proc.Running;
-    Proc.WaitOnExit;
-    IsError := Proc.ExitCode <> 0;
-    Result  := FilterLazbuildOutput(Result, IsError);
-  finally
-    Proc.Free;
-  end;
+  if LazbuildPcpArg <> '' then
+    McpAddArg(Args, LazbuildPcpArg);
+  if AClean then
+    McpAddArg(Args, '-B');   { rebuild everything }
+  McpAddArg(Args, LpkPath);
+  Ended   := McpRunCapture(LazbuildExe, Args, '', Result, Code);
+  IsError := (Ended <> reExited) or (Code <> 0);
+  Result  := FilterLazbuildOutput(Result, IsError);
 end;
 
 { ── FPCUnit summary parser ───────────────────────────────────────────────── }
@@ -575,16 +555,13 @@ var
   TestExe     : string;
   BuildOut    : string;
   RunOut      : string;
-  Proc        : TProcess;
-  Chunk       : string = '';
-  BytesRead   : LongInt;
+  Args        : TStringArray = nil;
+  Env         : TStringArray = nil;
+  Code        : Integer;
   Total, Errors, Failures, Ignored : Integer;
   Parsed      : Boolean;
   Obj         : TJSONObject;
-  I           : Integer;
   En          : TJSONEnum;
-const
-  BufSize = 4096;
 begin
   IsError := False;
   LazbuildExe := LazbuildPath;
@@ -603,26 +580,10 @@ begin
   end;
 
   // Step 1: compile.
-  BuildOut := '';
-  Proc     := TProcess.Create(nil);
-  try
-    Proc.Executable := LazbuildExe;
-    if LazbuildPcpArg <> '' then
-      Proc.Parameters.Add(LazbuildPcpArg);
-    Proc.Parameters.Add(ResolvedLpi);
-    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];   { no console window, no focus grab }
-    Proc.ShowWindow := swoHide;
-    Proc.Execute;
-    repeat
-      SetLength(Chunk, BufSize);
-      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
-      if BytesRead > 0 then begin SetLength(Chunk, BytesRead); BuildOut := BuildOut + Chunk; end;
-    until (BytesRead = 0) and not Proc.Running;
-    Proc.WaitOnExit;
-    IsError := Proc.ExitCode <> 0;
-  finally
-    Proc.Free;
-  end;
+  if LazbuildPcpArg <> '' then
+    McpAddArg(Args, LazbuildPcpArg);
+  McpAddArg(Args, ResolvedLpi);
+  IsError := (McpRunCapture(LazbuildExe, Args, '', BuildOut, Code) <> reExited) or (Code <> 0);
 
   if IsError then
   begin
@@ -658,37 +619,19 @@ begin
     Exit;
   end;
 
-  RunOut := '';
-  Proc   := TProcess.Create(nil);
-  try
-    Proc.Executable := TestExe;
-    if Assigned(AEnv) and (AEnv.Count > 0) then
-    begin
-      for I := 0 to GetEnvironmentVariableCount - 1 do
-        Proc.Environment.Add(GetEnvironmentString(I + 1));
-      for En in AEnv do
-        Proc.Environment.Add(En.Key + '=' + En.Value.AsString);
-    end;
-    if ASuite <> '' then
-      Proc.Parameters.Add('--suite=' + ASuite)
-    else
-      Proc.Parameters.Add('--all');
-    Proc.Parameters.Add('--format=plain');
-    if JUnitOut <> '' then
-      Proc.Parameters.Add('--junit-out=' + JUnitOut);
-    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
-    Proc.ShowWindow := swoHide;
-    Proc.Execute;
-    repeat
-      SetLength(Chunk, BufSize);
-      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
-      if BytesRead > 0 then begin SetLength(Chunk, BytesRead); RunOut := RunOut + Chunk; end;
-    until (BytesRead = 0) and not Proc.Running;
-    Proc.WaitOnExit;
-    // Non-zero exit = test failures — not a tool error.
-  finally
-    Proc.Free;
-  end;
+  Args := nil;
+  if Assigned(AEnv) then
+    for En in AEnv do
+      McpAddArg(Env, En.Key + '=' + En.Value.AsString);
+  if ASuite <> '' then
+    McpAddArg(Args, '--suite=' + ASuite)
+  else
+    McpAddArg(Args, '--all');
+  McpAddArg(Args, '--format=plain');
+  if JUnitOut <> '' then
+    McpAddArg(Args, '--junit-out=' + JUnitOut);
+  { a non-zero exit is test failures, not a tool error }
+  McpRunCapture(TestExe, Args, '', RunOut, Code, 0, '', Env);
 
   Parsed := ParseFPCUnitSummary(RunOut, Total, Errors, Failures, Ignored);
 

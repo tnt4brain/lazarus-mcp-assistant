@@ -38,32 +38,30 @@ function GetGitWorkDir(const Ctx: TMcpToolCall): string;
 implementation
 
 uses
-  SysUtils, Process, LazFileUtils, LazIDEIntf, SrcEditorIntf, McpIdeState;
+  SysUtils, LazFileUtils, LazIDEIntf, SrcEditorIntf, McpIdeState, McpProcess;
 
 { The child gets the parent's environment with these set by key (a value the user
   has set is replaced, never doubled): git must never wait for a terminal or an
   editor, whatever the user's configuration says (ADR-028, "every call"). }
-procedure SetGitEnvironment(AProc: TProcess);
-var
-  I : Integer;
+function GitEnvironment(const AExtra: string): TStringArray;
 begin
-  for I := 1 to GetEnvironmentVariableCount do
-    AProc.Environment.Add(GetEnvironmentString(I));
-  AProc.Environment.Values['GIT_TERMINAL_PROMPT'] := '0';
-  AProc.Environment.Values['GIT_EDITOR']          := 'true';
-  AProc.Environment.Values['GIT_MERGE_AUTOEDIT']  := 'no';
+  Result := nil;
+  SetLength(Result, 3);
+  Result[0] := 'GIT_TERMINAL_PROMPT=0';
+  Result[1] := 'GIT_EDITOR=true';
+  Result[2] := 'GIT_MERGE_AUTOEDIT=no';
+  if (AExtra <> '') and (Pos('=', AExtra) > 1) then
+  begin
+    SetLength(Result, 4);
+    Result[3] := AExtra;
+  end;
 end;
 
 function RunGit(const Args: array of string; const WorkDir: string;
   out Output: string; const AInput: string): Boolean;
 var
-  GitExe    : string;
-  Proc      : TProcess;
-  Chunk     : string;
-  BytesRead : LongInt;
-  Arg       : string;
-const
-  BufSize = 4096;
+  GitExe : string;
+  Code   : Integer;
 begin
   GitExe := McpGitExecutable;
   if GitExe = '' then
@@ -72,104 +70,26 @@ begin
               'Tools > Options > MCP Assistant';
     Exit(False);
   end;
-  Output := '';
-  Proc   := TProcess.Create(nil);
-  try
-    Proc.Executable := GitExe;
-    for Arg in Args do
-      Proc.Parameters.Add(Arg);
-    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
-    Proc.ShowWindow := swoHide;
-    if WorkDir <> '' then
-      Proc.CurrentDirectory := WorkDir;
-    SetGitEnvironment(Proc);
-    Proc.Execute;
-    if AInput <> '' then
-      Proc.Input.Write(AInput[1], Length(AInput));
-    Proc.CloseInput;
-    Chunk := '';
-    repeat
-      SetLength(Chunk, BufSize);
-      BytesRead := Proc.Output.Read(Chunk[1], BufSize);
-      if BytesRead > 0 then
-      begin
-        SetLength(Chunk, BytesRead);
-        Output := Output + Chunk;
-      end;
-    until (BytesRead = 0) and not Proc.Running;
-    Proc.WaitOnExit;
-    Result := Proc.ExitCode = 0;
-    if not Result and (Pos('not a git repository', Output) > 0) then
-      Output := Trim(Output) + LineEnding + '(pass work_dir: a directory inside the repository; ' +
-        'without it the saved project''s directory, then the active editor''s file directory is used)';
-  finally
-    Proc.Free;
-  end;
+  Result := (McpRunCapture(GitExe, Args, WorkDir, Output, Code, 0, AInput,
+              GitEnvironment('')) = reExited) and (Code = 0);
+  if not Result and (Pos('not a git repository', Output) > 0) then
+    Output := Trim(Output) + LineEnding + '(pass work_dir: a directory inside the repository; ' +
+      'without it the saved project''s directory, then the active editor''s file directory is used)';
 end;
 
 function RunGitTimed(const AExe: string; const Args: array of string;
   const WorkDir: string; ATimeoutMs: QWord; out Output: string;
   const AInput: string; const AEnv: string): Boolean;
 var
-  Proc     : TProcess;
-  Buf      : string;
-  N        : LongInt;
-  Arg      : string;
-  Started  : QWord;
-  TimedOut : Boolean;
-
-  procedure Drain;
-  begin
-    while Proc.Output.NumBytesAvailable > 0 do
-    begin
-      SetLength(Buf, 4096);
-      N := Proc.Output.Read(Buf[1], 4096);
-      if N <= 0 then Break;
-      SetLength(Buf, N);
-      Output := Output + Buf;
-    end;
-  end;
-
+  Code : Integer;
+  Ended : TMcpRunEnd;
 begin
-  Output   := '';
-  TimedOut := False;
-  Proc     := TProcess.Create(nil);
-  try
-    Proc.Executable := AExe;
-    for Arg in Args do
-      Proc.Parameters.Add(Arg);
-    Proc.Options := [poUsePipes, poStdErrToOutput, poNoConsole];
-    if WorkDir <> '' then
-      Proc.CurrentDirectory := WorkDir;
-    SetGitEnvironment(Proc);
-    if (AEnv <> '') and (Pos('=', AEnv) > 1) then
-      Proc.Environment.Values[Copy(AEnv, 1, Pos('=', AEnv) - 1)] :=
-        Copy(AEnv, Pos('=', AEnv) + 1, MaxInt);
-    Proc.Execute;
-    if AInput <> '' then
-      Proc.Input.Write(AInput[1], Length(AInput));
-    Proc.CloseInput;
-    Started := GetTickCount64;
-    while Proc.Running do
-    begin
-      Drain;
-      if GetTickCount64 - Started > ATimeoutMs then
-      begin
-        TimedOut := True;
-        Proc.Terminate(1);
-        Break;
-      end;
-      Sleep(30);
-    end;
-    Proc.WaitOnExit;
-    Drain;
-    Result := (Proc.ExitCode = 0) and not TimedOut;
-    if TimedOut then
-      Output := Output + LineEnding + 'git was stopped after ' +
-        IntToStr(ATimeoutMs div 60000) + ' minutes.';
-  finally
-    Proc.Free;
-  end;
+  Ended  := McpRunCapture(AExe, Args, WorkDir, Output, Code, ATimeoutMs, AInput,
+              GitEnvironment(AEnv));
+  Result := (Ended = reExited) and (Code = 0);
+  if Ended = reTimedOut then
+    Output := Output + LineEnding + 'git was stopped after ' +
+      IntToStr(ATimeoutMs div 60000) + ' minutes.';
 end;
 
 procedure McpUnsavedEditors(AFiles: TStrings);

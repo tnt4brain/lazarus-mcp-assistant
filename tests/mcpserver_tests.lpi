@@ -19,7 +19,7 @@
         <PackageName Value="LazUtils"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="46">
+    <Units Count="47">
       <Unit0>
         <Filename Value="mcpserver_tests.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -208,6 +208,10 @@
         <Filename Value="tgitservetests.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit46>
+      <Unit47>
+        <Filename Value="tmcpprocess.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit47>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
