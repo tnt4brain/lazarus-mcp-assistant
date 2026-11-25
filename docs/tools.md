@@ -43,6 +43,8 @@ prompts, skills and permission allow-lists, is in [renamed-tools.md](renamed-too
 | `editor_replace_range` | Replace a range given by start and end, or start and `delete_len` (no end inserts, empty text deletes) — for coordinates from `code_*` tools |
 | `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
 | `editor_revert` | Discard unsaved changes and reload from disk |
+| `editor_undo` | Undo in an open file's editor (same stack as Ctrl+Z): steps, or back to the saved file |
+| `editor_redo` | Redo what was undone, steps |
 | `editor_close` | Close a tab, discarding unsaved changes |
 
 Where the editing tools may write, and what the limits do not do: see [write-scope.md](write-scope.md).

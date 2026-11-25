@@ -43,6 +43,7 @@ type
     procedure TestArgsValidated;
     procedure TestCodeToolsKeepDiskUntouched;
     procedure TestAddUnknownPackageRefused;
+    procedure TestEditorUndoRedo;
     procedure TestProjectListPackages;
     procedure TestDebugGetState;
   end;
@@ -758,6 +759,66 @@ begin
       T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
       CheckTrue((Pos('// unsaved', T) = 0) and (Pos('Classes', T) = 0),
         'revert is the saved file: ' + T);
+    finally
+      Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+      Call('editor_close', '{"file":' + JsonStr(F) + '}');
+      DeleteFile(F);
+      RemoveDir(ExtractFileDir(F));
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
+{ editor_undo and editor_redo walk the editor's own stack: one tool edit is one step; to_saved goes
+  back to the file on disk; a file that is not open is refused, nothing is opened }
+procedure TTestToolSmoke.TestEditorUndoRedo;
+var
+  F, T : string;
+  SL   : TStringList;
+begin
+  F  := GetTempDir(False) + 'mcpundo' + PathDelim + 'undo.pas';
+  ForceDirectories(ExtractFileDir(F));
+  SL := TStringList.Create;
+  try
+    SL.Text := 'unit undo;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+               'interface' + LineEnding + 'implementation' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(F);
+    try
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('TOOL ERROR', T) = 1, 'not open: refused: ' + T);
+      CheckTrue(Pos('not open', T) > 0, 'says why: ' + T);
+      CheckTrue(Pos('undo.pas', Call('editor_list_open', '{}')) = 0, 'nothing was opened');
+
+      Call('editor_open', '{"file":' + JsonStr(F) + '}');
+      Call('editor_edit_text', '{"file":' + JsonStr(F) +
+           ',"old_text":"interface","new_text":"// one\ninterface"}');
+      Call('editor_edit_text', '{"file":' + JsonStr(F) +
+           ',"old_text":"implementation","new_text":"// two\nimplementation"}');
+
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + '}');
+      CheckNoError(Self, 'editor_undo', T);
+      CheckTrue(Pos('"steps":1', T) > 0, 'one step: ' + T);
+      CheckTrue(Pos('"can_redo":true', T) > 0, 'can redo: ' + T);
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue((Pos('// two', T) = 0) and (Pos('// one', T) > 0), 'only the last edit is undone: ' + T);
+
+      T := Call('editor_redo', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('"steps":1', T) > 0, 'redo took a step: ' + T);
+      CheckTrue(Pos('"can_redo":false', T) > 0, 'nothing more to redo: ' + T);
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('// two', T) > 0, 'redone: ' + T);
+
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + ',"to_saved":true}');
+      CheckTrue(Pos('"steps":2', T) > 0, 'two steps back to the saved file: ' + T);
+      CheckTrue(Pos('"modified":false', T) > 0, 'not modified any more: ' + T);
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue((Pos('// one', T) = 0) and (Pos('// two', T) = 0), 'both edits gone: ' + T);
+
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('"steps":0', T) > 0, 'nothing left to undo: ' + T);
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + ',"steps":0}');
+      CheckTrue(Pos('TOOL ERROR', T) = 1, 'steps 0 refused: ' + T);
     finally
       Call('editor_revert', '{"file":' + JsonStr(F) + '}');
       Call('editor_close', '{"file":' + JsonStr(F) + '}');

@@ -51,7 +51,7 @@ implementation
 
 const
   { tool, argument, use }
-  PATHS : array[0..121] of string = (
+  PATHS : array[0..123] of string = (
     { ---- reads ---- }
     'code_find_declaration|file|R', 'code_find_descendants|file|R', 'code_find_overrides|file|R',
     'code_find_references|file|R', 'code_find_unused|file|R', 'code_get_identifier_info|file|R',
@@ -74,6 +74,7 @@ const
     'package_uninstall|lpk_path|R', 'ide_run_tests|test_project|R',
     'debug_set_breakpoint|file|R', 'debug_remove_breakpoint|file|R', 'debug_run_to_line|file|R',
     'editor_save|file|R', 'editor_close|file|R', 'editor_revert|file|R',
+    'editor_undo|file|R', 'editor_redo|file|R',
     'project_add_file|file|R', 'project_remove_file|file|R', 'project_remove_package|lpk_path|R',
     'package_remove_file|file|R', 'package_add_file|file|R', 'package_move_unit|file|R',
     'git_resolve|file|R',
@@ -109,7 +110,7 @@ const
     'form_create|lpk_path|N');
 
   { not read-only, no path argument }
-  NOPATH : array[0..35] of string = (
+  NOPATH : array[0..37] of string = (
     'debug_add_watch|g', 'debug_attach|f', 'debug_pause|g', 'debug_remove_watch|g',
     'debug_run|f', 'debug_select_frame|g', 'debug_set_variable|g', 'debug_step|f',
     'debug_stop|g', 'ide_answer_dialog|g', 'ide_rebuild|f', 'package_download|f',
@@ -117,6 +118,7 @@ const
     'project_run_output|f', 'project_set_settings|c',
     'debug_set_breakpoint|c', 'debug_remove_breakpoint|c', 'debug_run_to_line|f',
     'editor_save|d', 'editor_close|d', 'editor_revert|d',
+    'editor_undo|d', 'editor_redo|d',
     'project_add_file|c', 'project_remove_file|c', 'project_add_package|c',
     'project_remove_package|c', 'package_install|f', 'package_uninstall|f',
     'package_compile|f', 'project_clean|f', 'ide_run_tests|f', 'package_move_unit|p',
