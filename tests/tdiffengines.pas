@@ -26,6 +26,8 @@ type
     procedure TestLargeEditsStillRebuildTheText;
     procedure TestInsertedDuplicateSlidesDown;
     procedure TestEditsFarApartAreSeparateHunks;
+    procedure TestMostlyRepeatedLinesStaySmall;
+    procedure TestTooManyEditsInRepeatedLinesStillRebuildTheText;
   end;
 
 implementation
@@ -165,6 +167,52 @@ end;
 
 { A text of thousands of lines with a change every few lines: more than the table holds,
   so the anchors are used; the hunks must still rebuild the text. }
+{ 20000 lines of six distinct values and three edited lines: no line is unique, the table is too big,
+  so the anchors have nothing to hold on to.  Myers finds the three edits (before it was one hunk of
+  most of the file). }
+procedure TTestDiffEngines.TestMostlyRepeatedLinesStaySmall;
+var
+  A, B : TDiffLines;
+  H    : TDiffHunks;
+  I    : Integer;
+begin
+  A := nil;
+  B := nil;
+  SetLength(A, 20000);
+  SetLength(B, 20000);
+  for I := 0 to 19999 do
+  begin
+    A[I] := 'value ' + IntToStr(I mod 6);
+    B[I] := A[I];
+  end;
+  B[3000] := 'edited a';
+  B[9001] := 'edited b';
+  B[15002] := 'edited c';
+  H := DiffLines(A, B);
+  CheckHunks('repeated', A, B, H);
+  CheckTrue(Length(H) <= 6, 'a few hunks, not one for the file: ' + IntToStr(Length(H)));
+  CheckTrue(Edits(H) <= 12, 'only the edited lines changed: ' + IntToStr(Edits(H)));
+end;
+
+{ more differences than Myers looks for, in lines that repeat: one big hunk is allowed, the texts
+  must still be rebuilt from it }
+procedure TTestDiffEngines.TestTooManyEditsInRepeatedLinesStillRebuildTheText;
+var
+  A, B : TDiffLines;
+  I    : Integer;
+begin
+  A := nil;
+  B := nil;
+  SetLength(A, 20000);
+  SetLength(B, 20000);
+  for I := 0 to 19999 do
+  begin
+    A[I] := 'value ' + IntToStr(I mod 6);
+    if I mod 5 = 2 then B[I] := 'other ' + IntToStr(I mod 4) else B[I] := A[I];
+  end;
+  CheckHunks('many', A, B, DiffLines(A, B));
+end;
+
 procedure TTestDiffEngines.TestLargeEditsStillRebuildTheText;
 var
   A, B : TDiffLines;

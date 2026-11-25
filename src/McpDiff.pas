@@ -214,6 +214,88 @@ begin
   Result := PtrInt(Index.Objects[X]);
 end;
 
+const
+  { most changed lines Myers' search looks for before it gives up (the trace costs about its square) }
+  MyersMaxEdits = 1500;
+
+{ Myers' O(ND) difference of A[AOff..AOff+N-1] and B[BOff..BOff+M-1]: ADel/BIns mark the lines that
+  are not part of the common subsequence.  False when more than MyersMaxEdits lines differ.  It is
+  the middle tier of DiffLines: where the table is too big and the lines are not unique (a file of
+  mostly repeated lines), the anchors have nothing to hold on to, and a few edits are cheap here. }
+function MyersMarks(const A, B: TDiffLines; AOff, N, BOff, M: Integer;
+  var ADel, BIns: array of Boolean): Boolean;
+var
+  DMax, Off, D, K, X, Y, PrevK, PrevX, PrevY: Integer;
+  V    : array of Integer = nil;
+  Trace: array of array of Integer = nil;
+  Found: Boolean;
+begin
+  Result := False;
+  DMax := N + M;
+  if DMax > MyersMaxEdits then DMax := MyersMaxEdits;
+  Off := DMax + 1;
+  SetLength(V, 2 * DMax + 3);
+  SetLength(Trace, DMax + 1);
+  V[Off + 1] := 0;
+  Found := False;
+  D := 0;
+  while D <= DMax do
+  begin
+    SetLength(Trace[D], 2 * D + 3);
+    Move(V[Off - D - 1], Trace[D][0], (2 * D + 3) * SizeOf(Integer));
+    K := -D;
+    while K <= D do
+    begin
+      if (K = -D) or ((K <> D) and (V[Off + K - 1] < V[Off + K + 1])) then
+        X := V[Off + K + 1]
+      else
+        X := V[Off + K - 1] + 1;
+      Y := X - K;
+      while (X < N) and (Y < M) and (A[AOff + X] = B[BOff + Y]) do
+      begin
+        Inc(X);
+        Inc(Y);
+      end;
+      V[Off + K] := X;
+      if (X >= N) and (Y >= M) then
+      begin
+        Found := True;
+        Break;
+      end;
+      Inc(K, 2);
+    end;
+    if Found then Break;
+    Inc(D);
+  end;
+  if not Found then Exit;
+  { back from (N, M) }
+  X := N;
+  Y := M;
+  while D > 0 do
+  begin
+    K := X - Y;
+    if (K = -D) or ((K <> D) and (Trace[D][K - 1 + D + 1] < Trace[D][K + 1 + D + 1])) then
+      PrevK := K + 1
+    else
+      PrevK := K - 1;
+    PrevX := Trace[D][PrevK + D + 1];
+    PrevY := PrevX - PrevK;
+    while (X > PrevX) and (Y > PrevY) do
+    begin
+      Dec(X);
+      Dec(Y);
+    end;
+    if X = PrevX then
+      BIns[PrevY] := True      { a line of B that A has not }
+    else
+      ADel[PrevX] := True;     { a line of A that B has not }
+    X := PrevX;
+    Y := PrevY;
+    Dec(D);
+  end;
+  Result := True;
+end;
+
 function DiffLines(const A, B: TDiffLines): TDiffHunks;
 const
   MaxCells = 4000000;  { the largest table for one exact match }
@@ -270,6 +352,37 @@ var
         Inc(I)
       else
         Inc(J);
+  end;
+
+  { Myers on A[ALo..AHi-1], B[BLo..BHi-1]: False (nothing matched) when more than MyersMaxEdits differ. }
+  function MyersMatch(ALo, AHi, BLo, BHi: Integer): Boolean;
+  var
+    N, M, I, J : Integer;
+    ADel, BIns : array of Boolean;
+  begin
+    N := AHi - ALo;
+    M := BHi - BLo;
+    ADel := nil;
+    BIns := nil;
+    SetLength(ADel, N);
+    SetLength(BIns, M);
+    for I := 0 to N - 1 do ADel[I] := False;
+    for J := 0 to M - 1 do BIns[J] := False;
+    Result := MyersMarks(A, B, ALo, N, BLo, M, ADel, BIns);
+    if not Result then Exit;
+    I := 0;
+    J := 0;
+    while (I < N) or (J < M) do
+    begin
+      while (I < N) and ADel[I] do Inc(I);
+      while (J < M) and BIns[J] do Inc(J);
+      if (I < N) and (J < M) then
+      begin
+        AddMatch(ALo + I, BLo + J);
+        Inc(I);
+        Inc(J);
+      end;
+    end;
   end;
 
   procedure Match(ALo, AHi, BLo, BHi: Integer); forward;
@@ -360,7 +473,7 @@ var
     if (AHi - Tail > ALo) and (BHi - Tail > BLo) then
       if Int64(AHi - Tail - ALo + 1) * (BHi - Tail - BLo + 1) <= MaxCells then
         TableMatch(ALo, AHi - Tail, BLo, BHi - Tail)
-      else
+      else if not MyersMatch(ALo, AHi - Tail, BLo, BHi - Tail) then
         AnchorMatch(ALo, AHi - Tail, BLo, BHi - Tail);  { none: one hunk }
     for X := Tail downto 1 do
       AddMatch(AHi - X, BHi - X);
