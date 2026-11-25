@@ -120,6 +120,7 @@ const
     '"also":{"type":"array","items":{"type":"string"},"description":"Also search other sources: same_folder (the file''s folder), lcl, components, rtl, fcl (FPC packages), packages (the packages loaded in the IDE). Only files that mention the name are parsed. The answer then is an object with references, extra_files_searched and truncated"},' +
     '"search_dir":{"type":"string","description":"Also search this folder and its subfolders"},' +
     '"max_files":{"type":"integer","description":"At most this many extra files that mention the name are searched (default 300; 0 searches none); the answer says truncated if there were more"},' +
+    '"max_seconds":{"type":"number","description":"Stop searching more files after this many seconds (default 15; 0 = no limit); the IDE is busy meanwhile. The answer is then an object with truncated and files_not_searched"},' +
     PKG_SCOPE_PROPS + '},' +
     '"required":["file","line","col"]}';
 
@@ -1085,6 +1086,138 @@ begin
   Result := AddExtraFiles(Params, Code, X, Y, Files, Used, Truncated, Searched, Err);
 end;
 
+const
+  DefaultMaxSeconds : Double = 15;
+  RefChunk          = 25;      { files per CodeTools call: the clock is read between calls }
+  RefMaxResults     = 2000;
+
+{ The references of the identifier at DeclPt of Code in Files, as JSON.  The files go to CodeTools
+  RefChunk at a time, so that the time limit can stop the search between two calls.  A chunk
+  CodeTools refuses (one file it cannot parse) is tried file by file; the files that fail are
+  listed, not fatal.  The answer stays a plain array unless something has to be said besides the
+  references (an extra scope was asked for, the search was cut short, a file failed). }
+function McpFindReferences(Code: TCodeBuffer; DeclPt: TPoint; Files: TStringList;
+  MaxSeconds: Double; ExtraUsed, ExtraTrunc: Boolean; ExtraCount: Integer;
+  out Json, Err: string): Boolean;
+var
+  Refs, Failed : TJSONArray;
+  Obj, F       : TJSONObject;
+  Chunk, One   : TStringList;
+  I, J, Left   : Integer;
+  Started      : QWord;
+  AnyOk, Cut   : Boolean;
+  LastErr      : string;
+
+  function RunChunk(AFiles: TStringList): Boolean;
+  var
+    Tree : TAVLTree;
+    Node : TAVLTreeNode;
+    Pos  : PCodeXYPosition;
+    O    : TJSONObject;
+  begin
+    Tree := nil;
+    Result := CodeToolBoss.FindReferencesInFiles(AFiles, Code, DeclPt, False, Tree);
+    if Result then
+    begin
+      if Assigned(Tree) then
+      begin
+        Node := Tree.FindLowest;
+        while Assigned(Node) do
+        begin
+          Pos := PCodeXYPosition(Node.Data);
+          O := TJSONObject.Create;
+          O.Add('file', Pos^.Code.Filename);
+          O.Add('line', Pos^.Y);
+          O.Add('col',  Pos^.X);
+          Refs.Add(O);
+          Node := Node.Successor;
+        end;
+      end;
+    end
+    else
+      LastErr := CodeToolBoss.ErrorMessage;
+    if Assigned(Tree) then
+      CodeToolBoss.FreeTreeOfPCodeXYPosition(Tree);
+  end;
+
+begin
+  Result := False;
+  Json := ''; Err := '';
+  Refs := TJSONArray.Create;
+  Failed := TJSONArray.Create;
+  Chunk := TStringList.Create;
+  One := TStringList.Create;
+  try
+    Started := GetTickCount64;
+    AnyOk := False; Cut := False; Left := 0; LastErr := '';
+    I := 0;
+    while I < Files.Count do
+    begin
+      Chunk.Clear;
+      J := I + RefChunk;
+      if J > Files.Count then J := Files.Count;
+      while I + Chunk.Count < J do
+        Chunk.Add(Files[I + Chunk.Count]);
+      Inc(I, Chunk.Count);
+      if RunChunk(Chunk) then
+        AnyOk := True
+      else
+      begin
+        for J := 0 to Chunk.Count - 1 do
+        begin
+          One.Clear;
+          One.Add(Chunk[J]);
+          if RunChunk(One) then
+            AnyOk := True
+          else
+          begin
+            F := TJSONObject.Create;
+            F.Add('file', Chunk[J]);
+            F.Add('error', LastErr);
+            Failed.Add(F);
+          end;
+        end;
+        if not AnyOk then
+        begin
+          { not one file could be searched: the position, not the files }
+          Err := LastErr;
+          if Err = '' then
+            Err := 'no identifier at line ' + IntToStr(DeclPt.Y) + ', col ' + IntToStr(DeclPt.X);
+          Exit;
+        end;
+      end;
+      if (I < Files.Count) and
+         ((Refs.Count >= RefMaxResults) or
+          ((MaxSeconds > 0) and (GetTickCount64 - Started >= QWord(Round(MaxSeconds * 1000))))) then
+      begin
+        Cut := True;
+        Left := Files.Count - I;
+        Break;
+      end;
+    end;
+    if ExtraUsed or ExtraTrunc or Cut or (Failed.Count > 0) then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('references', Refs); Refs := nil;
+        if ExtraUsed then Obj.Add('extra_files_searched', ExtraCount);
+        if ExtraTrunc or Cut then Obj.Add('truncated', True);
+        if Cut then Obj.Add('files_not_searched', Left);
+        if Failed.Count > 0 then begin Obj.Add('failed', Failed); Failed := nil; end;
+        Json := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+    else
+      Json := Refs.AsJSON;
+    Result := True;
+  finally
+    One.Free; Chunk.Free;
+    Failed.Free; Refs.Free;     { nil once they went into Obj }
+  end;
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 { The statements of the body whose begin block is BeginNode.  McpStatements has no scanner: the
@@ -1332,11 +1465,6 @@ var
   Entry      : TJSONObject;
   FileListJ  : TJSONArray;
   FileNames  : TStringList;
-  RefTree    : TAVLTree;
-  RefNode    : TAVLTreeNode;
-  RefPos     : PCodeXYPosition;
-  RefArr     : TJSONArray;
-  RefObj     : TJSONObject;
   Obj        : TJSONObject;
   Ed         : TSourceEditorInterface;
   Proj       : TLazProject;
@@ -1578,7 +1706,6 @@ begin
       end;
       FileListJ := TJSONArray(GetJSON(TmpCtx.Result));
       FileNames := TStringList.Create;
-      RefTree   := nil;
       try
         for En in FileListJ do
           FileNames.Add(En.Value.AsString);
@@ -1593,54 +1720,17 @@ begin
           Ctx.Error := True; Ctx.Result := ExtraErr; Exit;
         end;
         DeclPt := Point(NewX, NewY);
-        if not CodeToolBoss.FindReferencesInFiles(FileNames, CodeBuf,
-               DeclPt, False, RefTree) then
+        if not McpFindReferences(CodeBuf, DeclPt, FileNames,
+               Ctx.Params.Get('max_seconds', DefaultMaxSeconds),
+               ExtraUsed, ExtraTrunc, ExtraCount, Ctx.Result, ExtraErr) then
         begin
           Ctx.Error  := True;
-          Ctx.Result := 'FindReferences failed: ' +
-            IfThen(CodeToolBoss.ErrorMessage <> '', CodeToolBoss.ErrorMessage,
-                   'no identifier at line ' + IntToStr(NewY) + ', col ' + IntToStr(NewX));
+          Ctx.Result := 'FindReferences failed: ' + ExtraErr;
           Exit;
-        end;
-        RefArr := TJSONArray.Create;
-        try
-          if Assigned(RefTree) then
-          begin
-            RefNode := RefTree.FindLowest;
-            while Assigned(RefNode) do
-            begin
-              RefPos := PCodeXYPosition(RefNode.Data);
-              RefObj := TJSONObject.Create;
-              RefObj.Add('file', RefPos^.Code.Filename);
-              RefObj.Add('line', RefPos^.Y);
-              RefObj.Add('col',  RefPos^.X);
-              RefArr.Add(RefObj);
-              RefNode := RefNode.Successor;
-            end;
-          end;
-          if ExtraUsed then
-          begin
-            { with an extra scope the answer says how far the search went }
-            Obj := TJSONObject.Create;
-            try
-              Obj.Add('references', RefArr.Clone as TJSONArray);
-              Obj.Add('extra_files_searched', ExtraCount);
-              if ExtraTrunc then
-                Obj.Add('truncated', True);
-              Ctx.Result := Obj.AsJSON;
-            finally
-              Obj.Free;
-            end;
-          end else
-            Ctx.Result := RefArr.AsJSON;
-        finally
-          RefArr.Free;
         end;
       finally
         FileNames.Free;
         FileListJ.Free;
-        if Assigned(RefTree) then
-          CodeToolBoss.FreeTreeOfPCodeXYPosition(RefTree);
       end;
     end;
 

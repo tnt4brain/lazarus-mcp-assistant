@@ -33,6 +33,8 @@ type
     procedure TestAlsoSameFolder;
     procedure TestSearchDirAndLimit;
     procedure TestAlsoUnknownScope;
+    procedure TestSearchTimeLimit;
+    procedure TestBrokenFileIsListed;
     procedure TestAddToClassIndent;
     procedure TestAddToClassPublishedAfterImplicit;
     procedure TestRevertOfAMissingFile;
@@ -290,6 +292,44 @@ begin
     ',"line":5,"col":3,"also":["moon"]}', []);
   CheckTrue(IsError(T) and (Pos('Unknown "also" scope moon', T) > 0), T);
 end;
+{ a search over more files than one CodeTools call takes stops when the time is up, and says so }
+procedure TTestFindDeclaration.TestSearchTimeLimit;
+var
+  T, Base, Sub : string;
+  I            : Integer;
+begin
+  Sub := FDir;       { next to helperu.pas, or "uses helperu" does not resolve }
+  for I := 1 to 80 do
+    Save(Sub + 'm' + IntToStr(I) + '.pas',
+      'unit m' + IntToStr(I) + ';' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+      'interface' + LineEnding + 'uses helperu;' + LineEnding + 'var H: THelper;' + LineEnding +
+      'implementation' + LineEnding + 'end.' + LineEnding);
+  Base := '{"file":' + JsonStr(FDir + 'helperu.pas') + ',"line":5,"col":3,"search_dir":' +
+          JsonStr(ExcludeTrailingPathDelimiter(Sub));
+  T := CallToolText('code_find_references', Base + ',"max_seconds":0.001}', []);
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"truncated":true', T) > 0, 'cut short: ' + T);
+  CheckTrue(Pos('"files_not_searched"', T) > 0, 'says how many were left: ' + T);
+  T := CallToolText('code_find_references', Base + ',"max_seconds":0}', []);
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"files_not_searched"', T) = 0, 'no limit, nothing left: ' + T);
+  CheckTrue(Pos('m80.pas', FilesOf(T)) > 0, 'the last file was searched: ' + T);
+end;
+
+{ a file CodeTools cannot parse does not fail the whole search: it is listed }
+procedure TTestFindDeclaration.TestBrokenFileIsListed;
+var
+  T, Base : string;
+begin
+  Save(FDir + 'broken.pas',
+    'unit broken;' + LineEnding + 'interface' + LineEnding + 'uses helperu;' + LineEnding +
+    'var H: THelper; begin begin begin' + LineEnding);   { no end, not a unit }
+  Base := '{"file":' + JsonStr(FDir + 'helperu.pas') + ',"line":5,"col":3,"also":["same_folder"]}';
+  T := CallToolText('code_find_references', Base, []);
+  CheckFalse(IsError(T), 'the search still answers: ' + T);
+  CheckTrue(Pos('user.pas', FilesOf(T)) > 0, 'the good files are searched: ' + T);
+end;
+
 { code_add_to_class indents the new member like the ones around it. }
 procedure TTestFindDeclaration.TestAddToClassIndent;
 var
