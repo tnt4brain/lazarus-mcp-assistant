@@ -307,11 +307,15 @@ begin
     repeat
       if (SR.Name = '.') or (SR.Name = '..') then Continue;
       Path := Dir + SR.Name;
-      if ((SR.Attr and faDirectory) <> 0) and ((SR.Attr and faSymLink) = 0) then
+      { FindFirst does not flag a directory link on Linux (attr $30, no faSymLink) and the
+        walk then deleted what the link pointed at: ask the file system itself }
+      if ((SR.Attr and faDirectory) <> 0) and ((SR.Attr and faSymLink) = 0) and
+         not FileIsSymlink(Path) then
         McpDeleteTree(Path)
       else
       begin
-        FileSetAttr(Path, 0);   { a read-only file is deleted too }
+        if not FileIsSymlink(Path) then
+          FileSetAttr(Path, 0);   { a read-only file is deleted too; a link would change its target }
         if not SysUtils.DeleteFile(Path) then RemoveDir(Path);   { a directory link goes with RemoveDir }
       end;
     until FindNext(SR) <> 0;
