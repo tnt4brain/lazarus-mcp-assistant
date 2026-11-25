@@ -1218,6 +1218,34 @@ begin
   end;
 end;
 
+{ Where the identifier at X/Y of Code is declared: file, line, col, and the lines around it, numbered.
+  nil when CodeTools finds no declaration. }
+function DeclarationInfo(Code: TCodeBuffer; X, Y: Integer): TJSONObject;
+var
+  DCode : TCodeBuffer;
+  DX, DY, DTop, DBlockTop, DBlockBottom, I, First, Last : Integer;
+  Snip  : string;
+begin
+  Result := nil;
+  if (X < 1) or (Y < 1) then Exit;
+  DCode := nil;
+  if not CodeToolBoss.FindDeclaration(Code, X, Y, DCode, DX, DY, DTop,
+                                      DBlockTop, DBlockBottom) then Exit;
+  if (DCode = nil) or (DY < 1) then Exit;
+  First := DY - 2;
+  if First < 1 then First := 1;
+  Last := DY + 2;
+  if Last > DCode.LineCount then Last := DCode.LineCount;
+  Snip := '';
+  for I := First to Last do
+    Snip := Snip + IntToStr(I) + ': ' + Copy(DCode.GetLine(I - 1, False), 1, 256) + #10;
+  Result := TJSONObject.Create;
+  Result.Add('file',    DCode.Filename);
+  Result.Add('line',    DY);
+  Result.Add('col',     DX);
+  Result.Add('snippet', Snip);
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 { The statements of the body whose begin block is BeginNode.  McpStatements has no scanner: the
@@ -1611,7 +1639,18 @@ begin
         Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
       end;
       Snippet := CodeToolBoss.FindSmartHint(CodeBuf, NewX, NewY);
-      Ctx.Result := '{"hint":' + TJSONString.Create(Snippet).AsJSON + '}';
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('hint', Snippet);
+        if NewY >= 1 then
+          Obj.Add('line_text', Copy(Trim(CodeBuf.GetLine(NewY - 1, False)), 1, 256));
+        Entry := DeclarationInfo(CodeBuf, NewX, NewY);
+        if Entry <> nil then
+          Obj.Add('declaration', Entry);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
 
     'code_get_outline':
@@ -2333,8 +2372,9 @@ begin
     '(everything above the implementation keyword).',
     SCHEMA_GET_UNIT_INTERFACE, MCP_ANN_RO));
   Tools.Add(MakeTool('code_get_identifier_info',
-    'Return type, declaration location, and hint text for the identifier ' +
-    'at a given file/line/col using Codetools FindSmartHint.',
+    'What the identifier at a file/line/col is, in one call: the IDE''s hint text (kind, type, ' +
+    'owner), the text of that line, and where it is declared (file, line, col, and the lines ' +
+    'around the declaration, numbered). declaration is left out when CodeTools finds none.',
     SCHEMA_GET_IDENTIFIER_CONTEXT, MCP_ANN_RO));
   Tools.Add(MakeTool('code_get_outline',
     'Return the structural outline of a Pascal unit: uses clauses, type ' +

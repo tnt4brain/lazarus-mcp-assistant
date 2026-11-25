@@ -33,6 +33,7 @@ type
     procedure TestAlsoSameFolder;
     procedure TestSearchDirAndLimit;
     procedure TestAlsoUnknownScope;
+    procedure TestIdentifierInfoHasDeclaration;
     procedure TestSearchTimeLimit;
     procedure TestBrokenFileIsListed;
     procedure TestAddToClassIndent;
@@ -292,6 +293,35 @@ begin
     ',"line":5,"col":3,"also":["moon"]}', []);
   CheckTrue(IsError(T) and (Pos('Unknown "also" scope moon', T) > 0), T);
 end;
+{ THelper at line 11 of user.pas: the hint, the line, and the declaration in helperu.pas }
+procedure TTestFindDeclaration.TestIdentifierInfoHasDeclaration;
+var
+  T : string;
+  D : TJSONData;
+  O, Decl : TJSONObject;
+begin
+  T := CallToolText('code_get_identifier_info',
+    '{"file":' + JsonStr(FDir + 'user.pas') + ',"line":11,"col":7}', []);
+  CheckFalse(IsError(T), T);
+  D := GetJSON(T);
+  try
+    O := TJSONObject(D);
+    CheckTrue(O.Get('hint', '') <> '', 'a hint: ' + T);
+    CheckTrue(Pos('THelper', O.Get('line_text', '')) > 0, 'the line: ' + T);
+    Decl := O.Find('declaration') as TJSONObject;
+    CheckTrue(Decl <> nil, 'a declaration: ' + T);
+    CheckEquals('helperu.pas', ExtractFileName(Decl.Get('file', '')), T);
+    CheckEquals(5, Decl.Get('line', 0), T);
+    CheckTrue(Pos('5:   THelper = class', Decl.Get('snippet', '')) > 0, 'numbered lines: ' + T);
+  finally
+    D.Free;
+  end;
+  T := CallToolText('code_get_identifier_info',
+    '{"file":' + JsonStr(FDir + 'user.pas') + ',"line":6,"col":1}', []);
+  CheckFalse(IsError(T), 'a keyword has no declaration, and that is no error: ' + T);
+  CheckTrue(Pos('"declaration"', T) = 0, 'none: ' + T);
+end;
+
 { a search over more files than one CodeTools call takes stops when the time is up, and says so }
 procedure TTestFindDeclaration.TestSearchTimeLimit;
 var
