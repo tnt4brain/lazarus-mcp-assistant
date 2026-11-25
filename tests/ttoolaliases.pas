@@ -27,6 +27,7 @@ type
     procedure TestOtherToolsAndNilAreLeftAlone;
     procedure TestNothingToTranslate;
     procedure TestFusedToolGetsItsFixedArgument;
+    procedure TestStrictModeRefusesOldNames;
     procedure TestShippedDocumentsTeachCurrentNames;
     procedure TestRenamedToolsDocListsEveryEntry;
   end;
@@ -207,6 +208,47 @@ begin
   P := Call('{"name":"editor_open","arguments":{"file":"a.pas"}}', 's', N, E);
   try
     CheckEquals('', N, 'the current name needs no notice');
+  finally
+    P.Free;
+  end;
+end;
+
+{ strict mode (1.9): an old name is refused with the new one, the current names pass untouched }
+procedure TTestToolAliases.TestStrictModeRefusesOldNames;
+var
+  P : TJSONObject;
+  N, E : string;
+begin
+  McpAliasSetStrict(True);
+  try
+    P := Call('{"name":"editor_open","arguments":{"file_path":"x.pas"}}', 's', N, E);
+    try
+      CheckTrue(Pos('"file_path"', E) > 0, 'names the old parameter: ' + E);
+      CheckTrue(Pos('"file"', E) > 0, 'names the new one: ' + E);
+    finally
+      P.Free;
+    end;
+    P := Call('{"name":"debug_step_into"}', 's', N, E);
+    try
+      CheckTrue(Pos('debug_step_into', E) > 0, 'names the old tool: ' + E);
+      CheckTrue(Pos('kind=', E) > 0, 'and what it became: ' + E);
+      CheckEquals('debug_step_into', P.Get('name', ''), 'the request is left as it was');
+    finally
+      P.Free;
+    end;
+    P := Call('{"name":"editor_open","arguments":{"file":"x.pas"}}', 's', N, E);
+    try
+      CheckEquals('', E, 'current names pass');
+      CheckEquals('', N, 'with no notice');
+    finally
+      P.Free;
+    end;
+  finally
+    McpAliasSetStrict(False);
+  end;
+  P := Call('{"name":"editor_open","arguments":{"file_path":"x.pas"}}', 's', N, E);
+  try
+    CheckEquals('', E, 'off again: translated');
   finally
     P.Free;
   end;

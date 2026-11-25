@@ -1355,6 +1355,7 @@ begin
 
   { Old tool and parameter names become the current ones, in place, before anything looks at
     them (ADR-031); the client is told once per session and old name }
+  McpAliasSetStrict(Assigned(McpSettings) and McpSettings.AliasStrict);
   McpTranslateCall(Params, AClientId, AliasNotice, AliasErr);
   ToolName := Params.Get('name', '');
   Args     := TJSONObject(Params.Find('arguments'));
@@ -1790,6 +1791,7 @@ begin
           IfThen(GetServerPort = McpSettings.ServerPort, '',
                  ' (saved; this run listens on ' + IntToStr(GetServerPort) + ')') + LineEnding +
           '- assistants may install packages: ' + YesNo(McpSettings.AllowPackageInstall) + LineEnding +
+          '- old tool and parameter names refused (strict): ' + YesNo(McpSettings.AliasStrict) + LineEnding +
           '- limited mode (file access of the tools): ' +
           IfThen(McpLimitedOn, 'on, allowed folders ' + McpLimitFoldersText, 'off') + LineEnding +
           '- tool-call log: ' + YesNo(McpSettings.ToolCallLog) + LineEnding +
