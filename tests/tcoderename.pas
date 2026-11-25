@@ -14,7 +14,7 @@ unit TCodeRename;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestCodeRename = class(TTestCase)
@@ -116,7 +116,7 @@ begin
     CallToolText('editor_revert', '{"file":' + JsonStr(F) + '}', []);
     CallToolText('editor_close', '{"file":' + JsonStr(F) + '}', []);
   end;
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));
 end;
 

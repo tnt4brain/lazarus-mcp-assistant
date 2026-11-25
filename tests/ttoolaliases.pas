@@ -36,6 +36,7 @@ type
   published
     procedure TestTableMatchesToolList;
     procedure TestOldCallsAnswerLikeNewOnes;
+    procedure TestToolListIsSortedAndStable;
   end;
 
 implementation
@@ -384,6 +385,34 @@ begin
 end;
 
 { ---- the table against the live tools/list ---------------------------------------------------- }
+
+{ the list comes in one order whatever the order the units start in: by name }
+procedure TTestToolAliasTable.TestToolListIsSortedAndStable;
+var
+  R1, R2 : THttpResult;
+  Root   : TJSONObject;
+  Tools  : TJSONArray;
+  I      : Integer;
+  Prev, Cur : string;
+begin
+  R1 := McpPost('{"jsonrpc":"2.0","id":9,"method":"tools/list"}');
+  R2 := McpPost('{"jsonrpc":"2.0","id":9,"method":"tools/list"}');
+  CheckEquals(R1.Body, R2.Body, 'two requests, one answer');
+  Root := TJSONObject(GetJSON(R1.Body));
+  try
+    Tools := TJSONArray(TJSONObject(Root.Find('result')).Find('tools'));
+    CheckTrue(Tools.Count > 100, 'the list is there');
+    Prev := '';
+    for I := 0 to Tools.Count - 1 do
+    begin
+      Cur := TJSONObject(Tools[I]).Get('name', '');
+      CheckTrue(CompareStr(Prev, Cur) < 0, 'sorted by name: ' + Prev + ' before ' + Cur);
+      Prev := Cur;
+    end;
+  finally
+    Root.Free;
+  end;
+end;
 
 procedure TTestToolAliasTable.TestTableMatchesToolList;
 var

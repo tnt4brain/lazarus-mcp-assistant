@@ -52,7 +52,7 @@ uses
   CodeToolManager, CodeCache,
   Controls,               { mrOk }
   Laz2_XMLCfg, fphttpclient, opensslsockets, md5, zipper, process,
-  McpToolContext, McpIdeState, McpConsent, McpToolsCodeTools, McpProcess;
+  McpToolContext, McpIdeState, McpConsent, McpToolsCodeTools, McpProcess, McpUtils;
 
 { ── Schema constants ─────────────────────────────────────────────────────── }
 
@@ -677,7 +677,7 @@ begin
   end;
 
   TmpDir := PackagesDir + '.mcp-tmp-' + ChangeFileExt(ZipName, '') + PathDelim;
-  if DirectoryExists(TmpDir) then DeleteDirectory(TmpDir, False);
+  if DirectoryExists(TmpDir) then McpDeleteTree(TmpDir);
   Zip := TUnZipper.Create;
   try
     Zip.FileName := ZipFile;
@@ -706,7 +706,7 @@ begin
       on X: Exception do
       begin
         Err := 'Extracting ' + ZipFile + ' failed: ' + X.Message;
-        DeleteDirectory(TmpDir, False);
+        McpDeleteTree(TmpDir);
         Exit;
       end;
     end;
@@ -716,16 +716,16 @@ begin
 
   Src := TmpDir + StringReplace(Top, '/', PathDelim, [rfReplaceAll]);
   if DirectoryExists(Target) then
-    DeleteDirectory(Target, False);
+    McpDeleteTree(Target);
   ForceDirectories(ExtractFilePath(ChompPathDelim(Target)));
   if not RenameFile(ChompPathDelim(Src), ChompPathDelim(Target)) and
      not CopyDirTree(Src, Target, [cffOverwriteFile, cffCreateDestDirectory]) then
   begin
     Err := 'Could not move the extracted files to ' + Target;
-    DeleteDirectory(TmpDir, False);
+    McpDeleteTree(TmpDir);
     Exit;
   end;
-  if DirectoryExists(TmpDir) then DeleteDirectory(TmpDir, False);
+  if DirectoryExists(TmpDir) then McpDeleteTree(TmpDir);
 
   { read by the consent dialog (McpConsent.DownloadSource) }
   Marker := TJSONObject.Create;

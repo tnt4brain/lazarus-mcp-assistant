@@ -11,7 +11,7 @@ unit TFindDeclaration;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestFindDeclaration = class(TTestCase)
@@ -133,7 +133,7 @@ end;
 
 procedure TTestFindDeclaration.TearDown;
 begin
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));
 end;
 

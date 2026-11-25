@@ -12,7 +12,7 @@ unit TToolSmoke;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestToolSmoke = class(TTestCase)
@@ -159,7 +159,7 @@ begin
   finally
     Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
-    DeleteDirectory(ExtractFileDir(F), False);
+    McpDeleteTree(ExtractFileDir(F));
   end;
 end;
 
@@ -359,7 +359,7 @@ var
   SL        : TStringList;
 begin
   Dir := GetTempDir(False) + 'mcpgitcommit';
-  DeleteDirectory(Dir, False);
+  McpDeleteTree(Dir);
   ForceDirectories(Dir);
   try
     if not RunCommandInDir(Dir, 'git', ['init', '-q'], O, [poNoConsole], swoHide) then
@@ -382,7 +382,7 @@ begin
     RunCommandInDir(Dir, 'git', ['log', '-1', '--format=%B'], O, [poNoConsole], swoHide);
     CheckEquals(Msg, TrimRight(AdjustLineBreaks(O, tlbsLF)), 'message kept whole');
   finally
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -422,7 +422,7 @@ begin
   finally
     Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 

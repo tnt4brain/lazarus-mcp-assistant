@@ -12,7 +12,7 @@ unit TGitWrite;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestGitWrite = class(TTestCase)
@@ -123,7 +123,7 @@ end;
 
 procedure TTestGitWrite.TearDown;
 begin
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
 end;
 
 procedure TTestGitWrite.TestCheckoutFileRestores;

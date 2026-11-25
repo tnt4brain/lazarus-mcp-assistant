@@ -12,7 +12,7 @@ unit TReloadFiles;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestReloadFiles = class(TTestCase)
@@ -55,7 +55,7 @@ end;
 procedure TTestReloadFiles.TearDown;
 begin
   CallToolText('editor_close', '{"file":' + JsonStr(FFile) + '}', []);
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));
 end;
 

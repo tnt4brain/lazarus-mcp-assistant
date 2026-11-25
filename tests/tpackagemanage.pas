@@ -10,7 +10,7 @@ unit TPackageManage;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestPackageManage = class(TTestCase)
@@ -122,7 +122,7 @@ begin
   finally
     { a compile error may have opened the unit: close it before its file goes }
     Call('editor_close', '{"file":' + JsonStr(Dir + UnitFile) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 

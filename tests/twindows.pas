@@ -16,7 +16,7 @@ unit TWindows;
 interface
 
 uses
-  Classes, fpcunit, testregistry, testdecorator, THttpHelper;
+  Classes, fpcunit, testregistry, testdecorator, THttpHelper, McpUtils;
 
 type
   TWindoweeSetup = class(TTestSetup)
@@ -467,7 +467,7 @@ begin
     T := Call('ide_run_tests', '{"test_project":' + JsonStr(Lpi) + ',"env":{"A":1}}');
     CheckTrue(IsError(T), 'env value must be a string: ' + T);
   finally
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -515,7 +515,7 @@ begin
     CheckTrue(Pos('"already_open":true', T) > 0, 'second open: ' + T);
   finally
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -567,7 +567,7 @@ begin
   finally
     Call('debug_stop', '{}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -640,7 +640,7 @@ begin
   finally
     Call('project_run_output', '{"stop":true}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -712,7 +712,7 @@ begin
   finally
     Call('project_run_output', '{"stop":true}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -751,7 +751,7 @@ begin
   finally
     Call('debug_stop', '{}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -815,7 +815,7 @@ begin
     Call('editor_close', '{"file":' + JsonStr(Dir + 'unitsecond.pas') + '}');
     Call('project_set_settings', '{}');   { saves the project }
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 

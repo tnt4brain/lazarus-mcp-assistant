@@ -58,6 +58,11 @@ function McpClientHost(const AListen: string): string;
   of a server that listens on 0.0.0.0. }
 function McpPrimaryAddress: string;
 
+{ Delete ADir and everything in it; a link (symbolic, or a junction on Windows) is removed itself,
+  never followed.  True when ADir is gone.  The same on Lazarus 4.x and 5.x: FileUtil's DeleteDirectory
+  has a different signature in 5.0 and the old one is deprecated there. }
+function McpDeleteTree(const ADir: string): Boolean;
+
 { An absolute path with native separators and no '.'/'..' segments, so
   D:/x/../y.pas and D:\y.pas compare equal.  Relative paths come back
   unchanged: tools resolve them against their own base (project or
@@ -287,6 +292,34 @@ begin
     Result := McpLoopback
   else
     Result := AListen;
+end;
+
+function McpDeleteTree(const ADir: string): Boolean;
+{$WARN 5044 OFF}   { faSymLink: the same bit means a link on Unix and a junction on Windows }
+var
+  SR   : TSearchRec;
+  Dir  : string;
+  Path : string;
+begin
+  Dir := IncludeTrailingPathDelimiter(ADir);
+  if FindFirst(Dir + '*', faAnyFile, SR) = 0 then
+  try
+    repeat
+      if (SR.Name = '.') or (SR.Name = '..') then Continue;
+      Path := Dir + SR.Name;
+      if ((SR.Attr and faDirectory) <> 0) and ((SR.Attr and faSymLink) = 0) then
+        McpDeleteTree(Path)
+      else
+      begin
+        FileSetAttr(Path, 0);   { a read-only file is deleted too }
+        if not SysUtils.DeleteFile(Path) then RemoveDir(Path);   { a directory link goes with RemoveDir }
+      end;
+    until FindNext(SR) <> 0;
+  finally
+    SysUtils.FindClose(SR);
+  end;
+  RemoveDir(ChompPathDelim(Dir));
+  Result := not DirectoryExists(ChompPathDelim(Dir));
 end;
 
 function McpPrimaryAddress: string;

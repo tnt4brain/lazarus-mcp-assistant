@@ -12,7 +12,7 @@ unit TCodeComplete;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestCodeComplete = class(TTestCase)
@@ -67,7 +67,7 @@ procedure TTestCodeComplete.TearDown;
 begin
   CallToolText('editor_revert', '{"file":' + JsonStr(FUnit) + '}', []);
   CallToolText('editor_close', '{"file":' + JsonStr(FUnit) + '}', []);
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));
 end;
 

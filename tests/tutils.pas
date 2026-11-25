@@ -29,13 +29,14 @@ type
     procedure TestPathHasSegment;
     procedure TestRepoRoot;
     procedure TestProgramIsFoundThroughPath;
+    procedure TestDeleteTree;
   end;
 
 implementation
 
 uses
   {$IFDEF WINDOWS}Windows{$ELSE}BaseUnix{$ENDIF},   { first: SysUtils must win the shared names }
-  SysUtils, Classes, Sockets, fpjson, jsonparser, LazFileUtils, FileUtil;
+  SysUtils, Classes, Sockets, fpjson, jsonparser, LazFileUtils, FileUtil, Process;
 
 {$IFNDEF WINDOWS}
 function setenv(AName, AValue: PChar; AOverwrite: LongInt): LongInt; cdecl; external 'c' name 'setenv';
@@ -302,6 +303,59 @@ begin
     Args.Free;
   end;
   McpNormalizePathArgs(nil);   { no arguments at all }
+end;
+
+{ a directory link: a junction on Windows (no privilege needed), a symbolic link elsewhere }
+function MakeDirLink(const ATarget, ALink: string): Boolean;
+{$IFDEF WINDOWS}
+var
+  Out_ : string;
+begin
+  Result := RunCommand('cmd.exe', ['/c', 'mklink', '/J', ALink, ATarget], Out_);
+end;
+{$ELSE}
+begin
+  Result := fpSymlink(PChar(ATarget), PChar(ALink)) = 0;
+end;
+{$ENDIF}
+
+{ McpDeleteTree: nested folders and a read-only file go; a link to a folder outside goes as a link,
+  what it points at stays; a folder that is not there is already gone }
+procedure TTestUtils.TestDeleteTree;
+var
+  Base, Dir, Outside, Ro : string;
+  L : TStringList;
+
+  procedure Touch(const AFile: string);
+  begin
+    ForceDirectories(ExtractFileDir(AFile));
+    L.Text := 'x';
+    L.SaveToFile(AFile);
+  end;
+
+begin
+  Base := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpdeltree' + IntToStr(GetProcessID) + PathDelim;
+  Dir := Base + 'tree' + PathDelim;
+  Outside := Base + 'outside' + PathDelim;
+  L := TStringList.Create;
+  try
+    Touch(Dir + 'a' + PathDelim + 'b' + PathDelim + 'deep.txt');
+    Touch(Dir + 'top.txt');
+    Ro := Dir + 'a' + PathDelim + 'readonly.txt';
+    Touch(Ro);
+    FileSetAttr(Ro, faReadOnly);
+    Touch(Outside + 'keep.txt');
+    { a link out of the tree: made where the system lets an ordinary user make one }
+    if MakeDirLink(ExcludeTrailingPathDelimiter(Outside), Dir + 'link') then
+      CheckTrue(DirectoryExists(Dir + 'link'), 'the link works');   { else: the rest is still checked }
+  finally
+    L.Free;
+  end;
+  CheckTrue(McpDeleteTree(Dir), 'deleted');
+  CheckFalse(DirectoryExists(Dir), 'the tree is gone');
+  CheckTrue(FileExists(Outside + 'keep.txt'), 'what the link pointed at is untouched');
+  CheckTrue(McpDeleteTree(Base), 'the rest');
+  CheckTrue(McpDeleteTree(Base), 'a folder that is not there');
 end;
 
 initialization
