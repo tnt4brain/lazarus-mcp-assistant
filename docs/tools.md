@@ -342,3 +342,18 @@ program started by the IDE cannot keep a connection open.
 started (after `ide_rebuild`, say) gets HTTP 404, and the client starts a new session
 with `initialize`. Requests without either share one identity, `anonymous`; a client
 with a cookie jar (`curl -b jar -c jar`) gets its own.
+
+## Prompts
+
+Clients that show MCP prompts (as slash commands) list these. Each is an instruction that names the
+tools to use; none changes anything by itself.
+
+| Prompt | Argument | What it asks |
+|---|---|---|
+| `explain_compiler_errors` | | Explain the errors and warnings of the last build, and fix each |
+| `review_active_file` | | Review the file in the active editor |
+| `review_diff` | `ref` (optional) | Review the uncommitted changes, or a commit, branch or range |
+| `explain_exception` | | Find out why the last exception happened and how to fix the cause |
+| `fix_failing_test` | `suite` (optional) | Run the tests, fix the failures one at a time |
+| `write_adr` | `topic` (required) | Write an architecture decision record in the format of `docs/adr` |
+| `release_checklist` | `version` (optional) | Check git, build, tests, versions and TODOs; report, change nothing |

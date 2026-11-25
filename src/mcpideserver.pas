@@ -107,8 +107,8 @@ uses
   IDEExternToolIntf, IDEMsgIntf, McpUtils, McpToolAliases, McpToolContext,
   McpToolHelpers, McpDebugGuard, McpDebugLease, McpExceptionLog,
   McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram, McpTokens,
-  McpToolLog, McpMessages, McpReport, McpLimitedMode, McpProcess, LCLVersion,
-  DateUtils;
+  McpToolLog, McpMessages, McpReport, McpLimitedMode, McpProcess, McpPrompts,
+  LCLVersion, DateUtils;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
@@ -1141,16 +1141,7 @@ var
   Res     : TJSONObject;
 begin
   Prompts := TJSONArray.Create;
-
-  P := TJSONObject.Create;
-  P.Add('name',        'explain_compiler_errors');
-  P.Add('description', 'Fetch current compiler output and ask Claude to explain errors and suggest fixes');
-  Prompts.Add(P);
-
-  P := TJSONObject.Create;
-  P.Add('name',        'review_active_file');
-  P.Add('description', 'Review the currently active editor file for code quality and improvements');
-  Prompts.Add(P);
+  McpPromptsList(Prompts);   { the table is in McpPrompts }
 
   Res := TJSONObject.Create;
   Res.Add('prompts', Prompts);
@@ -1175,6 +1166,12 @@ begin
     Exit(RPCError(ID, -32602, 'Missing params'));
   Name := Params.Get('name', '');
 
+  { the prompts that need no IDE state are built by McpPrompts }
+  if McpPromptText(Name, TJSONObject(Params.Find('arguments', jtObject)), Text, Out) then
+  begin
+    if Out <> '' then Exit(RPCError(ID, -32602, Out));
+  end
+  else
   case Name of
     'explain_compiler_errors':
     begin
