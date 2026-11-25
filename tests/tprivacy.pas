@@ -27,12 +27,13 @@ uses
 
 const
   { file (lower case) = the network units it may use }
-  NET_FILES : array[0..4] of string = (
+  NET_FILES : array[0..5] of string = (
     'mcpideserver.pas=fphttpserver,ssockets,fphttpclient,sockets',
     'mcpselftest.pas=fphttpclient',
     'mcptoolspackages.pas=fphttpclient,opensslsockets',
     'mcpgitserve.pas=sockets',
-    'mcputils.pas=sockets');
+    'mcputils.pas=sockets',
+    'mcpprogress.pas=fphttpserver');   { writes the stream of a call on the connection the server already has }
   NET_UNITS : array[0..7] of string = (
     'fphttpserver', 'ssockets', 'fphttpclient', 'opensslsockets', 'sockets', 'fpsock',
     'fpwebclient', 'netdb');

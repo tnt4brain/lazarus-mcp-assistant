@@ -22,7 +22,8 @@ type
   TMcpRunEnd = (
     reExited,       { the program ran and ended; AExitCode is its exit code }
     reTimedOut,     { stopped after ATimeoutMs; the output is what it had printed }
-    reNotStarted    { the program could not be started; AOutput says why }
+    reNotStarted,   { the program could not be started; AOutput says why }
+    reCancelled     { the tool call was cancelled (ADR-036): stopped, the output is what it had printed }
   );
 
 { Runs AExe with AArgs (one argument each, no shell) in AWorkDir (empty: ours).
@@ -39,7 +40,8 @@ type
   only; a name that is already set is replaced, never doubled.
 
   ATimeoutMs = 0 waits for ever.  Otherwise the child is terminated when it has run
-  that long. }
+  that long.  It is also terminated when the tool call it runs for is cancelled (McpProgress),
+  and the last line it printed is what that call reports as progress. }
 function McpRunCapture(const AExe: string; const AArgs: array of string;
   const AWorkDir: string; out AOutput: string; out AExitCode: Integer;
   ATimeoutMs: QWord = 0; const AInput: string = '';
@@ -51,7 +53,7 @@ procedure McpAddArg(var AArgs: TStringArray; const AArg: string);
 implementation
 
 uses
-  Classes, Process;
+  Classes, Process, McpProgress;
 
 procedure McpAddArg(var AArgs: TStringArray; const AArg: string);
 begin
@@ -72,7 +74,8 @@ var
   { Everything the child has printed so far; never blocks. }
   procedure Drain;
   var
-    N : Integer;
+    N, E, B : Integer;
+    Line    : string;
   begin
     repeat
       N := Proc.Output.NumBytesAvailable;
@@ -81,6 +84,16 @@ var
       N := Proc.Output.Read(Buf, N);
       if N <= 0 then Exit;
       Got.WriteBuffer(Buf, N);
+      { the last line of this chunk, for the progress of the call }
+      E := N - 1;
+      while (E >= 0) and (Buf[E] in [10, 13, 32, 9]) do Dec(E);
+      if E >= 0 then
+      begin
+        B := E;
+        while (B > 0) and (Buf[B - 1] <> 10) and (E - B < 200) do Dec(B);
+        SetString(Line, PChar(@Buf[B]), E - B + 1);
+        McpProgressSay(Line);
+      end;
     until False;
   end;
 
@@ -135,6 +148,12 @@ begin
       if (ATimeoutMs > 0) and (GetTickCount64 - Started > ATimeoutMs) then
       begin
         Result := reTimedOut;
+        Proc.Terminate(1);
+        Break;
+      end;
+      if McpCancelRequested then
+      begin
+        Result := reCancelled;
         Proc.Terminate(1);
         Break;
       end;

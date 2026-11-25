@@ -22,7 +22,7 @@ uses
   McpToolsGitRemote, McpToolsGitHistory, McpConflictFiles, McpGitConflicts, 
   McpMarkdownHighlight, McpLimitedMode, McpToolScope, McpFoldersOptions, 
   McpToolsStatus, McpGitServe, McpToolsGitServe, McpProcess, 
-  McpToolsIdeWindows, McpPrompts, LazarusPackageIntf;
+  McpToolsIdeWindows, McpPrompts, McpProgress, LazarusPackageIntf;
 
 implementation
 

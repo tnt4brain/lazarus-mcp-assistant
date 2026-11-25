@@ -48,7 +48,7 @@ uses
   McpDebugLease,             { McpLeaseJSON }
   McpIdeState,               { McpDbgStateStr }
   McpIdeListeners,           { GMcpExceptionDialogHwnd }
-  McpToolContext;
+  McpToolContext, McpProgress;
 {$POP}
 
 
@@ -1454,7 +1454,9 @@ begin
       Result    := GSyncHelper.OutState;
       Exit;
     end;
-    if Elapsed >= TimeoutMs then
+    { a cancel ends the wait, not the program: it keeps running (debug_pause or debug_stop
+      is the client's choice) }
+    if (Elapsed >= TimeoutMs) or McpCancelRequested then
     begin
       FinalFile := '';
       FinalLine := 0;
@@ -1927,7 +1929,12 @@ var
     R    : string;
     J    : TJSONData;
   begin
-    if S = dsRun then R := 'timeout' else R := AReason;
+    if S = dsRun then
+    begin
+      { the client cancelled the wait: the program is still running }
+      if McpCancelRequested then R := 'cancelled' else R := 'timeout';
+    end
+    else R := AReason;
     { a stop on a breakpoint is not a plain run or step }
     if (S = dsPause) and ((R = 'run') or (R = 'step')) then
     begin

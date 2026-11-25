@@ -22,7 +22,7 @@ uses
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
   TCodeRename, TWindows, TFindDeclaration, TGitWrite, TGitRemote, TGitHistory, TConflictFiles, TTokens, TStatus,
-  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks, TToolAliases, TWriteScope, TLimitedMode, TSelfTest, TGitServeTests, TMcpProcess, TPrivacy, TDiffEngines, TPrompts;
+  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks, TToolAliases, TWriteScope, TLimitedMode, TSelfTest, TGitServeTests, TMcpProcess, TPrivacy, TDiffEngines, TPrompts, TProgress;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 

@@ -9,7 +9,7 @@ unit TMcpProcess;
 interface
 
 uses
-  Classes, SysUtils, fpcunit, testregistry, McpProcess;
+  Classes, SysUtils, fpcunit, testregistry, McpProcess, McpProgress;
 
 type
   TTestRunCapture = class(TTestCase)
@@ -23,6 +23,7 @@ type
     procedure TestInputReachesTheChild;
     procedure TestEnvironmentIsSetAndOursKept;
     procedure TestTimeoutStopsTheChild;
+    procedure TestCancelStopsTheChild;
     procedure TestMissingProgram;
     procedure TestOutputLargerThanAPipe;
     procedure TestWorkDir;
@@ -130,6 +131,52 @@ begin
   Started := GetTickCount64;
   AssertTrue('timed out', McpRunCapture(Exe, Args, '', Got, Code, 500) = reTimedOut);
   AssertTrue('stopped well before the child ended', GetTickCount64 - Started < 15000);
+end;
+
+type
+  { cancels the call of this session and id after a while, as a notifications/cancelled would }
+  TCanceller = class(TThread)
+    procedure Execute; override;
+  end;
+
+procedure TCanceller.Execute;
+var
+  Tool : string;
+  Secs : Integer;
+begin
+  Sleep(500);
+  McpCancelCall('s1', '77', 'test', Tool, Secs);
+end;
+
+procedure TTestRunCapture.TestCancelStopsTheChild;
+var
+  Exe, Got : string;
+  Args     : TStringArray;
+  Code     : Integer;
+  Started  : QWord;
+  C        : TCanceller;
+begin
+  {$IFDEF WINDOWS}
+  Shell('ping -n 30 127.0.0.1', Exe, Args);
+  {$ELSE}
+  Shell('sleep 30', Exe, Args);
+  {$ENDIF}
+  McpStreamPrepare(nil, False);
+  McpCallBegin('s1', '77', 'git_fetch', nil);
+  C := TCanceller.Create(False);
+  try
+    Started := GetTickCount64;
+    AssertTrue('cancelled', McpRunCapture(Exe, Args, '', Got, Code, 0) = reCancelled);
+    AssertTrue('stopped well before the child ended', GetTickCount64 - Started < 15000);
+    AssertTrue('the call says so', Pos('Cancelled by the client', McpCallCancelNote) = 1);
+    C.WaitFor;
+  finally
+    McpCallEnd;
+    C.Free;
+  end;
+  { not registered: the same call is not cancellable and runs to its timeout }
+  AssertTrue('no cancel without a call',
+    McpRunCapture(Exe, Args, '', Got, Code, 300) = reTimedOut);
 end;
 
 procedure TTestRunCapture.TestMissingProgram;

@@ -40,3 +40,4 @@ ADR-007 was never assigned; no document is missing.
 | [0033](0033-launch-tokens-and-two-ides.md) | # ADR-033 — A config file and a token of its own for every launch, and two IDEs side by side |
 | [0034](0034-write-scope-audit.md) | # ADR-034 — Write-scope audit: what every tool may change, and the gaps found |
 | [0035](0035-serving-code-to-a-test-machine.md) | # ADR-035 — Serving the open project's code to a test machine |
+| [0036](0036-progress-and-cancellation.md) | # ADR-036 — Progress notifications and cancellation of running tool calls |

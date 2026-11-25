@@ -369,3 +369,15 @@ Two `_meta` keys in `tools/list`, read by Claude Code and ignored by other clien
   consent dialog of its own, so the client shows its permission prompt on every call, also in
   bypass mode. The tools that already ask in the IDE (clone, package install, remote git verbs) do not
   carry it, so nobody is asked twice.
+
+## Long calls: progress and cancel
+
+A call that has run for 5 s is answered as a stream (`text/event-stream`) when the client sent a
+`_meta.progressToken` and accepts event streams: a `notifications/progress` event every 15 s, then the
+result as the last event. Shorter calls, and clients without a token, get the usual JSON. A client's
+`notifications/cancelled` (same session, same request id) stops: a git or lazbuild child, an IDE build
+(`project_build`, `package_compile`), the wait of `project_run`, `debug_run`, `debug_step` and
+`debug_run_to_line` (the program keeps running), and `code_find_references` (the answer holds what
+was found). Nothing that changes files is stopped. The answer of a stopped call is an error result
+"Cancelled by the client after N s". Progress resets a client's idle timeout, not its wall-clock timeout:
+Claude Code's per-server `timeout` has to be raised for builds longer than it.

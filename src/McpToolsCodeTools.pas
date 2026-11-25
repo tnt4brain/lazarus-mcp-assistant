@@ -37,7 +37,7 @@ uses
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   BasicCodeTools,
   Controls,
-  jsonparser,
+  jsonparser, McpProgress,
   McpToolContext, McpToolHelpers, McpLineDiff, McpStatements, McpStatementEdit;
 
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
@@ -1187,7 +1187,7 @@ begin
         end;
       end;
       if (I < Files.Count) and
-         ((Refs.Count >= RefMaxResults) or
+         ((Refs.Count >= RefMaxResults) or McpCancelRequested or   { the client cancelled (ADR-036) }
           ((MaxSeconds > 0) and (GetTickCount64 - Started >= QWord(Round(MaxSeconds * 1000))))) then
       begin
         Cut := True;
