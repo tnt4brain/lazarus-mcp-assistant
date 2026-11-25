@@ -602,6 +602,8 @@ type
 
 var
   GCallLock : TCriticalSection;
+  GMainDepth   : Integer = 0;   { tool calls running on the main thread, nested ones included }
+  GMainRunning : string  = '';  { the innermost one }
 
 destructor TMcpMainCall.Destroy;
 begin
@@ -634,10 +636,24 @@ end;
 procedure TMcpMainCall.RunQueued;
 var
   Release : Boolean;
+  Outer   : string;
 begin
+  { Main thread only.  An IDE call that pumps messages (a build, a run, a dialog)
+    runs the next queued call inside itself; that shows here as a depth above 0. }
+  Outer := GMainRunning;
+  if GMainDepth > 0 then
+    McpLogSession(Format('nested: %s started inside %s (depth %d)',
+                         [ToolName, Outer, GMainDepth + 1]));
+  Inc(GMainDepth);
+  GMainRunning := ToolName;
   try
-    McpEnsureDialogWatch;
-    Run;
+    try
+      McpEnsureDialogWatch;
+      Run;
+    finally
+      Dec(GMainDepth);
+      GMainRunning := Outer;
+    end;
   except
     { whatever goes wrong, the thread waiting for this call must get its answer:
       an exception leaving here would end in the IDE's event loop and leave it
