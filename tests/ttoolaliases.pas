@@ -37,6 +37,7 @@ type
     procedure TestTableMatchesToolList;
     procedure TestOldCallsAnswerLikeNewOnes;
     procedure TestToolListIsSortedAndStable;
+    procedure TestClientMetaIsDeclared;
   end;
 
 implementation
@@ -409,6 +410,45 @@ begin
       CheckTrue(CompareStr(Prev, Cur) < 0, 'sorted by name: ' + Prev + ' before ' + Cur);
       Prev := Cur;
     end;
+  finally
+    Root.Free;
+  end;
+end;
+
+procedure TTestToolAliasTable.TestClientMetaIsDeclared;
+var
+  R     : THttpResult;
+  Root  : TJSONObject;
+  Tools : TJSONArray;
+  I     : Integer;
+  T, M  : TJSONObject;
+  Big, Human : Integer;
+begin
+  R := McpPost('{"jsonrpc":"2.0","id":10,"method":"tools/list"}');
+  Root := TJSONObject(GetJSON(R.Body));
+  try
+    Tools := TJSONArray(TJSONObject(Root.Find('result')).Find('tools'));
+    Big := 0; Human := 0;
+    for I := 0 to Tools.Count - 1 do
+    begin
+      T := TJSONObject(Tools[I]);
+      M := TJSONObject(T.Find('_meta'));
+      if M = nil then Continue;
+      if M.IndexOfName('anthropic/maxResultSizeChars') >= 0 then
+      begin
+        Inc(Big);
+        CheckEquals(200000, M.Integers['anthropic/maxResultSizeChars'], T.Get('name', ''));
+      end;
+      if M.IndexOfName('anthropic/requiresUserInteraction') >= 0 then
+      begin
+        Inc(Human);
+        CheckEquals('git_serve', T.Get('name', ''), 'only the tool without its own consent step');
+        CheckTrue(M.Find('anthropic/requiresUserInteraction').JSONType = jtBoolean, 'the JSON Boolean true');
+        CheckTrue(M.Booleans['anthropic/requiresUserInteraction'], 'true');
+      end;
+    end;
+    CheckEquals(8, Big, 'eight tools with long answers');
+    CheckEquals(1, Human, 'one tool that always asks the person');
   finally
     Root.Free;
   end;

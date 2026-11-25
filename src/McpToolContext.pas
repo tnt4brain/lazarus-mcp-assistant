@@ -546,6 +546,40 @@ begin
     end;
 end;
 
+const
+  { Tools whose answer is long on purpose: Claude Code saves a result over 50,000 characters to a
+    file and shows a preview; these declare _meta["anthropic/maxResultSizeChars"] so the text
+    arrives whole, up to the client's ceiling of 500,000. }
+  LARGE_RESULT_TOOLS : array[0..7] of string = (
+    'editor_read_file', 'git_diff', 'git_log', 'git_blame', 'project_search',
+    'form_get_lfm', 'ide_get_messages', 'code_get_unit_interface');
+  LARGE_RESULT_CHARS = 200000;
+  { Tools that open a way in with no consent step of the plugin's own (the IDE dialogs of
+    McpConsent cover clone, package install and the remote git verbs): the client is asked to
+    show its permission prompt on every call, even in bypassPermissions. }
+  HUMAN_ONLY_TOOLS : array[0..0] of string = ('git_serve');
+
+procedure AddClientMeta(Tool: TJSONObject; const AName: string);
+var
+  I    : Integer;
+  Meta : TJSONObject;
+begin
+  Meta := nil;
+  for I := Low(LARGE_RESULT_TOOLS) to High(LARGE_RESULT_TOOLS) do
+    if LARGE_RESULT_TOOLS[I] = AName then
+    begin
+      Meta := TJSONObject.Create;
+      Meta.Add('anthropic/maxResultSizeChars', LARGE_RESULT_CHARS);
+    end;
+  for I := Low(HUMAN_ONLY_TOOLS) to High(HUMAN_ONLY_TOOLS) do
+    if HUMAN_ONLY_TOOLS[I] = AName then
+    begin
+      if Meta = nil then Meta := TJSONObject.Create;
+      Meta.Add('anthropic/requiresUserInteraction', True);
+    end;
+  if Meta <> nil then Tool.Add('_meta', Meta);
+end;
+
 function MakeTool(const AName, ADesc, InputSchemaJSON: string;
   const AAnnotations: string = ''): TJSONObject;
 var
@@ -572,6 +606,7 @@ begin
     Ann.Delete('readOnlyHint');
   Ann.Add('title', Title);            { older clients read it here }
   Result.Add('annotations', Ann);
+  AddClientMeta(Result, AName);
 end;
 
 { Sort the tool list by name so each category's tools are adjacent. }

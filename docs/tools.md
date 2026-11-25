@@ -357,3 +357,15 @@ tools to use; none changes anything by itself.
 | `fix_failing_test` | `suite` (optional) | Run the tests, fix the failures one at a time |
 | `write_adr` | `topic` (required) | Write an architecture decision record in the format of `docs/adr` |
 | `release_checklist` | `version` (optional) | Check git, build, tests, versions and TODOs; report, change nothing |
+
+## Hints for Claude Code
+
+Two `_meta` keys in `tools/list`, read by Claude Code and ignored by other clients:
+
+- `anthropic/maxResultSizeChars` (200000) on `editor_read_file`, `git_diff`, `git_log`, `git_blame`,
+  `project_search`, `form_get_lfm`, `ide_get_messages` and `code_get_unit_interface`: their answers
+  are long on purpose, and the default (a result over 50,000 characters is saved to a file) would cut them.
+- `anthropic/requiresUserInteraction` on `git_serve`: it opens a way into the working tree and has no
+  consent dialog of its own, so the client shows its permission prompt on every call, also in
+  bypass mode. The tools that already ask in the IDE (clone, package install, remote git verbs) do not
+  carry it, so nobody is asked twice.
