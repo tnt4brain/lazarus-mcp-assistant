@@ -41,7 +41,7 @@ prompts, skills and permission allow-lists, is in [renamed-tools.md](renamed-too
 | `editor_set_cursor` | Move the cursor (opens the file if needed) |
 | `editor_edit_text` | **Preferred edit.** Replace `old_text` with `new_text`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
 | `editor_replace_range` | Replace a range given by start and end, or start and `delete_len` (no end inserts, empty text deletes) — for coordinates from `code_*` tools |
-| `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
+| `editor_save` | Save a buffer (a form unit saves its `.lfm` too); `all` saves every buffer with unsaved changes |
 | `editor_revert` | Discard unsaved changes and reload from disk |
 | `editor_undo` | Undo in an open file's editor (same stack as Ctrl+Z): steps, or back to the saved file |
 | `editor_redo` | Redo what was undone, steps |

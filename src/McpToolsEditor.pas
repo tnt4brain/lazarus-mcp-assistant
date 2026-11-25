@@ -79,7 +79,9 @@ const
 
   SCHEMA_SAVE_FILE =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path of the file to save; omit to save the active editor"}}}';
+    '"file":{"type":"string","description":"Absolute path of the file to save; omit to save the active editor"},' +
+    '"all":{"type":"boolean","description":"Save every editor that has unsaved changes (a form unit ' +
+    'writes its .lfm too); not together with file. Editors of files never saved to disk are skipped and listed"}}}';
 
   SCHEMA_CLOSE_FILE =
     '{"type":"object","properties":{' +
@@ -209,6 +211,57 @@ end;
 { editor_undo / editor_redo: the editor's own undo stack, the one Ctrl+Z uses, so one step is one
   Ctrl+Z.  The file must be open (nothing is opened or created); an edit made by a tool and one
   made by hand sit on the same stack. }
+{ editor_save with all: every editor with unsaved changes, one by one, through the IDE's own save
+  (a form unit writes its .lfm).  A file that was never written has no name to save under and
+  would make the IDE ask for one, so it is skipped and listed. }
+procedure DoSaveAll(var Ctx: TMcpToolCall);
+var
+  I       : Integer;
+  Ed      : TSourceEditorInterface;
+  Names   : TStringList;
+  Saved, Failed, Skipped : TJSONArray;
+  Obj     : TJSONObject;
+begin
+  Names   := TStringList.Create;
+  Saved   := TJSONArray.Create;
+  Failed  := TJSONArray.Create;
+  Skipped := TJSONArray.Create;
+  try
+    for I := 0 to SourceEditorManagerIntf.UniqueSourceEditorCount - 1 do
+    begin
+      Ed := SourceEditorManagerIntf.UniqueSourceEditors[I];
+      if Ed.Modified then Names.Add(Ed.FileName);
+    end;
+    for I := 0 to Names.Count - 1 do
+    begin
+      if not FileExists(Names[I]) then
+      begin
+        Skipped.Add(Names[I]);
+        Continue;
+      end;
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(Names[I]);
+      if Assigned(Ed) and (LazarusIDE.DoSaveEditorFile(Ed, []) = mrOK) then
+        Saved.Add(Names[I])
+      else
+        Failed.Add(Names[I]);
+    end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('saved_count', Saved.Count);
+      Obj.Add('saved', Saved);       Saved := nil;
+      Obj.Add('failed', Failed);     Failed := nil;
+      Obj.Add('skipped', Skipped);   Skipped := nil;
+      Ctx.Error := TJSONArray(Obj.Find('failed')).Count > 0;
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  finally
+    Names.Free;
+    Saved.Free; Failed.Free; Skipped.Free;     { nil after they went into Obj }
+  end;
+end;
+
 procedure DoUndoRedo(var Ctx: TMcpToolCall; ARedo: Boolean);
 var
   Ed    : TSourceEditorInterface;
@@ -778,6 +831,15 @@ begin
     'editor_save':
     begin
       Result := True;
+      if Assigned(Ctx.Params) and Ctx.Params.Get('all', False) then
+      begin
+        if Ctx.Params.Get('file', '') <> '' then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Give either file or all, not both'; Exit;
+        end;
+        DoSaveAll(Ctx);
+        Exit;
+      end;
       SyncFilePath := '';
       if Assigned(Ctx.Params) then
         SyncFilePath := Ctx.Params.Get('file', '');
@@ -970,7 +1032,8 @@ begin
     'temp folder; anything else is refused.',
     SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_save',
-    'Save the editor buffer to disk. Omit file to save the active editor.',
+    'Save the editor buffer to disk. Omit file to save the active editor, or pass all=true to ' +
+    'save every editor with unsaved changes (the compiler sees only saved files).',
     SCHEMA_SAVE_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('editor_close',
     'Close an editor tab. Omit file to close the active editor. ' +

@@ -44,6 +44,7 @@ type
     procedure TestCodeToolsKeepDiskUntouched;
     procedure TestAddUnknownPackageRefused;
     procedure TestEditorUndoRedo;
+    procedure TestEditorSaveAll;
     procedure TestIdeWindows;
     procedure TestProjectListPackages;
     procedure TestDebugGetState;
@@ -846,6 +847,63 @@ begin
       Call('editor_close', '{"file":' + JsonStr(F) + '}');
       DeleteFile(F);
       RemoveDir(ExtractFileDir(F));
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
+{ editor_save all writes every modified editor (it would also write any other unsaved buffer
+  of the IDE under test, which is the point of the tool) }
+procedure TTestToolSmoke.TestEditorSaveAll;
+var
+  Dir, A, B, T : string;
+  SL           : TStringList;
+  procedure Make(const AFile: string);
+  begin
+    SL.Text := 'unit x;' + LineEnding + 'interface' + LineEnding + 'implementation' + LineEnding +
+               'end.' + LineEnding;
+    SL.SaveToFile(AFile);
+  end;
+  function OnDisk(const AFile: string): string;
+  begin
+    SL.LoadFromFile(AFile);
+    Result := SL.Text;
+  end;
+begin
+  Dir := GetTempDir(False) + 'mcpsaveall' + PathDelim;
+  A := Dir + 'a.pas';
+  B := Dir + 'b.pas';
+  ForceDirectories(Dir);
+  SL := TStringList.Create;
+  try
+    Make(A); Make(B);
+    try
+      Call('editor_open', '{"file":' + JsonStr(A) + '}');
+      Call('editor_open', '{"file":' + JsonStr(B) + '}');
+      Call('editor_edit_text', '{"file":' + JsonStr(A) + ',"old_text":"interface","new_text":"// in a\ninterface"}');
+      Call('editor_edit_text', '{"file":' + JsonStr(B) + ',"old_text":"interface","new_text":"// in b\ninterface"}');
+      CheckTrue(Pos('// in a', OnDisk(A)) = 0, 'not written yet');
+
+      T := Call('editor_save', '{"all":true,"file":' + JsonStr(A) + '}');
+      CheckTrue(Pos('TOOL ERROR', T) = 1, 'file and all together are refused: ' + T);
+      CheckTrue(Pos('// in a', OnDisk(A)) = 0, 'and nothing was written');
+
+      T := Call('editor_save', '{"all":true}');
+      CheckNoError(Self, 'editor_save', T);
+      CheckTrue(Pos('a.pas', T) > 0, 'a is listed: ' + T);
+      CheckTrue(Pos('b.pas', T) > 0, 'b is listed: ' + T);
+      CheckTrue(Pos('"failed":[]', T) > 0, 'nothing failed: ' + T);
+      CheckTrue(Pos('// in a', OnDisk(A)) > 0, 'a is on disk');
+      CheckTrue(Pos('// in b', OnDisk(B)) > 0, 'b is on disk');
+
+      T := Call('editor_save', '{"all":true}');
+      CheckTrue(Pos('"saved_count":0', T) > 0, 'a second call has nothing to do: ' + T);
+    finally
+      Call('editor_close', '{"file":' + JsonStr(A) + '}');
+      Call('editor_close', '{"file":' + JsonStr(B) + '}');
+      DeleteFile(A); DeleteFile(B);
+      RemoveDir(Dir);
     end;
   finally
     SL.Free;
