@@ -1760,6 +1760,9 @@ begin
       end
       else
       begin
+        { CodeTools asks the tree for the source type before it has built one: on a buffer it has not
+          parsed yet that is a nil node and an access violation.  Parsing it first is enough (1.9.0). }
+        CodeToolBoss.GetSourceType(CodeBuf, False);
         if not CodeToolBoss.AddUnitToImplementationUsesSection(CodeBuf, Symbol, '') then
         begin
           Ctx.Error := True;

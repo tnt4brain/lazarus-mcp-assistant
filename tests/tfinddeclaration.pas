@@ -37,6 +37,7 @@ type
     procedure TestAddToClassPublishedAfterImplicit;
     procedure TestRevertOfAMissingFile;
     procedure TestAddUsesFileNotOpen;
+    procedure TestAddUsesImplementationOnAFreshFile;
     procedure TestAddUsesMovedFromImplementation;
   end;
 
@@ -449,6 +450,36 @@ begin
     Text := ReadLf(Src);
     CheckTrue(Pos('Contnrs', Text) > 0, 'and the implementation one: ' + Text);
     CheckEquals(1, CountOf('interface', Text), 'the file is otherwise as it was: ' + Text);
+  finally
+    CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
+    CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
+  end;
+end;
+
+{ 1.9.0: the implementation uses as the FIRST call on a file CodeTools has not parsed yet used to end
+  in an access violation (it asked for the source type of a tree it had not built) }
+procedure TTestFindDeclaration.TestAddUsesImplementationOnAFreshFile;
+var
+  T, Src, Text : string;
+begin
+  Src := FDir + 'usesfresh.pas';
+  Save(Src,
+    'unit usesfresh;' + LineEnding +
+    '{$mode objfpc}{$H+}' + LineEnding +
+    'interface' + LineEnding +
+    'uses' + LineEnding +
+    '  Classes;' + LineEnding +
+    'implementation' + LineEnding +
+    'uses' + LineEnding +
+    '  SysUtils;' + LineEnding +
+    'end.' + LineEnding);
+  try
+    T := CallToolText('code_add_uses', '{"file":' + JsonStr(Src) +
+      ',"unit_name":"Contnrs","in_interface":false,"auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    Text := ReadLf(Src);
+    CheckTrue(Pos('Contnrs', Text) > Pos('implementation', Text), 'in the implementation part: ' + Text);
+    CheckEquals(1, CountOf('Classes', Text), 'the rest as it was: ' + Text);
   finally
     CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
     CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
