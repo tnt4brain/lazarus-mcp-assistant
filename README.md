@@ -159,6 +159,7 @@ The design decisions are recorded as ADRs; [docs/adr/](docs/adr/README.md) lists
 
 - [docs/tools.md](docs/tools.md): every tool
 - [docs/write-scope.md](docs/write-scope.md): where the tools may write, limited mode
+- [docs/privacy.md](docs/privacy.md): what the plugin connects to, writes and starts (nothing is sent on its own)
 - [docs/renamed-tools.md](docs/renamed-tools.md): tools renamed in 1.7.0
 - [docs/testing.md](docs/testing.md): the test suites
 - [docs/self-hosted-development.md](docs/self-hosted-development.md): developing the plugin with itself
