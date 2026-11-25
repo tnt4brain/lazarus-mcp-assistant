@@ -21,7 +21,8 @@ uses
   McpStatementEdit, McpHeapReport, McpTestHooks, McpNativeDialog, McpGitRun, 
   McpToolsGitRemote, McpToolsGitHistory, McpConflictFiles, McpGitConflicts, 
   McpMarkdownHighlight, McpLimitedMode, McpToolScope, McpFoldersOptions, 
-  McpToolsStatus, McpGitServe, McpToolsGitServe, McpProcess, LazarusPackageIntf;
+  McpToolsStatus, McpGitServe, McpToolsGitServe, McpProcess, 
+  McpToolsIdeWindows, LazarusPackageIntf;
 
 implementation
 

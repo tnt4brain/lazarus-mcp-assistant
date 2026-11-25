@@ -1,6 +1,6 @@
 # Lazarus MCP Assistant
 
-An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 154 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
+An in-process MCP server for the [Lazarus IDE](https://www.lazarus-ide.org/). Installs as a standard Lazarus package and exposes 156 IDE tools over HTTP so any [MCP](https://modelcontextprotocol.io/)-capable AI assistant can read, edit, navigate, build, and inspect your project — without leaving the IDE.
 
 > **Platform:** Windows and Linux. The whole test suite, the debugger tests
 > included, passes on the combinations below (FPC 3.2.2).
@@ -36,7 +36,7 @@ Transport details: [ADR-001](docs/adr/0001-mcp-server-transport-and-lifecycle.md
 
 ## Tool reference
 
-154 tools, named `<category>_<action>` (in Claude Code: `mcp__lazarus-ide__<tool_name>`). Each has a title, a description
+156 tools, named `<category>_<action>` (in Claude Code: `mcp__lazarus-ide__<tool_name>`). Each has a title, a description
 and annotations: `readOnlyHint`, `destructiveHint` (only for changes that neither Ctrl+Z nor `form_history` can take back),
 `idempotentHint`. The full reference, with every tool, is in [docs/tools.md](docs/tools.md).
 

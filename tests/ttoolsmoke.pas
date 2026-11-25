@@ -44,6 +44,7 @@ type
     procedure TestCodeToolsKeepDiskUntouched;
     procedure TestAddUnknownPackageRefused;
     procedure TestEditorUndoRedo;
+    procedure TestIdeWindows;
     procedure TestProjectListPackages;
     procedure TestDebugGetState;
   end;
@@ -768,6 +769,27 @@ begin
   finally
     SL.Free;
   end;
+end;
+
+{ ide_list_windows names the windows of the IDE, ide_get_window reads one; an id that is not a window
+  is refused }
+procedure TTestToolSmoke.TestIdeWindows;
+var
+  T, Id : string;
+  P     : Integer;
+begin
+  T := Call('ide_list_windows', '{}');
+  CheckTrue(Pos('TOOL ERROR', T) <> 1, 'listed: ' + T);
+  CheckTrue(Pos('"kind":"ide"', T) > 0, 'the main window of the IDE is in the list: ' + T);
+  P := Pos('"id":"', T);
+  CheckTrue(P > 0, 'every window has an id: ' + T);
+  Id := Copy(T, P + 6, Pos('"', Copy(T, P + 6, 40)) - 1);
+  T := Call('ide_get_window', '{"id":' + JsonStr(Id) + ',"max_chars":50}');
+  CheckTrue(Pos('TOOL ERROR', T) <> 1, 'read: ' + T);
+  CheckTrue(Pos('"text_parts"', T) > 0, 'the answer has its text parts: ' + T);
+  T := Call('ide_get_window', '{"id":"w1"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'an id that is no window is refused: ' + T);
+  CheckTrue(Pos('No window', T) > 0, 'and says why: ' + T);
 end;
 
 { editor_undo and editor_redo walk the editor's own stack: one tool edit is one step; to_saved goes
