@@ -21,6 +21,7 @@ type
     procedure TestResultsAreCompactJson;
     procedure TestCodeGetOutline;
     procedure TestCodeGetOutlineWholeUnit;
+    procedure TestCodeGetOutlineDirectives;
     procedure TestCodeGetUnitInterface;
     procedure TestCodeNewFileInKnownFolder;
     procedure TestProjectCreateRefusesUnsavedEditor;
@@ -167,6 +168,57 @@ begin
     Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
     McpDeleteTree(ExtractFileDir(F));
+  end;
+end;
+
+{ Directives: a branch that is not compiled is not in the outline (as for the compiler), and a routine
+  an include file brings in is reported with that file and its line there (it used to get a line of
+  the unit, which meant another routine). }
+procedure TTestToolSmoke.TestCodeGetOutlineDirectives;
+var
+  Dir, F, T : string;
+  SL        : TStringList;
+begin
+  Dir := GetTempDir(False) + 'mcpoutlinedir' + PathDelim;
+  ForceDirectories(Dir);
+  F  := Dir + 'dirunit.pas';
+  SL := TStringList.Create;
+  try
+    SL.Text :=
+      'unit dirunit;' + LineEnding +                        { 1 }
+      '{$mode objfpc}{$H+}' + LineEnding +                  { 2 }
+      'interface' + LineEnding +                            { 3 }
+      '{$IFDEF MCP_NEVER_DEFINED}' + LineEnding +           { 4 }
+      'procedure OnlyInInactiveBranch;' + LineEnding +      { 5 }
+      '{$ELSE}' + LineEnding +                              { 6 }
+      'procedure InActiveBranch;' + LineEnding +            { 7 }
+      '{$ENDIF}' + LineEnding +                             { 8 }
+      '{$I dirinc.inc}' + LineEnding +                      { 9 }
+      'procedure AfterTheInclude;' + LineEnding +           { 10 }
+      'implementation' + LineEnding +
+      'procedure InActiveBranch;' + LineEnding + 'begin' + LineEnding + 'end;' + LineEnding +
+      'procedure FromTheInclude;' + LineEnding + 'begin' + LineEnding + 'end;' + LineEnding +
+      'procedure AfterTheInclude;' + LineEnding + 'begin' + LineEnding + 'end;' + LineEnding +
+      'end.';
+    SL.SaveToFile(F);
+    SL.Text := LineEnding + '{ a comment line }' + LineEnding + 'procedure FromTheInclude;' + LineEnding;
+    SL.SaveToFile(Dir + 'dirinc.inc');
+  finally
+    SL.Free;
+  end;
+  try
+    T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');
+    CheckNoError(Self, 'code_get_outline', T);
+    CheckTrue(Pos('OnlyInInactiveBranch', T) = 0, 'a branch that is not compiled is not listed: ' + T);
+    CheckTrue(Pos('"line":7,"name":"InActiveBranch","section":"interface"', T) > 0, 'the branch that is: ' + T);
+    CheckTrue(Pos('"line":3,"name":"FromTheInclude","section":"interface","file":', T) > 0,
+      'a routine from the include file has its line there: ' + T);
+    CheckTrue(Pos('dirinc.inc', T) > 0, 'and names that file: ' + T);
+    CheckTrue(Pos('"line":10,"name":"AfterTheInclude","section":"interface"', T) > 0,
+      'what follows the include is in the unit again: ' + T);
+  finally
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    McpDeleteTree(Dir);
   end;
 end;
 

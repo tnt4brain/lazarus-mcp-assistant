@@ -242,6 +242,25 @@ begin
     CodeBuf.AbsoluteToLineCol(CleanPos, ALine, ACol);
 end;
 
+{ Like CleanToLineCol, but a position that belongs to an include file is answered with the line
+  in that file, and AIncFile names it ('' when the position is in CodeBuf itself): the line of an
+  include file's text means nothing in the unit that includes it. }
+procedure CleanToLineColFile(Tool: TCodeTool; CodeBuf: TCodeBuffer; CleanPos: Integer;
+  out ALine, ACol: Integer; out AIncFile: string);
+var
+  XY : TCodeXYPosition;
+begin
+  AIncFile := '';
+  if Assigned(Tool) and Tool.CleanPosToCaret(CleanPos, XY) and Assigned(XY.Code) then
+  begin
+    ALine := XY.Y;
+    ACol  := XY.X;
+    if XY.Code <> CodeBuf then AIncFile := XY.Code.Filename;
+  end
+  else
+    CodeBuf.AbsoluteToLineCol(CleanPos, ALine, ACol);
+end;
+
 { In a unit, adds "section": "interface" or "implementation" to an outline entry: without it the
   declaration of a routine and its body, or the two uses clauses, look like repeats.  Programs and
   libraries have no sections and get nothing. }
@@ -1511,6 +1530,7 @@ var
   Tool       : TCodeTool;
   TreeNode   : TCodeTreeNode;
   Outline    : TJSONArray;
+  IncFile    : string;       { the include file a node is in; '' in the unit itself }
   Entry      : TJSONObject;
   FileListJ  : TJSONArray;
   FileNames  : TStringList;
@@ -1701,7 +1721,7 @@ begin
           if TreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition, ctnConstDefinition,
                                 ctnProcedure, ctnProperty, ctnUseUnit] then
           begin
-            CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, NewY, NewX);
+            CleanToLineColFile(Tool, CodeBuf, TreeNode.StartPos, NewY, NewX, IncFile);
             Entry := TJSONObject.Create;
             Entry.Add('kind', NodeDescriptionAsString(TreeNode.Desc));
             Entry.Add('line', NewY);
@@ -1713,6 +1733,8 @@ begin
             else
               Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
             AddSection(Entry, TreeNode);
+            { a routine that an include directive brings in: its line is in that file }
+            if IncFile <> '' then Entry.Add('file', IncFile);
             Outline.Add(Entry);
           end;
           if Assigned(TreeNode.FirstChild) and
