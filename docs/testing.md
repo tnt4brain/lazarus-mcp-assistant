@@ -34,6 +34,23 @@ tests/mcpserver_tests.exe --all --format=plain
 | `TTestConsent` | 2 | MCP server reachable, installs not allowed: `package_install` of a new package is refused; `ide_rebuild` refuses `lpk_path` |
 | `TTestDebugger` | 13 | Opt-in: `MCP_DEBUG_TESTS=1`, or `tests/debuggee/mcpdebuggee.lpi` open in the IDE. Breakpoint/step/evaluate, exception without a dialog, lease refusal, debugger lock, lease expiry; conditions, pass counts, data and symbol breakpoints, frames, threads, registers and disassembly (about 40 s) |
 
+The table lists the main suites and its counts date from earlier releases: the program prints the real ones (617 tests in the default run on Windows with Lazarus 4.6, 4 of them opt-in and ignored; 645 on Windows with `MCP_DEBUG_TESTS=1`, 643 on Linux).
+
 The runner detects the running server by reading `mcpassistantoptions.xml` and pinging it. It looks in `%LOCALAPPDATA%\lazarus` on Windows and `~/.lazarus` elsewhere; set `MCP_OPTIONS_FILE` if Lazarus runs with `--pcp`. If the server is not up, the suites that need it are skipped. With `MCP_DEBUG_TESTS=1` the debugger suite opens the debuggee project itself and reopens yours afterwards; it stops with an error instead if your project or an editor has unsaved changes.
+
+## Every Lazarus version at once: `tools/matrix` (1.9.0)
+
+One command runs the suite on several Lazarus versions and prints one table:
+
+```
+instantfpc tools/matrix/run_matrix.pas [windows|linux|all|summary]
+```
+
+Copy `tools/matrix/matrix.conf.example` to `tools/matrix/matrix.conf` (git-ignored) and fill in your paths. The Lazarus you develop in builds the test program; the others are named in the file.
+
+- **Windows**, for each extra Lazarus: a copy of `HEAD` (`git archive`), the plugin installed into that Lazarus with `lazbuild` and the IDE rebuilt, the IDE started on a desktop of its own (a Win32 desktop made with `CreateDesktop`: no window appears on yours and no focus is taken; `MATRIX_VISIBLE=1` puts the windows on your desktop), the full suite with `MCP_DEBUG_TESTS=1`, then `TTestProgress` alone with the test hooks on, then the IDE is stopped and the fixture files are restored. The driver uses Win32 calls, so it runs on Windows only.
+- **Linux**: a box with its own Lazarus versions, reachable through an HTTP shell executor that runs a command in a container (`LINUX_EXECUTOR`, `LINUX_CONTAINER`, `LINUX_VERSIONS`). The driver compares a hash of the sources with the box's; if they differ it asks for the tree `git_serve` offers (start it first), then runs `tools/matrix/linrun.sh` there for each version.
+- The output goes to `tools/matrix/out/` (git-ignored); the exit code is 1 if anything failed. `summary` only prints the table again from the last run.
+- The working tree must be clean (`MATRIX_ALLOW_DIRTY=1` skips the check). The matrix and `ide_run_tests` use the same `tests/mcpserver_tests.exe`: do not run both at once.
 
 Architecture details: [ADR-005](adr/0005-fpcunit-test-suite.md).
