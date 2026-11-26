@@ -533,7 +533,9 @@ begin
   Lpr := Dir + 'quits.lpr';
   SL := TStringList.Create;
   try
-    SL.Text := 'program quits;' + LineEnding + 'begin' + LineEnding +
+    { a GUI program has no console: a console program started by the IDE is handed to Windows Terminal
+      when that is the default terminal, which takes the foreground and switches the user's tab }
+    SL.Text := 'program quits;' + LineEnding + '{$APPTYPE GUI}' + LineEnding + 'begin' + LineEnding +
                '  Halt(3);' + LineEnding + 'end.' + LineEnding;
     SL.SaveToFile(Lpr);
   finally
@@ -834,7 +836,7 @@ begin
   Lpr := Dir + 'sleeper.lpr';
   SL := TStringList.Create;
   try
-    SL.Text := 'program sleeper;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+    SL.Text := 'program sleeper;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding + '{$APPTYPE GUI}' + LineEnding +
                'uses SysUtils;' + LineEnding + 'begin' + LineEnding +
                '  Sleep(60000);' + LineEnding + 'end.' + LineEnding;
     SL.SaveToFile(Lpr);
