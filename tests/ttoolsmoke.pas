@@ -22,6 +22,12 @@ type
     procedure TestCodeGetOutline;
     procedure TestCodeGetOutlineWholeUnit;
     procedure TestCodeGetOutlineDirectives;
+    { directives:true, and the far corners of it: the parser is CodeTools', these tests say what we pass on }
+    procedure TestDirectivesBranchesAndActivity;
+    procedure TestDirectivesSeveralOnOneLineAndOverLines;
+    procedure TestDirectivesUnbalanced;
+    procedure TestDirectivesLineEndingsQuotesAndBytes;
+    procedure TestDirectivesHugeAndDeep;
     procedure TestCodeGetUnitInterface;
     procedure TestCodeNewFileInKnownFolder;
     procedure TestProjectCreateRefusesUnsavedEditor;
@@ -220,6 +226,179 @@ begin
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
     McpDeleteTree(Dir);
   end;
+end;
+
+{ ── directives:true ─────────────────────────────────────────────────────── }
+
+var
+  NastyCount: Integer = 0;
+
+{ Writes ASource exactly as it is (a string list would change the line endings) and returns the
+  outline with directives. }
+function DirectiveOutline(const ASource: string): string;
+var
+  Dir, F : string;
+  FS     : TFileStream;
+begin
+  { a new folder and name each time: CodeTools keeps the buffer of a path it has seen }
+  Inc(NastyCount);
+  Dir := GetTempDir(False) + 'mcpdirnasty' + IntToStr(NastyCount) + '_' + IntToStr(GetTickCount64) + PathDelim;
+  ForceDirectories(Dir);
+  F  := Dir + 'nasty.pas';
+  FS := TFileStream.Create(F, fmCreate);
+  try
+    if Length(ASource) > 0 then FS.WriteBuffer(ASource[1], Length(ASource));
+  finally
+    FS.Free;
+  end;
+  try
+    Result := Call('code_get_outline', '{"file":' + JsonStr(F) + ',"directives":true}');
+  finally
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    McpDeleteTree(Dir);
+  end;
+end;
+
+function CountOf(const ASub, AText: string): Integer;
+var
+  P : Integer;
+begin
+  Result := 0;
+  P := Pos(ASub, AText);
+  while P > 0 do
+  begin
+    Inc(Result);
+    P := Pos(ASub, AText, P + Length(ASub));
+  end;
+end;
+
+procedure TTestToolSmoke.TestDirectivesBranchesAndActivity;
+var
+  T : string;
+begin
+  T := DirectiveOutline(
+    'unit nasty;' + #10 +                         { 1 }
+    '{$mode objfpc}' + #10 +                      { 2 }
+    'interface' + #10 +                           { 3 }
+    '{$IFDEF MCP_NEVER_DEFINED}' + #10 +          { 4 }
+    'procedure Hidden;' + #10 +                   { 5 }
+    '{$ELSE}' + #10 +                             { 6 }
+    'procedure Shown;' + #10 +                    { 7 }
+    '{$ENDIF}' + #10 +                            { 8 }
+    '{$DEFINE LOCAL}' + #10 +                     { 9 }
+    '{$UNDEF LOCAL}' + #10 +                      { 10 }
+    'implementation' + #10 +
+    'procedure Shown; begin end;' + #10 +
+    'end.');
+  CheckNoError(Self, 'code_get_outline', T);
+  CheckTrue(Pos('"line":4,"name":"IFDEF MCP_NEVER_DEFINED","to":5,"active":false', T) > 0, 'the inactive branch: ' + T);
+  CheckTrue(Pos('"line":6,"name":"ELSE","to":7,"active":true', T) > 0, 'the active one: ' + T);
+  CheckTrue(Pos('"line":8,"name":"ENDIF"', T) > 0, 'the end: ' + T);
+  CheckTrue(Pos('"line":9,"name":"DEFINE LOCAL"', T) > 0, 'define: ' + T);
+  CheckTrue(Pos('"line":10,"name":"UNDEF LOCAL"', T) > 0, 'undef: ' + T);
+  CheckTrue(Pos('Hidden', T) = 0, 'code of a branch that is not compiled is not listed: ' + T);
+  CheckTrue(Pos('"mode', LowerCase(T)) = 0, 'a switch like mode is not a directive entry: ' + T);
+  { the directives are among the entries, in the order of the source }
+  CheckTrue(Pos('"name":"ELSE"', T) < Pos('"name":"Shown"', T), 'in line order: ' + T);
+end;
+
+procedure TTestToolSmoke.TestDirectivesSeveralOnOneLineAndOverLines;
+var
+  T : string;
+begin
+  T := DirectiveOutline(
+    'unit nasty;' + #10 +                                        { 1 }
+    'interface' + #10 +                                          { 2 }
+    '{$IFDEF A}{$IFDEF B}procedure P;{$ENDIF}{$ENDIF}' + #10 +   { 3 }
+    '{$IF defined(A) and' + #10 +                                { 4 }
+    '      defined(B)}' + #10 +                                  { 5 }
+    'procedure Q;' + #10 +                                       { 6 }
+    '{$ENDIF}' + #10 +                                           { 7 }
+    'implementation' + #10 + 'end.');
+  CheckNoError(Self, 'code_get_outline', T);
+  CheckEquals(2, CountOf('"line":3,"name":"IFDEF', T), 'two directives on line 3: ' + T);
+  CheckTrue(Pos('"line":3,"name":"IFDEF A","to":3', T) > 0, 'a branch that ends on its own line: ' + T);
+  CheckTrue(Pos('"line":4,"name":"IF defined(A) and       defined(B)","to":6', T) > 0,
+    'a directive over two lines is one line of text: ' + T);
+  CheckTrue(Pos('"line":7,"name":"ENDIF"', T) > 0, 'what follows is on the right line: ' + T);
+end;
+
+{ Unbalanced directives: CodeTools' scanner and directive parser decide, as they do for the IDE.  We
+  pass on what they say: a parse error of the tool, or the outline with a directive_error entry.
+  What must never happen: a hang, a crash, or an empty answer. }
+procedure TTestToolSmoke.TestDirectivesUnbalanced;
+  procedure Sane(const AWhat, T: string);
+  begin
+    CheckTrue((Pos('TOOL ERROR', T) > 0) or (Pos('directive_error', T) > 0) or (Pos('"kind":"directive"', T) > 0),
+      AWhat + ': ' + T);
+  end;
+begin
+  Sane('an IF never closed', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '{$IFDEF A}' + #10 +
+    'procedure P;' + #10 + 'implementation' + #10 + 'end.'));
+  Sane('an ENDIF without an IF', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.'));
+  Sane('an ELSE without an IF', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '{$ELSE}' + #10 +
+    'implementation' + #10 + 'end.'));
+  { after "end." CodeTools reads nothing: an empty outline is its answer }
+  CheckTrue(DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 +
+    'implementation' + #10 + 'end.' + #10 + '{$IFDEF X') <> '', 'a directive comment never closed');
+  Sane('a directive comment never closed before the end', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 +
+    '{$IFDEF X' + #10 + 'implementation' + #10 + 'end.'));
+end;
+
+{ CR LF, a bare CR, quotes and apostrophes, UTF-8 and stray bytes }
+procedure TTestToolSmoke.TestDirectivesLineEndingsQuotesAndBytes;
+var
+  T : string;
+begin
+  T := DirectiveOutline('unit nasty;' + #13 + 'interface' + #13 + '{$IFDEF A}' + #13 + 'implementation' + #13 + '{$ENDIF}' + #13 + 'end.');
+  CheckTrue(Pos('"line":3,"name":"IFDEF A"', T) > 0, 'a file of bare CRs: ' + T);
+  T := DirectiveOutline('unit nasty;' + #13#10 + 'interface' + #13#10 + '{$IFDEF A}' + #13#10 + '{$ENDIF}' + #13#10 +
+    'implementation' + #13#10 + 'end.');
+  CheckTrue(Pos('"line":3,"name":"IFDEF A"', T) > 0, 'CR LF: ' + T);
+  T := DirectiveOutline(
+    'unit nasty;' + #10 +                                        { 1 }
+    'interface' + #10 +                                          { 2 }
+    'const S = ''it''''s {$IFDEF Fake} here'';' + #10 +          { 3 }
+    '{ it''s a comment }' + #10 +                                { 4 }
+    '// don''t {$IFDEF AlsoFake}' + #10 +                        { 5 }
+    '(* isn''t {$IFDEF StillFake} *)' + #10 +                    { 6 }
+    '{ ' + #$D0#$9F#$D1#$80#$D0#$B8#$D0#$B2#$D0#$B5#$D1#$82 + ' }' + #10 +   { 7 }
+    '{$IFDEF Real}' + #10 + '{$ENDIF}' + #10 +                   { 8, 9 }
+    'implementation' + #10 + 'end.');
+  CheckTrue(Pos('Fake', T) = 0, 'a directive inside a string or a comment is none: ' + T);
+  CheckTrue(Pos('"line":8,"name":"IFDEF Real"', T) > 0, 'the real one after all that: ' + T);
+  { a stray high byte is text; a NUL ends the source for CodeTools (FF FE looks like a UTF-16 BOM to
+    it): in each case an answer comes, error or not }
+  T := DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '// ' + #$80 + #10 + '{$IFDEF A}{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.');
+  CheckTrue(T <> '', 'a stray byte in a comment');
+  T := DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '// ' + #255#254 + #10 + '{$IFDEF A}{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.');
+  CheckTrue(T <> '', 'FF FE in a comment');
+  T := DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '// ' + #0 + #10 + '{$IFDEF A}{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.');
+  CheckTrue(T <> '', 'a NUL byte');
+end;
+
+{ thousands of directives and a deep nesting: no recursion that runs out, no minutes }
+procedure TTestToolSmoke.TestDirectivesHugeAndDeep;
+var
+  S, T : string;
+  I    : Integer;
+  T0   : QWord;
+begin
+  S := 'unit nasty;' + #10 + 'interface' + #10;
+  for I := 1 to 3000 do
+    S := S + '{$IFDEF D' + IntToStr(I) + '}' + #10 + '// filler' + #10 + '{$ENDIF}' + #10;
+  for I := 1 to 500 do S := S + '{$IFDEF N' + IntToStr(I) + '}' + #10;
+  for I := 1 to 500 do S := S + '{$ENDIF}' + #10;
+  S := S + 'implementation' + #10 + 'end.';
+  T0 := GetTickCount64;
+  T := DirectiveOutline(S);
+  CheckTrue(GetTickCount64 - T0 < 20000, 'took ' + IntToStr(GetTickCount64 - T0) + ' ms');
+  CheckEquals(7000, CountOf('"kind":"directive"', T), 'every directive is there (3000 pairs and 500 nested)');
+  CheckEquals(0, CountOf('directive_error', T), 'no error: ' + Copy(T, 1, 200));
 end;
 
 procedure TTestToolSmoke.TestCodeGetUnitInterface;

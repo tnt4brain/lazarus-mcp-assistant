@@ -38,6 +38,7 @@ uses
   BasicCodeTools,
   Controls,
   jsonparser, McpProgress,
+  DirectivesTree, LinkScanner,
   McpToolContext, McpToolHelpers, McpLineDiff, McpStatements, McpStatementEdit;
 
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
@@ -109,7 +110,11 @@ const
 
   SCHEMA_GET_CODE_OUTLINE =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path"}},' +
+    '"file":{"type":"string","description":"Absolute path"},' +
+    '"directives":{"type":"boolean","description":"Also list the conditional directives ' +
+    '(IFDEF, IFNDEF, IF, IFOPT, ELSE, ELSEIF, ENDIF), DEFINE, UNDEF and include directives in ' +
+    'order: a branch has to (its last line) and active (compiled with the IDE\''s defines). ' +
+    'Code in a branch that is not active is not in the outline. Default false"}},' +
     '"required":["file"]}';
 
   SCHEMA_FIND_ALL_REFERENCES =
@@ -259,6 +264,164 @@ begin
   end
   else
     CodeBuf.AbsoluteToLineCol(CleanPos, ALine, ACol);
+end;
+
+{ The outline with the directives of the source between its entries, in line order (an entry that
+  comes from an include file stays where the one before it is).  A directive that opens a branch has
+  "to", the last line of the branch, and "active": whether CodeTools compiles it, which is what its
+  scanner says about the first line after the directive (-1: skipped code). }
+function OutlineWithDirectives(Tool: TCodeTool; CodeBuf: TCodeBuffer;
+  AOutline: TJSONArray): TJSONArray;
+var
+  DTool   : TCompilerDirectivesTree;
+  Node    : TCodeTreeNode;
+  DirLine : array of Integer;      { the directives, in the order of the source }
+  DirEnt  : array of TJSONObject;
+  ND      : Integer;
+  Disabled : array of Boolean;
+  Skipping : Boolean;
+  I, K, Last : Integer;
+  Item, Entry : TJSONObject;
+  XY      : TCodeXYPosition;
+  CP, R   : Integer;
+  LineX, LineY : Integer;
+
+  function LineOf(APos: Integer): Integer;
+  begin
+    CodeBuf.AbsoluteToLineCol(APos, LineY, LineX);
+    Result := LineY;
+  end;
+
+  { the directives CodeTools' own directive parser keeps: conditionals, define and undefine, include }
+  function Listed(N: TCodeTreeNode): Boolean;
+  begin
+    Result := (N.Desc = cdnIf) or (N.Desc = cdnElseIf) or (N.Desc = cdnElse) or (N.Desc = cdnEnd) or
+              ((N.Desc = cdnDefine) and ((N.SubDesc = cdnsDefine) or (N.SubDesc = cdnsUndef) or
+                                         (N.SubDesc = cdnsSetC))) or
+              ((N.Desc = cdnInclude) and (N.SubDesc = cdnsInclude));
+  end;
+
+  { the text of the directive between its braces, on one line }
+  function DirectiveText(N: TCodeTreeNode): string;
+  var
+    P : Integer;
+  begin
+    Result := DTool.GetDirective(N);
+    if Copy(Result, 1, 3) = '(*$' then
+      Result := Copy(Result, 4, Length(Result) - 5)
+    else if Copy(Result, 1, 2) = '{$' then
+      Result := Copy(Result, 3, Length(Result) - 3);
+    for P := 1 to Length(Result) do
+      if Result[P] < ' ' then Result[P] := ' ';
+    Result := Trim(Result);
+  end;
+
+  procedure Push(ALine: Integer; AEntry: TJSONObject);
+  begin
+    if ND = Length(DirLine) then
+    begin
+      SetLength(DirLine, ND * 2 + 16);
+      SetLength(DirEnt, ND * 2 + 16);
+    end;
+    DirLine[ND] := ALine;
+    DirEnt[ND] := AEntry;
+    Inc(ND);
+  end;
+
+begin
+  Result := TJSONArray.Create;
+  ND := 0;
+  DTool := CodeToolBoss.GetDirectivesToolForSource(CodeBuf, False);
+  try
+    DTool.Parse(CodeBuf, DTool.NestedComments);
+  except
+    on E: Exception do
+    begin
+      { an unbalanced IF, an ENDIF without IF: the compiler stops there too }
+      Entry := TJSONObject.Create;
+      Entry.Add('kind', 'directive_error');
+      Entry.Add('name', E.Message);
+      Result.Add(Entry);
+      DTool := nil;
+    end;
+  end;
+  if Assigned(DTool) then
+  begin
+    { which links of the scanner lie in code a conditional skips: the same walk CodeTools makes }
+    SetLength(Disabled, Tool.Scanner.LinkCount);
+    Skipping := False;
+    for I := 0 to Tool.Scanner.LinkCount - 1 do
+    begin
+      case Tool.Scanner.Links[I].Kind of
+        slkSkipStart: Skipping := True;
+        slkSkipEnd:   Skipping := False;
+      end;
+      Disabled[I] := Skipping;
+    end;
+    Node := DTool.Tree.Root;
+    while Assigned(Node) do
+    begin
+      if Listed(Node) then
+      begin
+        Entry := TJSONObject.Create;
+        Entry.Add('kind', 'directive');
+        Entry.Add('line', LineOf(Node.StartPos));
+        Entry.Add('name', DirectiveText(Node));
+        if (Node.Desc = cdnIf) or (Node.Desc = cdnElseIf) or (Node.Desc = cdnElse) then
+        begin
+          { a branch ends where the directive that closes it begins }
+          K := LineOf(Node.EndPos) - 1;
+          if K < Entry.Integers['line'] then K := Entry.Integers['line'];
+          Entry.Add('to', K);
+          XY.Code := CodeBuf;
+          XY.X := 1;
+          XY.Y := Entry.Integers['line'] + 1;
+          R := Tool.CaretToCleanPos(XY, CP);
+          if R = -1 then
+            Entry.Add('active', False)    { between two links: skipped }
+          else if R = 0 then
+          begin
+            { CodeTools turns code an IFDEF skips into a special comment: a position in it is "valid",
+              so ask the link it is in whether a skip started before it }
+            K := Tool.Scanner.LinkIndexAtCleanPos(CP);
+            Entry.Add('active', (K < 0) or (K >= Length(Disabled)) or not Disabled[K]);
+          end;
+        end;
+        Push(Entry.Integers['line'], Entry);
+      end;
+      if Assigned(Node.FirstChild) then
+        Node := Node.FirstChild
+      else if Assigned(Node.NextBrother) then
+        Node := Node.NextBrother
+      else
+      begin
+        Node := Node.Parent;
+        while Assigned(Node) and not Assigned(Node.NextBrother) do
+          Node := Node.Parent;
+        if Assigned(Node) then Node := Node.NextBrother;
+      end;
+    end;
+  end;
+  { the outline entries, with each directive before the first entry that is on a later line; an
+    entry from an include file stays where the one before it is }
+  K := 0;
+  Last := 0;
+  for I := 0 to AOutline.Count - 1 do
+  begin
+    Item := AOutline.Objects[I];
+    if Item.IndexOfName('file') < 0 then Last := Item.Get('line', 0);
+    while (K < ND) and (DirLine[K] <= Last) do
+    begin
+      Result.Add(DirEnt[K]);
+      Inc(K);
+    end;
+    Result.Add(Item.Clone);
+  end;
+  while K < ND do
+  begin
+    Result.Add(DirEnt[K]);
+    Inc(K);
+  end;
 end;
 
 { In a unit, adds "section": "interface" or "implementation" to an outline entry: without it the
@@ -1531,6 +1694,7 @@ var
   TreeNode   : TCodeTreeNode;
   Outline    : TJSONArray;
   IncFile    : string;       { the include file a node is in; '' in the unit itself }
+  Merged     : TJSONArray;   { the outline with the directives }
   Entry      : TJSONObject;
   FileListJ  : TJSONArray;
   FileNames  : TStringList;
@@ -1755,7 +1919,17 @@ begin
               TreeNode := TreeNode.NextBrother;
           end;
         end;
-        Ctx.Result := Outline.AsJSON;
+        if Ctx.Params.Get('directives', False) then
+        begin
+          Merged := OutlineWithDirectives(Tool, CodeBuf, Outline);
+          try
+            Ctx.Result := Merged.AsJSON;
+          finally
+            Merged.Free;
+          end;
+        end
+        else
+          Ctx.Result := Outline.AsJSON;
       finally
         Outline.Free;
       end;
@@ -2423,6 +2597,8 @@ begin
   Tools.Add(MakeTool('code_get_outline',
     'Return the structural outline of a Pascal unit: uses clauses, type ' +
     'names, class members, and top-level routines with their line numbers. ' +
+    'With directives:true the conditional directives are listed too, each branch with its last ' +
+    'line ("to") and whether it is compiled ("active"). ' +
     'In a unit each entry says which section it is in ("section": interface or implementation): ' +
     'a routine declared in the interface appears again, with its body, in the implementation. ' +
     'Does not include method bodies.',

@@ -53,7 +53,7 @@ Where the editing tools may write, and what the limits do not do: see [write-sco
 
 | Tool | Description |
 |---|---|
-| `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
+| `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies); each entry in a unit says its `section` (interface or implementation), a routine from an include file has that file and its line there. `directives: true` adds conditional directives, define/undef and includes from CodeTools' own directive parser: a branch has `to` (its last line) and `active` (compiled with the IDE's defines); code of an inactive branch is not in the outline, as the compiler skips it |
 | `code_get_unit_interface` | The interface section of a unit |
 | `code_get_procedure_ast` | Locals (with type) and the statements of one routine as a tree (if/for/while/repeat/try/case/with, calls, assignments) with lines and columns; `depth` sets how many levels ([ADR-008](adr/0008-structural-source-editing.md)) |
 | `code_find_declaration` | Where an identifier is declared, with a context snippet (`show=true` also jumps the editor cursor there); follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
