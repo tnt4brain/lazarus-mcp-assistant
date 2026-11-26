@@ -44,15 +44,51 @@ procedure CopyMcpConfigToClipboard(Sender: TObject);
 begin
   if not IsServerRunning then
   begin
-    ShowMessage('MCP server is not running. Launch it first via ' +
-                'Tools → MCP Assistant → Launch MCP Assistant.');
+    ShowMessage('The MCP server is not running. Start it first via ' +
+                'Tools → MCP Assistant → Start MCP Server (or Launch MCP Assistant).');
     Exit;
   end;
   McpCreateClientToken;
 end;
 {$POP}
 
-{ Called from the menu: starts the MCP server (if needed) and spawns claude. }
+{ Where the running server is, for the messages }
+function McpServerAddress: string;
+begin
+  Result := Format('http://%s:%d/mcp', [GetServerHost, GetServerPort]);
+end;
+
+{ Called from the menu: starts the MCP server and no client.  For an assistant that
+  is started some other way (OpenCode, Pi, a remote machine ...). }
+{ menu handlers: the signature is fixed by the IDE, Sender is not needed }
+{$PUSH}{$WARN 5024 OFF}
+procedure StartMcpServer(Sender: TObject);
+var
+  Started : Boolean;
+  Msg     : string;
+begin
+  Started := not IsServerRunning;
+  if Started then
+    InitializeMcpServer;
+  if not IsServerRunning then
+  begin
+    ShowMessage('MCP server failed to start. Check the IDE log for details.');
+    Exit;
+  end;
+  if Started then
+    Msg := 'The MCP server is running at ' + McpServerAddress + '.'
+  else
+    Msg := 'The MCP server was already running at ' + McpServerAddress + '.';
+  ShowMessage(Msg + LineEnding + LineEnding +
+              'To connect an assistant, use Tools → MCP Assistant → ' +
+              'Copy Server Config to Clipboard...: it makes a token and copies the ' +
+              'config. The format is Claude Code''s (mcpServers); for another assistant ' +
+              'take the url and the Authorization header from it.');
+end;
+{$POP}
+
+{ Called from the menu: starts the MCP server (if needed) and spawns the assistant
+  that is set up (claude unless the options say otherwise). }
 { menu handlers: the signature is fixed by the IDE, Sender is not needed }
 {$PUSH}{$WARN 5024 OFF}
 procedure LaunchMcpAssistant(Sender: TObject);
@@ -89,11 +125,13 @@ begin
 
   Req := Default(TMcpLaunchRequest);
   Req.ClaudeExe       := '';
+  Req.ConfigArgs      := MCP_DEFAULT_CONFIG_ARGS;
   Req.ExtraArgs       := '';
   Req.TerminalCommand := '';
   if Assigned(McpSettings) then
   begin
     Req.ClaudeExe       := McpSettings.ClaudePath;
+    Req.ConfigArgs      := McpSettings.ConfigArgs;
     Req.ExtraArgs       := McpSettings.ExtraClaudeArgs;
     Req.TerminalCommand := McpSettings.TerminalCommand;
     Req.WinTerminal     := McpSettings.WinTerminal;
@@ -113,8 +151,12 @@ begin
   if Err = '' then
     DebugLn('[MCP Assistant] Launched claude with config: ' + ConfigPath)
   else
-    ShowMessage(Err + LineEnding +
-      'Claude Code and terminal settings: Tools > Options > MCP Assistant.');
+    { the server is up by now: only the assistant could not be started }
+    ShowMessage(Err + LineEnding + LineEnding +
+      'The MCP server is running at ' + McpServerAddress + '; only the assistant ' +
+      'could not be started. Its executable, arguments and the terminal are set in ' +
+      'Tools > Options > MCP Assistant. Another assistant can connect to the ' +
+      'running server: see Tools > MCP Assistant > Copy Server Config to Clipboard...');
 end;
 {$POP}
 
@@ -250,6 +292,9 @@ begin
     RegisterIDEMenuCommand(
       McpMenu, 'LaunchMcpAssistant', 'Launch MCP Assistant',
       nil, @LaunchMcpAssistant);
+    RegisterIDEMenuCommand(
+      McpMenu, 'StartMcpServer', 'Start MCP Server (no assistant)',
+      nil, @StartMcpServer);
     { the Markdown viewer for the user's own files: README, ADRs, docs }
     RegisterIDEMenuCommand(
       McpMenu, 'McpViewMarkdown', 'View Markdown...',
@@ -278,7 +323,7 @@ begin
       nil, @WriteMcpReport);
     RegisterIDEMenuSection(McpMenu, 'McpSep2');
     RegisterIDEMenuCommand(
-      McpMenu, 'CopyMcpConfig', 'Copy Server Config to Clipboard',
+      McpMenu, 'CopyMcpConfig', 'Copy Server Config to Clipboard...',
       nil, @CopyMcpConfigToClipboard);
     DebugLn('[MCP Assistant] Registered successfully.');
   except

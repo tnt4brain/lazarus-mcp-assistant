@@ -1,7 +1,9 @@
 { Copyright (c) 2026, Sergei Pechenko. BSD 3-Clause License; see the LICENSE file. }
 unit McpLauncher;
 
-{ Starts Claude Code in a terminal window.
+{ Starts Claude Code, or another assistant the user names, in a terminal window.
+  The executable and the arguments that hand over the MCP config are settings;
+  the defaults are Claude Code's.
 
   Windows: claude runs directly in a new console (poNewConsole).
   Linux/macOS: poNewConsole does nothing there, so a shell script is written
@@ -26,6 +28,8 @@ type
     ClaudeExe       : string;   { '' = claude on PATH }
     WorkDir         : string;
     McpConfigPath   : string;
+    ConfigArgs      : string;   { how the client gets the config: space-separated, in braces
+                                  config = the file; '' = nothing is passed }
     ExtraArgs       : string;   { space-separated }
     TerminalCommand : string;   { Unix: '' = auto-detect; e.g. 'kitty -e' }
     WinTerminal     : string;   { Windows: one of the MCP_TERM_* ids; '' = default }
@@ -35,6 +39,9 @@ type
   end;
 
 const
+  { Claude Code's way to take the config; any other assistant sets its own (or none) }
+  MCP_DEFAULT_CONFIG_ARGS = '--mcp-config {config} --strict-mcp-config';
+
   { Windows terminal choices (stored in the settings file as these ids) }
   MCP_TERM_DEFAULT    = 'default';     { claude.exe in a new console }
   MCP_TERM_CMD        = 'cmd';
@@ -42,6 +49,13 @@ const
   MCP_TERM_WT         = 'wt';
   MCP_TERM_GITBASH    = 'gitbash';
   MCP_TERM_CUSTOM     = 'custom';
+
+{ The arguments after the executable: ConfigArgs with the config file in place of
+  its placeholder (one argument, whatever the path holds), then ExtraArgs. }
+procedure McpLaunchArgs(const AReq: TMcpLaunchRequest; AArgs: TStrings);
+
+{ How many of the first arguments McpLaunchArgs returns come from ConfigArgs }
+function McpConfigArgCount(const AReq: TMcpLaunchRequest): Integer;
 
 { Windows: script for cmd.exe (CRLF, UTF-8 code page) that cds and runs claude }
 function McpBuildCmdScript(const AReq: TMcpLaunchRequest;
@@ -126,23 +140,70 @@ begin
   end;
 end;
 
+procedure McpLaunchArgs(const AReq: TMcpLaunchRequest; AArgs: TStrings);
+var
+  Item : string;
+  Part : TStringList;
+begin
+  AArgs.Clear;
+  Part := TStringList.Create;
+  try
+    SplitArgs(AReq.ConfigArgs, Part);
+    for Item in Part do
+      AArgs.Add(StringReplace(Item, '{config}', AReq.McpConfigPath, [rfReplaceAll]));
+    Part.Clear;
+    SplitArgs(AReq.ExtraArgs, Part);
+    AArgs.AddStrings(Part);
+  finally
+    Part.Free;
+  end;
+end;
+
+function McpConfigArgCount(const AReq: TMcpLaunchRequest): Integer;
+var
+  Part : TStringList;
+begin
+  Part := TStringList.Create;
+  try
+    SplitArgs(AReq.ConfigArgs, Part);
+    Result := Part.Count;
+  finally
+    Part.Free;
+  end;
+end;
+
+{ A flag such as --mcp-config needs no quotes in sh or cmd.  They stay off, so the
+  line Claude Code gets is the one it always got (and a .cmd shim of another assistant
+  is not handed a quoted flag). }
+function BareFlag(const S: string): Boolean;
+var
+  C : Char;
+begin
+  Result := S <> '';
+  for C in S do
+    if not (C in ['a'..'z', 'A'..'Z', '0'..'9', '-', '_', '.']) then
+      Exit(False);
+end;
+
 function McpBuildLaunchScript(const AReq: TMcpLaunchRequest;
   const AClaudeExe: string): string;
 var
-  Item : string;
-  Extra : TStringList;
+  I, N  : Integer;
+  Args  : TStringList;
   Cmd   : string;
 begin
-  Cmd := 'exec ' + McpShellQuote(AClaudeExe) +
-         ' --mcp-config ' + McpShellQuote(AReq.McpConfigPath) +
-         ' --strict-mcp-config';
-  Extra := TStringList.Create;
+  Cmd := 'exec ' + McpShellQuote(AClaudeExe);
+  Args := TStringList.Create;
   try
-    SplitArgs(AReq.ExtraArgs, Extra);
-    for Item in Extra do
-      Cmd := Cmd + ' ' + McpShellQuote(Item);
+    McpLaunchArgs(AReq, Args);
+    N := McpConfigArgCount(AReq);
+    for I := 0 to Args.Count - 1 do
+      if (I < N) and BareFlag(Args[I]) then
+        Cmd := Cmd + ' ' + Args[I]
+      else
+        Cmd := Cmd + ' ' + McpShellQuote(Args[I]);
   finally
-    Extra.Free;
+    Args.Free;
   end;
   Result := '#!/bin/sh' + #10 +
             '# written by the Lazarus MCP Assistant (Launch MCP Assistant)' + #10;
@@ -214,19 +275,22 @@ end;
 function McpBuildCmdScript(const AReq: TMcpLaunchRequest;
   const AClaudeExe: string): string;
 var
-  Item : string;
-  Extra : TStringList;
+  I, N  : Integer;
+  Args  : TStringList;
   Cmd   : string;
 begin
-  Cmd := CmdQuote(AClaudeExe) + ' --mcp-config ' + CmdQuote(AReq.McpConfigPath) +
-         ' --strict-mcp-config';
-  Extra := TStringList.Create;
+  Cmd := CmdQuote(AClaudeExe);
+  Args := TStringList.Create;
   try
-    SplitArgs(AReq.ExtraArgs, Extra);
-    for Item in Extra do
-      Cmd := Cmd + ' ' + CmdQuote(Item);
+    McpLaunchArgs(AReq, Args);
+    N := McpConfigArgCount(AReq);
+    for I := 0 to Args.Count - 1 do
+      if (I < N) and BareFlag(Args[I]) then
+        Cmd := Cmd + ' ' + Args[I]
+      else
+        Cmd := Cmd + ' ' + CmdQuote(Args[I]);
   finally
-    Extra.Free;
+    Args.Free;
   end;
   Result := '@echo off' + #13#10 +
             'chcp 65001 >nul' + #13#10 +
@@ -241,18 +305,17 @@ function McpBuildPs1Script(const AReq: TMcpLaunchRequest;
   const AClaudeExe: string): string;
 var
   Item : string;
-  Extra : TStringList;
+  Args  : TStringList;
   Cmd   : string;
 begin
-  Cmd := '& ' + PsQuote(AClaudeExe) + ' ''--mcp-config'' ' +
-         PsQuote(AReq.McpConfigPath) + ' ''--strict-mcp-config''';
-  Extra := TStringList.Create;
+  Cmd := '& ' + PsQuote(AClaudeExe);
+  Args := TStringList.Create;
   try
-    SplitArgs(AReq.ExtraArgs, Extra);
-    for Item in Extra do
+    McpLaunchArgs(AReq, Args);
+    for Item in Args do
       Cmd := Cmd + ' ' + PsQuote(Item);
   finally
-    Extra.Free;
+    Args.Free;
   end;
   Result := #$EF#$BB#$BF +
             '# written by the Lazarus MCP Assistant (Launch MCP Assistant)' + #13#10;
@@ -522,10 +585,13 @@ begin
     if (AReq.WinTerminal = '') or (AReq.WinTerminal = MCP_TERM_DEFAULT) then
     begin
       Proc.Executable := ClaudeExe;
-      Proc.Parameters.Add('--mcp-config');
-      Proc.Parameters.Add(AReq.McpConfigPath);
-      Proc.Parameters.Add('--strict-mcp-config');
-      SplitArgs(AReq.ExtraArgs, Proc.Parameters);
+      Argv := TStringList.Create;
+      try
+        McpLaunchArgs(AReq, Argv);
+        Proc.Parameters.AddStrings(Argv);
+      finally
+        Argv.Free;
+      end;
       Proc.Options := [poNewConsole];
     end
     else

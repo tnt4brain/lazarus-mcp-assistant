@@ -30,6 +30,7 @@ type
     FSecurityGroup   : TGroupBox;
     FClaudePath      : TFileNameEdit;
     FWorkDir         : TDirectoryEdit;
+    FConfigArgs      : TEdit;     { how the assistant gets the MCP config }
     FExtraArgs       : TEdit;
     FTerminal        : TEdit;     { Unix: terminal command; Windows: custom template }
     FWinChoice       : TComboBox; { Windows: the terminal host }
@@ -167,13 +168,19 @@ begin
   inherited Create(AOwner);
   FTop := 0;
 
-  FClaudeGroup := AddGroup('Claude Code (Launch MCP Assistant)');
-  AddLabel(FClaudeGroup, 'Claude Code executable (empty: claude on PATH):');
+  FClaudeGroup := AddGroup('Assistant to launch (Launch MCP Assistant; Claude Code by default)');
+  AddLabel(FClaudeGroup, 'Executable (empty: claude on PATH; for another assistant ' +
+                         'enter its full path):');
   FClaudePath := TFileNameEdit.Create(Self);
   Place(FClaudePath, FClaudeGroup);
   AddLabel(FClaudeGroup, 'Working directory (empty: the project''s directory):');
   FWorkDir := TDirectoryEdit.Create(Self);
   Place(FWorkDir, FClaudeGroup);
+  AddLabel(FClaudeGroup, 'Arguments that hand over the MCP config, space-separated; {config} ' +
+                         'is the config file. Claude Code: ' + MCP_DEFAULT_CONFIG_ARGS +
+                         '. Empty: the assistant gets none (it is set up to find the server itself):');
+  FConfigArgs := TEdit.Create(Self);
+  Place(FConfigArgs, FClaudeGroup);
   AddLabel(FClaudeGroup, 'Extra command-line options (space-separated), ' +
                          'e.g. --model claude-opus-5-5:');
   FExtraArgs := TEdit.Create(Self);
@@ -372,6 +379,7 @@ begin
     FWorkDir.TextHint := McpProject.GetProjectDirectory + '  (the project''s directory)'
   else
     FWorkDir.TextHint := 'the open project''s directory';
+  FConfigArgs.TextHint := 'none';
   FExtraArgs.TextHint := 'none';
   {$IFDEF WINDOWS}
   FTerminal.TextHint := 'myterm.exe --cwd {dir} -- {cmd}';
@@ -404,6 +412,7 @@ begin
   UpdateHints;
   FClaudePath.Text     := McpSettings.ClaudePath;
   FWorkDir.Text        := McpSettings.WorkingDirectory;
+  FConfigArgs.Text     := McpSettings.ConfigArgs;
   FExtraArgs.Text      := McpSettings.ExtraClaudeArgs;
   {$IFDEF WINDOWS}
   FillWinChoices;
@@ -451,6 +460,7 @@ begin
   end;
   McpSettings.ClaudePath          := Trim(FClaudePath.Text);
   McpSettings.WorkingDirectory    := Trim(FWorkDir.Text);
+  McpSettings.ConfigArgs          := Trim(FConfigArgs.Text);
   McpSettings.ExtraClaudeArgs     := Trim(FExtraArgs.Text);
   {$IFDEF WINDOWS}
   if FWinChoice.ItemIndex >= 0 then

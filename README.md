@@ -98,14 +98,27 @@ its settings.
 
 3. Tools are available as `mcp__lazarus-ide__<tool_name>` in Claude Code.
 
+### Another assistant, or none started by the IDE
+
+The server does not need Claude Code. **Tools → MCP Assistant → Start MCP Server (no assistant)** starts it and
+shows its address; it also starts with the IDE once it has been started once. To connect an assistant, make a
+token (**Tools → MCP Assistant → Copy Server Config to Clipboard...**, or **Add token...** in the options) and put
+the server's `url` and the `Authorization` header into that assistant's MCP settings. The config the dialog copies
+is in Claude Code's `mcpServers` format; other assistants name the same two things differently.
+
+To have **Launch MCP Assistant** start another assistant, set its executable, and the arguments that hand it the
+MCP config, under **Options** below (Claude Code's `--mcp-config {config} --strict-mcp-config` is the default;
+`{config}` is the config file; leave the field empty for an assistant that finds the server by itself).
+
 ### Options
 
 **Tools → Options → MCP Assistant** (also **Tools → MCP Assistant → Options...**):
 
 | Setting | Empty means |
 |---|---|
-| Claude Code executable | `claude` on `PATH` |
+| Assistant executable (Launch MCP Assistant) | `claude` on `PATH` |
 | Working directory | The open project's directory |
+| Arguments that hand over the MCP config | Nothing is passed. Default: `--mcp-config {config} --strict-mcp-config` (Claude Code); `{config}` is replaced by the config file |
 | Extra command-line options | None |
 | Terminal command (Linux/macOS), e.g. `kitty -e` | Detect a terminal |
 | git executable | `git` on `PATH` |

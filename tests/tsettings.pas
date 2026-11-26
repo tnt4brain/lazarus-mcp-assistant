@@ -22,12 +22,13 @@ type
     procedure TestMissingFileGivesDefaults;
     procedure TestRoundTrip;
     procedure TestObsoleteKeysRemoved;
+    procedure TestConfigArgsKeptAndEmptyAllowed;
   end;
 
 implementation
 
 uses
-  Classes, SysUtils, McpSettingsFile;
+  Classes, SysUtils, McpSettingsFile, McpLauncher;
 
 procedure TTestSettingsFile.SetUp;
 begin
@@ -50,6 +51,7 @@ begin
     S.LoadSettings(FFile);
     CheckEquals(FFile, S.ConfigFileName);
     CheckEquals('', S.ClaudePath);
+    CheckEquals(MCP_DEFAULT_CONFIG_ARGS, S.ConfigArgs, 'Claude Code''s arguments by default');
     CheckEquals('', S.GitPath);
     CheckEquals('default', S.WinTerminal, 'Windows keeps its console by default');
     CheckFalse(S.AllowPackageInstall, 'installing packages is off by default');
@@ -131,6 +133,8 @@ begin
       S.LoadSettings(FFile);
       CheckEquals('old', S.ServerToken);
       CheckEquals('/bin/claude', S.ClaudePath);
+      CheckEquals(MCP_DEFAULT_CONFIG_ARGS, S.ConfigArgs,
+        'a file from before the setting existed keeps Claude Code''s arguments');
       S.SaveSettings;
     finally
       S.Free;
@@ -144,6 +148,38 @@ begin
     CheckTrue(Pos('/bin/claude', SL.Text) > 0, 'current settings are kept');
   finally
     SL.Free;
+  end;
+end;
+
+{ Another assistant: its own arguments, or none.  An empty entry is a choice, not a
+  missing one, so it must not come back as Claude Code's. }
+procedure TTestSettingsFile.TestConfigArgsKeptAndEmptyAllowed;
+var
+  S : TMcpIdeSettings;
+begin
+  S := TMcpIdeSettings.Create;
+  try
+    S.LoadSettings(FFile);
+    S.ConfigArgs := '--config {config}';
+    S.SaveSettings;
+  finally
+    S.Free;
+  end;
+  S := TMcpIdeSettings.Create;
+  try
+    S.LoadSettings(FFile);
+    CheckEquals('--config {config}', S.ConfigArgs);
+    S.ConfigArgs := '';
+    S.SaveSettings;
+  finally
+    S.Free;
+  end;
+  S := TMcpIdeSettings.Create;
+  try
+    S.LoadSettings(FFile);
+    CheckEquals('', S.ConfigArgs, 'empty stays empty');
+  finally
+    S.Free;
   end;
 end;
 

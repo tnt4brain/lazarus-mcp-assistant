@@ -22,8 +22,9 @@ type
     FServerPort: Word;
     FListenAddress: string;         { IPv4 the server listens on; 0.0.0.0 = every interface }
     FLastConfigPath: string;
-    FClaudePath: string;            { '' = claude on PATH }
+    FClaudePath: string;            { the assistant to launch; '' = claude on PATH }
     FWorkingDirectory: string;      { '' = project directory }
+    FConfigArgs: string;            { how it gets the MCP config; '' = not passed (McpLauncher) }
     FExtraClaudeArgs: string;
     FTerminalCommand: string;       { '' = auto-detect (Linux/macOS only) }
     FWinTerminal: string;           { Windows: default, cmd, powershell, wt, gitbash, custom }
@@ -62,6 +63,7 @@ type
     property LastConfigPath: string read FLastConfigPath write FLastConfigPath;
     property ClaudePath: string read FClaudePath write FClaudePath;
     property WorkingDirectory: string read FWorkingDirectory write FWorkingDirectory;
+    property ConfigArgs: string read FConfigArgs write FConfigArgs;
     property ExtraClaudeArgs: string read FExtraClaudeArgs write FExtraClaudeArgs;
     property TerminalCommand: string read FTerminalCommand write FTerminalCommand;
     property WinTerminal: string read FWinTerminal write FWinTerminal;
@@ -89,6 +91,9 @@ type
 
 implementation
 
+uses
+  McpLauncher;  { MCP_DEFAULT_CONFIG_ARGS }
+
 constructor TMcpIdeSettings.Create;
 begin
   inherited Create;
@@ -113,6 +118,7 @@ begin
   FListenAddress       := '127.0.0.1';
   FClaudePath          := '';
   FWorkingDirectory    := '';
+  FConfigArgs          := MCP_DEFAULT_CONFIG_ARGS;
   FExtraClaudeArgs     := '';
   FTerminalCommand     := '';
   FWinTerminal         := 'default';
@@ -252,6 +258,8 @@ begin
     FListenAddress    := FXmlConfig.GetValue('Server/ListenAddress', '127.0.0.1');
     FClaudePath      := FXmlConfig.GetValue('Claude/Path', '');
     FWorkingDirectory := FXmlConfig.GetValue('Claude/WorkingDirectory', '');
+    { a file from before 1.9.1 has no such entry: it keeps Claude Code's arguments }
+    FConfigArgs       := FXmlConfig.GetValue('Claude/ConfigArgs', MCP_DEFAULT_CONFIG_ARGS);
     FExtraClaudeArgs  := FXmlConfig.GetValue('Claude/ExtraArgs', '');
     FTerminalCommand  := FXmlConfig.GetValue('Claude/TerminalCommand', '');
     FWinTerminal      := FXmlConfig.GetValue('Claude/WinTerminal', 'default');
@@ -285,6 +293,7 @@ begin
     FXmlConfig.SetValue('Server/ListenAddress',  FListenAddress);
     FXmlConfig.SetValue('Claude/Path',             FClaudePath);
     FXmlConfig.SetValue('Claude/WorkingDirectory', FWorkingDirectory);
+    FXmlConfig.SetValue('Claude/ConfigArgs',       FConfigArgs);
     FXmlConfig.SetValue('Claude/ExtraArgs',        FExtraClaudeArgs);
     FXmlConfig.SetValue('Claude/TerminalCommand',  FTerminalCommand);
     FXmlConfig.SetValue('Claude/WinTerminal',      FWinTerminal);
