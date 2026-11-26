@@ -39,6 +39,7 @@ type
     procedure TestCancelReachesTheMainThread;
     procedure TestForeignUnknownAndLateCancelChangeNothing;
     procedure TestCancelAbortsABuild;
+    procedure TestWriteToolIsRefusedInsideAnotherCall;
     procedure TestRegistryIsEmptyAfterwards;
     procedure TestServerDiscoverIsMethodNotFound;
   end;
@@ -191,6 +192,36 @@ begin
     AssertTrue('ended soon after the cancel, took ' + FloatToStr(C.Seconds), C.Seconds < 5);
     AssertTrue('says cancelled: ' + C.Res.Body, Pos('Cancelled by the client', C.Res.Body) > 0);
     AssertTrue('the tool stopped: ' + C.Res.Body, Pos('stopped at step', C.Res.Body) > 0);
+  finally
+    C.Free;
+  end;
+end;
+
+{ While the main thread is inside a call that handles the IDE's messages (a build does), a second call
+  runs inside it.  A tool that changes things is refused then; read-only tools and the escape hatches
+  are served.  editor_close would close the active editor if it ran: it must not. }
+procedure TTestProgress.TestWriteToolIsRefusedInsideAnotherCall;
+var
+  C    : TSlowCall;
+  Sess : string;
+  W, Rd, Ans : string;
+begin
+  Sess := McpNewSession;
+  C := TSlowCall.Create(StringReplace(SlowJson(71, 4, ''),
+         '"__test_slow__","arguments":{"seconds":4}',
+         '"__test_slow_main__","arguments":{"seconds":4,"pump":true}', []),
+         [ACCEPT, 'Mcp-Session-Id: ' + Sess]);
+  try
+    Sleep(1000);
+    W   := CallToolText('editor_close', '{}', []);
+    Rd  := CallToolText('ide_ping', '{}', []);
+    Ans := CallToolText('ide_answer_dialog', '{"answer":"x"}', []);
+    C.WaitFor;
+    AssertTrue('the write tool is refused: ' + W, Pos('was not run', W) > 0);
+    AssertTrue('and names the call it waits for: ' + W, Pos('__test_slow_main__', W) > 0);
+    AssertTrue('a read-only tool is served: ' + Rd, Pos('was not run', Rd) = 0);
+    AssertTrue('so is ide_answer_dialog: ' + Ans, Pos('was not run', Ans) = 0);
+    AssertTrue('the slow call itself ended normally: ' + C.Res.Body, Pos('finished 4 steps', C.Res.Body) > 0);
   finally
     C.Free;
   end;

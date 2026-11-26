@@ -619,6 +619,7 @@ type
     Cx       : TMcpMainCancel;   { the client's cancel, relayed to the main thread (ADR-036) }
     destructor Destroy; override;
     procedure RunQueued;    { main thread: Run, then hand over or free }
+    procedure FinishRun;    { the call has its answer: wake the waiting thread, or free the call }
     procedure RunAsync(Data: PtrInt);       { RunQueued as an async call }
     procedure LogAndFreeAsync(Data: PtrInt);
     procedure LogAndFree;   { main thread, queued: Log, then free this call }
@@ -659,9 +660,17 @@ begin
 end;
 {$POP}
 
+{ What may run while the main thread is inside another call: what only reads, what answers a dialog
+  (the dialog is why the IDE is waiting), what stops a debug session, and the test hooks. }
+function NestedAllowed(const AToolName: string): Boolean;
+begin
+  Result := McpToolIsReadOnly(AToolName) or
+            (AToolName = 'ide_answer_dialog') or (AToolName = 'debug_stop') or
+            (Copy(AToolName, 1, 7) = '__test_');
+end;
+
 procedure TMcpMainCall.RunQueued;
 var
-  Release : Boolean;
   Outer   : string;
   OuterCx : PMcpMainCancel;
 begin
@@ -669,8 +678,23 @@ begin
     runs the next queued call inside itself; that shows here as a depth above 0. }
   Outer := GMainRunning;
   if GMainDepth > 0 then
+  begin
     McpLogSession(Format('nested: %s started inside %s (depth %d)',
                          [ToolName, Outer, GMainDepth + 1]));
+    { A tool that changes things does not run in the middle of another: the IDE is inside a build,
+      a run or a dialog, and an edit, a save or a second build there lands on half-finished state. }
+    if not NestedAllowed(ToolName) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := Format('%s was not run: the IDE is busy inside %s (it handles other calls ' +
+        'while it builds, runs or waits for a dialog), and a tool that changes things must not ' +
+        'run in the middle of it. Call it again when %s has finished. Read-only tools, ' +
+        'ide_answer_dialog and debug_stop are served meanwhile.', [ToolName, Outer, Outer]);
+      McpLogSession('refused: ' + ToolName + ' inside ' + Outer);
+      FinishRun;
+      Exit;
+    end;
+  end;
   Inc(GMainDepth);
   GMainRunning := ToolName;
   OuterCx := GMcpMainCancel;
@@ -695,6 +719,13 @@ begin
       Ctx.Result := E.Message;
     end;
   end;
+  FinishRun;
+end;
+
+procedure TMcpMainCall.FinishRun;
+var
+  Release : Boolean;
+begin
   GCallLock.Enter;
   try
     Finished := True;

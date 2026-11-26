@@ -271,11 +271,17 @@ end;
 function DispatchSlowMain(var Ctx: TMcpToolCall): Boolean;
 var
   Secs, I : Integer;
+  Pump    : Boolean;
 begin
   Result := True;
   if not HooksEnabled(Ctx, SLOWMAIN_HOOK_NAME) then Exit;
   Secs := 5;
-  if Assigned(Ctx.Params) then Secs := Ctx.Params.Get('seconds', 5);
+  Pump := False;
+  if Assigned(Ctx.Params) then
+  begin
+    Secs := Ctx.Params.Get('seconds', 5);
+    Pump := Ctx.Params.Get('pump', False);   { handles the IDE's messages, as a build does: a queued call runs inside this one }
+  end;
   for I := 1 to Secs * 20 do
   begin
     if McpCancelRequested then
@@ -283,6 +289,7 @@ begin
       Ctx.Result := Format('stopped at step %d of %d', [I div 20, Secs]);
       Exit;
     end;
+    if Pump then Application.ProcessMessages;
     Sleep(50);
   end;
   Ctx.Result := Format('finished %d steps', [Secs]);
