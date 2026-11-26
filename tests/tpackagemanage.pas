@@ -232,14 +232,20 @@ begin
   Pkg := 'McpTmpPkgR' + IntToStr(GetProcessID);
   Dir := TempPkgDir('r' + IntToStr(GetProcessID));
   Lpk := Dir + Pkg + '.lpk';
-  T := Call('package_create', '{"name":"' + Pkg + '","directory":' + JsonStr(Dir) +
-            ',"version":"1.2","description":"temp"}');
-  CheckFalse(IsError(T), T);
-  T := Call('package_open', '{"lpk_path":' + JsonStr(Lpk) + ',"reload":true}');
-  CheckFalse(IsError(T), 'reload of a package that is not loaded: ' + T);
-  CheckTrue(Pos('"package_name":"' + Pkg + '"', T) > 0, 'opened: ' + T);
-  T := Call('package_open', '{"lpk_path":' + JsonStr(Dir + 'NoSuch.lpk') + ',"reload":true}');
-  CheckTrue(IsError(T) or (Pos('not', LowerCase(T)) > 0), 'a missing file: ' + T);
+  { a process id is reused by Windows: the folder of an earlier run must not be there }
+  McpDeleteTree(Dir);
+  try
+    T := Call('package_create', '{"name":"' + Pkg + '","directory":' + JsonStr(Dir) +
+              ',"version":"1.2","description":"temp"}');
+    CheckFalse(IsError(T), T);
+    T := Call('package_open', '{"lpk_path":' + JsonStr(Lpk) + ',"reload":true}');
+    CheckFalse(IsError(T), 'reload of a package that is not loaded: ' + T);
+    CheckTrue(Pos('"package_name":"' + Pkg + '"', T) > 0, 'opened: ' + T);
+    T := Call('package_open', '{"lpk_path":' + JsonStr(Dir + 'NoSuch.lpk') + ',"reload":true}');
+    CheckTrue(IsError(T) or (Pos('not', LowerCase(T)) > 0), 'a missing file: ' + T);
+  finally
+    McpDeleteTree(Dir);
+  end;
 end;
 
 initialization
