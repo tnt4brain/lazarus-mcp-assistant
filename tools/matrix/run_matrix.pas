@@ -424,6 +424,12 @@ begin
   Result.DelimitedText := Cfg('LINUX_VERSIONS');
 end;
 
+function BoxHash: string;
+begin
+  Result := Trim(Lx('cd /root/mcp-code && git ls-files ''src/*.pas'' ''tests/*.pas'' ''src/*.lpk'' | LC_ALL=C sort | ' +
+    'xargs -d ''\n'' cat | tr -d ''\r'' | sha1sum | cut -c1-40'));
+end;
+
 function LinuxStart: Boolean;
 var
   Mine, Theirs, Dummy, Script, List, V : string;
@@ -435,8 +441,14 @@ begin
     if Git(['diff', '--quiet'], Dummy) <> 0 then
       Exit(Fail('uncommitted changes in tracked files: commit first (the matrix tests HEAD), or set MATRIX_ALLOW_DIRTY=1'));
   Mine := SourceHash;
-  Theirs := Trim(Lx('cd /root/mcp-code && git ls-files ''src/*.pas'' ''tests/*.pas'' ''src/*.lpk'' | LC_ALL=C sort | ' +
-    'xargs -d ''\n'' cat | tr -d ''\r'' | sha1sum | cut -c1-40'));
+  Theirs := BoxHash;
+  if Mine <> Theirs then
+  begin
+    { git_serve start sends the tree once; this takes it }
+    Say('== Linux: the box has other sources, fetching what git_serve serves');
+    Lx('cd /root/mcp-code && timeout 60 git fetch -q mcp && git reset -q --hard refs/remotes/mcp/snapshot', 90000);
+    Theirs := BoxHash;
+  end;
   if Mine <> Theirs then
     Exit(Fail('the sources on the box (' + Theirs + ') are not these (' + Mine + '): git_serve start, then on the box' + LineEnding +
       '  cd /root/mcp-code && git fetch mcp && git reset --hard refs/remotes/mcp/snapshot'));
