@@ -63,6 +63,12 @@ function McpPrimaryAddress: string;
   has a different signature in 5.0 and the old one is deprecated there. }
 function McpDeleteTree(const ADir: string): Boolean;
 
+{ Writes AData to AFile so that a reader, or a crash or a full disk half way, sees the old content
+  or the new, never half of either: the bytes go to a temporary file in the same folder, which then
+  replaces AFile in one step.  False, with AError, when it could not (AFile is then as it was and no
+  temporary file is left).  The folder must exist. }
+function McpWriteFileAtomic(const AFile, AData: string; out AError: string): Boolean;
+
 { An absolute path with native separators and no '.'/'..' segments, so
   D:/x/../y.pas and D:\y.pas compare equal.  Relative paths come back
   unchanged: tools resolve them against their own base (project or
@@ -97,7 +103,7 @@ procedure McpNormalizePathArgs(AArgs: TJSONObject);
 implementation
 
 uses
-  SysUtils, Sockets, LazFileUtils
+  Classes, SysUtils, Sockets, LazFileUtils
   {$IFDEF WINDOWS}, Windows{$ENDIF};
 
 {$IFDEF WINDOWS}
@@ -292,6 +298,44 @@ begin
     Result := McpLoopback
   else
     Result := AListen;
+end;
+
+function McpWriteFileAtomic(const AFile, AData: string; out AError: string): Boolean;
+var
+  Tmp : string;
+  FS  : TFileStream;
+begin
+  Result := False;
+  AError := '';
+  Tmp := AFile + '.mcp' + IntToStr(GetCurrentThreadId) + '.tmp';
+  try
+    FS := TFileStream.Create(Tmp, fmCreate);
+    try
+      if Length(AData) > 0 then FS.WriteBuffer(AData[1], Length(AData));
+      {$IFDEF UNIX}
+      FileFlush(FS.Handle);   { on disk before the rename makes it the file }
+      {$ELSE}
+      FlushFileBuffers(FS.Handle);
+      {$ENDIF}
+    finally
+      FS.Free;
+    end;
+    {$IFDEF WINDOWS}
+    { RenameFile does not replace an existing file on Windows }
+    Result := MoveFileExW(PWideChar(UTF8Decode(Tmp)), PWideChar(UTF8Decode(AFile)),
+                          MOVEFILE_REPLACE_EXISTING or $8);   { MOVEFILE_WRITE_THROUGH }
+    {$ELSE}
+    Result := RenameFile(Tmp, AFile);
+    {$ENDIF}
+    if not Result then AError := 'could not replace ' + AFile + ' with the new content';
+  except
+    on E: Exception do
+    begin
+      Result := False;
+      AError := E.Message;
+    end;
+  end;
+  if not Result and FileExists(Tmp) then SysUtils.DeleteFile(Tmp);
 end;
 
 function McpDeleteTree(const ADir: string): Boolean;

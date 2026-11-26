@@ -19,3 +19,7 @@ backup/
 /INPUT.md
 packagefiles.xml
 .claude/
+
+# Test matrix (tools/matrix)
+/tools/matrix/matrix.conf
+/tools/matrix/out/

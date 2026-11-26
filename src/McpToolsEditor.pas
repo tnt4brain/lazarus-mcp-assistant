@@ -123,7 +123,7 @@ procedure DoCreateFile(var Ctx: TMcpToolCall);
 var
   FilePath, Text, Err : string;
   Overwrite, DoOpen, Existed : Boolean;
-  FS    : TFileStream;
+  WriteErr : string;
   Obj   : TJSONObject;
 begin
   if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
@@ -178,11 +178,10 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not create the folder of ' + FilePath; Exit;
     end;
-    FS := TFileStream.Create(FilePath, fmCreate);
-    try
-      if Length(Text) > 0 then FS.WriteBuffer(Text[1], Length(Text));
-    finally
-      FS.Free;
+    { a file that is replaced is never seen half written }
+    if not McpWriteFileAtomic(FilePath, Text, WriteErr) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not write ' + FilePath + ': ' + WriteErr; Exit;
     end;
   except
     on E: Exception do

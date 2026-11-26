@@ -30,6 +30,7 @@ type
     procedure TestRepoRoot;
     procedure TestProgramIsFoundThroughPath;
     procedure TestDeleteTree;
+    procedure TestWriteFileAtomic;
   end;
 
 implementation
@@ -321,6 +322,50 @@ end;
 
 { McpDeleteTree: nested folders and a read-only file go; a link to a folder outside goes as a link,
   what it points at stays; a folder that is not there is already gone }
+procedure TTestUtils.TestWriteFileAtomic;
+var
+  Dir, F, Err : string;
+  L : TStringList;
+  SR : TSearchRec;
+  Left : Integer;
+begin
+  Dir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpatomic' + IntToStr(GetProcessID) + PathDelim;
+  ForceDirectories(Dir);
+  F := Dir + 'unit1.pas';
+  L := TStringList.Create;
+  try
+    AssertTrue('a new file', McpWriteFileAtomic(F, 'first', Err));
+    L.LoadFromFile(F);
+    AssertEquals('first', Trim(L.Text));
+    { replaced, also a read-only-free existing file, with more and with less }
+    AssertTrue('replaced', McpWriteFileAtomic(F, 'second version, longer', Err));
+    L.LoadFromFile(F);
+    AssertEquals('second version, longer', Trim(L.Text));
+    AssertTrue('replaced by less', McpWriteFileAtomic(F, 'x', Err));
+    L.LoadFromFile(F);
+    AssertEquals('x', Trim(L.Text));
+    AssertTrue('empty content', McpWriteFileAtomic(F, '', Err));
+    AssertEquals(0, FileSize(F));
+    { no temporary file is left }
+    Left := 0;
+    if FindFirst(Dir + '*', faAnyFile, SR) = 0 then
+    begin
+      repeat
+        if (SR.Name <> '.') and (SR.Name <> '..') then Inc(Left);
+      until FindNext(SR) <> 0;
+      FindClose(SR);
+    end;
+    AssertEquals('only the file itself', 1, Left);
+    { a folder that is not there: false with a message, nothing created }
+    AssertFalse('no folder', McpWriteFileAtomic(Dir + 'nodir' + PathDelim + 'a.pas', 'x', Err));
+    AssertTrue('says why', Err <> '');
+    AssertFalse('nothing made', DirectoryExists(Dir + 'nodir'));
+  finally
+    L.Free;
+    McpDeleteTree(Dir);
+  end;
+end;
+
 procedure TTestUtils.TestDeleteTree;
 var
   Base, Dir, Outside, Ro : string;
