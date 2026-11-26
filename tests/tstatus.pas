@@ -31,6 +31,7 @@ type
   published
     procedure TestStatusInToolsList;
     procedure TestStatusSchemaHasIncludeGit;
+    procedure TestOutputSchemaIsListedAndAnswered;
     procedure TestStatusStructure;
     procedure TestStatusProjectMatchesProjectOpen;
     procedure TestStatusWithoutGitSection;
@@ -169,6 +170,63 @@ begin
       'ide_get_status is a read-only tool');
   finally
     Tools.Free;
+  end;
+end;
+
+{ outputSchema: only ide_get_status has one, and its answer comes twice, as text and as
+  structuredContent (the same object); a tool without one has no structuredContent }
+procedure TTestStatus.TestOutputSchemaIsListedAndAnswered;
+var
+  Tools   : TJSONArray;
+  ToolObj : TJSONObject;
+  Schema  : TJSONObject;
+  I, N    : Integer;
+  R       : THttpResult;
+  Resp    : TJSONObject;
+  Res     : TJSONObject;
+  Text    : string;
+  FromText: TJSONObject;
+begin
+  Tools := GetToolsArray;
+  try
+    N := 0;
+    for I := 0 to Tools.Count - 1 do
+      if TJSONObject(Tools[I]).Find('outputSchema') <> nil then Inc(N);
+    CheckEquals(1, N, 'one tool has an outputSchema (ide_get_status): the diet of ADR-029');
+    ToolObj := FindTool(Tools, 'ide_get_status');
+    Schema := TJSONObject(ToolObj.Find('outputSchema'));
+    CheckTrue(Assigned(Schema), 'ide_get_status has an outputSchema');
+    CheckEquals('object', Schema.Get('type', ''), 'the root of an outputSchema is an object');
+    CheckTrue(Assigned(TJSONObject(Schema.Find('properties')).Find('debugger')), 'the schema names the debugger section');
+  finally
+    Tools.Free;
+  end;
+
+  R := McpPost('{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"ide_get_status","arguments":{}}}');
+  Resp := ParseJSONObj(R.Body);
+  try
+    Res := TJSONObject(Resp.Find('result'));
+    CheckTrue(Assigned(Res.Find('structuredContent')), 'the answer carries structuredContent');
+    Text := TJSONObject(TJSONArray(Res.Find('content'))[0]).Get('text', '');
+    FromText := ParseJSONObj(Text);
+    try
+      CheckEquals(FromText.AsJSON, Res.Find('structuredContent').AsJSON,
+        'structuredContent is the object of the text content');
+    finally
+      FromText.Free;
+    end;
+    CheckTrue(Assigned(TJSONObject(Res.Find('structuredContent')).Find('debugger')), 'with its debugger section');
+  finally
+    Resp.Free;
+  end;
+
+  R := McpPost('{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"ide_ping","arguments":{}}}');
+  Resp := ParseJSONObj(R.Body);
+  try
+    CheckTrue(TJSONObject(Resp.Find('result')).Find('structuredContent') = nil,
+      'a tool without an outputSchema has no structuredContent');
+  finally
+    Resp.Free;
   end;
 end;
 

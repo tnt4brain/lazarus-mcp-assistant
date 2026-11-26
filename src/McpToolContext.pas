@@ -149,6 +149,13 @@ const
 function MakeTool(const AName, ADesc, InputSchemaJSON: string;
   const AAnnotations: string = ''): TJSONObject;
 
+(* A tool whose answer is one JSON object that clients parse says so: ATool (from MakeTool) gets
+   "outputSchema", and a successful call then also carries the answer as "structuredContent"
+   (the text content stays, as the spec asks).  Only for small answers: the object is sent twice.
+   An answer that is an array cannot have one (the root must be an object). *)
+procedure McpSetOutputSchema(ATool: TJSONObject; const ASchemaJSON: string);
+function  McpToolHasOutputSchema(const AName: string): Boolean;
+
 procedure RegisterMcpResource(const AUri, AName, ADesc, AMimeType: string;
                                AGetText: TMcpGetResourceText);
 procedure McpListResources(Resources: TJSONArray);
@@ -607,6 +614,24 @@ begin
   Ann.Add('title', Title);            { older clients read it here }
   Result.Add('annotations', Ann);
   AddClientMeta(Result, AName);
+end;
+
+const
+  { the tools that have an outputSchema; a test holds this list and tools/list to each other }
+  OUTPUT_SCHEMA_TOOLS : array[0..0] of string = ('ide_get_status');
+
+procedure McpSetOutputSchema(ATool: TJSONObject; const ASchemaJSON: string);
+begin
+  ATool.Add('outputSchema', GetJSON(ASchemaJSON));
+end;
+
+function McpToolHasOutputSchema(const AName: string): Boolean;
+var
+  I : Integer;
+begin
+  Result := False;
+  for I := Low(OUTPUT_SCHEMA_TOOLS) to High(OUTPUT_SCHEMA_TOOLS) do
+    if OUTPUT_SCHEMA_TOOLS[I] = AName then Exit(True);
 end;
 
 { Sort the tool list by name so each category's tools are adjacent. }

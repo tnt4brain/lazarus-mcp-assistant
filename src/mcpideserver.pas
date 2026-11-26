@@ -1460,6 +1460,7 @@ var
   Args        : TJSONObject;
   Content     : TJSONArray;
   TextNode    : TJSONObject;
+  Structured  : TJSONData;
   Res         : TJSONObject;
   Err         : Boolean;
   Text        : string;
@@ -1665,6 +1666,20 @@ begin
 
   Res := TJSONObject.Create;
   Res.Add('content', Content);
+  { a tool with an outputSchema: the same object again as structuredContent (the text stays) }
+  if not Err and McpToolHasOutputSchema(ToolName) then
+  begin
+    Structured := nil;
+    try
+      Structured := GetJSON(Text);
+    except
+      FreeAndNil(Structured);
+    end;
+    if Structured is TJSONObject then
+      Res.Add('structuredContent', Structured)
+    else
+      Structured.Free;
+  end;
   Res.Add('isError', Err);
   Result := RPCResult(ID, Res);
 end;
