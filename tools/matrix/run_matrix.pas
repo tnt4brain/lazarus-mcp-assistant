@@ -22,14 +22,14 @@ program run_matrix;
   Settings: tools/matrix/matrix.conf (NAME=value lines, see matrix.conf.example). }
 
 uses
-  Classes, SysUtils, Process, fphttpclient, base64, sha1;
+  Windows, Classes, SysUtils, Process, fphttpclient, base64, sha1;
 
 var
   Conf    : TStringList;
   Repo    : string;       { repository root, native separators }
   OutDir  : string;
   Bad     : Boolean = False;
-  IdeProc : TProcess = nil;
+  IdeHandle : THandle = 0;   { the IDE of the Windows run in progress }
 
 function Cfg(const AKey: string): string;
 begin
@@ -147,10 +147,11 @@ procedure KillIde(const ALazDir: string);
 var
   Dummy: string;
 begin
-  if Assigned(IdeProc) then
+  if IdeHandle <> 0 then
   begin
-    if IdeProc.Running then IdeProc.Terminate(0);
-    FreeAndNil(IdeProc);
+    TerminateProcess(IdeHandle, 0);
+    CloseHandle(IdeHandle);
+    IdeHandle := 0;
   end;
   { any IDE of that Lazarus folder that is left over; never the one the user works in }
   Run('powershell', ['-NoProfile', '-Command',
@@ -178,6 +179,71 @@ begin
   finally
     C.Free;
   end;
+end;
+
+const
+  HIDDEN_DESKTOP = 'mcpmatrix';
+
+var
+  GHideDesktop : THandle = 0;
+
+{ The hidden desktop, made once; 0 when Windows refuses (the run then goes on the user's desktop,
+  with MATRIX_VISIBLE=1 it does so on purpose). }
+function HideDesktop: THandle;
+begin
+  if (GHideDesktop = 0) and (GetEnvironmentVariable('MATRIX_VISIBLE') = '') then
+    GHideDesktop := CreateDesktop(HIDDEN_DESKTOP, nil, nil, 0, GENERIC_ALL, nil);
+  Result := GHideDesktop;
+end;
+
+{ Starts the IDE with AEnv as its environment.  The IDE, and the programs it starts (windowee, the
+  debuggee), get a desktop of their own: their windows never appear on the user's screen and never
+  take the focus from whoever is typing.  (TProcess.Desktop does nothing in FPC 3.2.2: the call is
+  made here.) }
+function StartIde(const AExe: string; const AArgs: array of string; AEnv: TStrings): Boolean;
+var
+  SI    : TStartupInfoA;
+  PI    : TProcessInformation;
+  Cmd, Block, Desk, A : string;
+  I     : Integer;
+begin
+  Cmd := '"' + AExe + '"';
+  for A in AArgs do Cmd := Cmd + ' "' + A + '"';
+  Block := '';
+  for I := 0 to AEnv.Count - 1 do Block := Block + AEnv[I] + #0;
+  Block := Block + #0;
+  FillChar(SI, SizeOf(SI), 0);
+  SI.cb := SizeOf(SI);
+  Desk := '';
+  if HideDesktop <> 0 then
+  begin
+    Desk := 'winsta0\' + HIDDEN_DESKTOP;
+    SI.lpDesktop := PChar(Desk);
+  end;
+  UniqueString(Cmd);
+  Result := CreateProcessA(PChar(AExe), PChar(Cmd), nil, nil, False, 0, @Block[1], nil, SI, PI);
+  if Result then
+  begin
+    CloseHandle(PI.hThread);
+    IdeHandle := PI.hProcess;
+  end;
+end;
+
+var
+  GDeskWindows : Integer = 0;
+
+function CountWindow(AWnd: HWND; ALParam: LPARAM): WINBOOL; stdcall;
+begin
+  Inc(GDeskWindows);
+  Result := True;
+end;
+
+{ How many windows are on the hidden desktop: the proof that the IDE is there. }
+function HiddenDesktopWindows: Integer;
+begin
+  GDeskWindows := 0;
+  if GHideDesktop <> 0 then EnumDesktopWindows(GHideDesktop, @CountWindow, 0);
+  Result := GDeskWindows;
 end;
 
 function WinOne(const AName: string): Boolean;
@@ -213,20 +279,15 @@ begin
         W, OutDir + 'win' + AName + '.build2.log') <> 0) then
     Exit(Fail('IDE build failed, see ' + OutDir + 'win' + AName + '.build*.log'));
   Say('== Windows ' + AName + ': IDE built, starting it');
-  IdeProc := TProcess.Create(nil);
-  IdeProc.Executable := Laz + '\lazarus.exe';
-  IdeProc.Parameters.Add('--pcp=' + Pcp);
-  IdeProc.Parameters.Add('--no-splash-screen');
-  IdeProc.Parameters.Add('--force-new-instance');
-  IdeProc.Parameters.Add(Repo + '\tests\windowee\mcpwindowee.lpi');
   Args := MakeEnv(['MCP_TEST_HOOKS=1']);
   try
-    IdeProc.Environment.Assign(Args);
+    if not StartIde(Laz + '\lazarus.exe',
+         ['--pcp=' + Pcp, '--no-splash-screen', '--force-new-instance',
+          Repo + '\tests\windowee\mcpwindowee.lpi'], Args) then
+      Exit(Fail('could not start ' + Laz + '\lazarus.exe (error ' + IntToStr(GetLastError) + ')'));
   finally
     Args.Free;
   end;
-  IdeProc.Options := [poNoConsole];
-  IdeProc.Execute;
   Up := False;
   for I := 1 to 60 do
   begin
@@ -240,6 +301,10 @@ begin
     Exit(Fail('the IDE''s server did not come up on port ' + Port));
   end;
   Sleep(25000);
+  if GHideDesktop = 0 then
+    Say('== Windows ' + AName + ': on the user''s desktop')
+  else
+    Say('== Windows ' + AName + ': ' + IntToStr(HiddenDesktopWindows) + ' windows on the hidden desktop');
   Say('== Windows ' + AName + ': full suite');
   Run(Repo + '\tests\mcpserver_tests.exe', ['--all', '--format=plain'], Repo + '\tests',
     ['-MCP_TEST_HOOKS', 'MCP_OPTIONS_FILE=' + Opt, 'MCP_DEBUG_TESTS=1'], 1500,
