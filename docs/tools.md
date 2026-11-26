@@ -19,7 +19,7 @@ with a human-readable `title` ("Debugger: get call stack") and annotations:
   field by field, and a successful call also carries it as `structuredContent` (the text content stays,
   as the MCP spec asks). Other tools have none: their answers are mostly large, and sending them twice
   would work against the size diet (ADR-029); `project_list_files` answers with an array, which cannot
-  be an output schema's root (changing that is a break for 2.0).
+  be an output schema's root.
 
 In Claude Code they appear as `mcp__lazarus-ide__<tool_name>`.
 
