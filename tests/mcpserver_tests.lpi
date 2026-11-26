@@ -19,7 +19,7 @@
         <PackageName Value="LazUtils"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="51">
+    <Units Count="52">
       <Unit0>
         <Filename Value="mcpserver_tests.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -228,6 +228,10 @@
         <Filename Value="tprogress.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit51>
+      <Unit52>
+        <Filename Value="mcptestlistener.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit52>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

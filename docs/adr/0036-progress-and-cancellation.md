@@ -51,8 +51,8 @@ The heartbeat needs no support from any tool and is what keeps a client's idle t
 
 `McpProgressSay(AMessage)` (McpProgress, on the call's own thread, so a tool needs no parameter) stores the latest message under a lock;
 the helper picks it up at its next heartbeat. Only the last message counts; nothing queues without bound.
-Built: the process runner (the last output line of the child). Not built (heartbeat only): the IDE build's
-Messages line, the test name of `ide_run_tests`. A tool that does not call it still gets the
+Built: the process runner (the last output line of the child) and `ide_run_tests`: the test program writes a line per
+test (`tests/mcptestlistener.pas`, `##mcp-progress 212/608 Suite.Test`); the heartbeat carries it and the Messages window gets a line "tests: ..." every 10 s. Not built: the IDE build's Messages line. A tool that does not call it still gets the
 heartbeat.
 
 ### 3. Cancellation: a registry, a flag, and rules per kind of tool

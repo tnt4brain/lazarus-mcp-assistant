@@ -381,3 +381,5 @@ result as the last event. Shorter calls, and clients without a token, get the us
 was found). Nothing that changes files is stopped. The answer of a stopped call is an error result
 "Cancelled by the client after N s". Progress resets a client's idle timeout, not its wall-clock timeout:
 Claude Code's per-server `timeout` has to be raised for builds longer than it.
+
+`ide_run_tests` also writes a line `tests: 212/608 Suite.Test` in the IDE's Messages window (MCP Server view) every 10 s while the test program runs, whatever the client does. It needs the test program to use `tests/mcptestlistener.pas` (the plugin's own suite does); other fpcunit programs run as before.

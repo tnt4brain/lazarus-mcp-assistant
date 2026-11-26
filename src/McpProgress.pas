@@ -84,6 +84,17 @@ function McpCancelPending: Boolean;
 procedure McpMarkHonored;
 procedure McpProgressSay(const AMessage: string);
 
+const
+  { a test runner's line "##mcp-progress 212/608 Suite.Test" (tests/mcptestlistener.pas) }
+  McpProgressMark = '##mcp-progress ';
+
+type
+  TMcpSayHook = procedure(const AMessage: string);
+
+{ This call's thread: AHook sees every message McpProgressSay gets (nil: none).  ide_run_tests
+  uses it to write a line in the IDE's Messages window. }
+procedure McpProgressSetHook(AHook: TMcpSayHook);
+
 { After the call: '' unless a tool stopped for a cancel, then "Cancelled by the client after N s". }
 function McpCallCancelNote: string;
 
@@ -133,6 +144,7 @@ type
   TRespAccess = class(TFPHTTPConnectionResponse);
 
 threadvar
+  GSayHook   : TMcpSayHook;
   GCur       : TMcpCall;
   GResp      : TFPHTTPConnectionResponse;
   GAccepts   : Boolean;
@@ -329,14 +341,28 @@ begin
 end;
 
 procedure McpProgressSay(const AMessage: string);
+var
+  Msg    : string;
+  Marked : Boolean;
 begin
   if GCur = nil then Exit;
+  Msg := AMessage;
+  { a line a test runner writes for us (tests/mcptestlistener.pas): the marker is not for the client }
+  Marked := Copy(Msg, 1, Length(McpProgressMark)) = McpProgressMark;
+  if Marked then
+    Delete(Msg, 1, Length(McpProgressMark));
   EnterCriticalSection(GLock);
   try
-    GCur.Message := AMessage;
+    GCur.Message := Msg;
   finally
     LeaveCriticalSection(GLock);
   end;
+  if Marked and Assigned(GSayHook) then GSayHook(Msg);
+end;
+
+procedure McpProgressSetHook(AHook: TMcpSayHook);
+begin
+  GSayHook := AHook;
 end;
 
 function McpCallCancelNote: string;
