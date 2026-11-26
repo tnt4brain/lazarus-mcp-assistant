@@ -15,6 +15,11 @@ with a human-readable `title` ("Debugger: get call stack") and annotations:
   can be reliably undone.
 - `idempotentHint` where repeating a call with the same arguments changes
   nothing more.
+- `outputSchema` (1.9.0) for `ide_get_status` only: its answer is a small object that clients read
+  field by field, and a successful call also carries it as `structuredContent` (the text content stays,
+  as the MCP spec asks). Other tools have none: their answers are mostly large, and sending them twice
+  would work against the size diet (ADR-029); `project_list_files` answers with an array, which cannot
+  be an output schema's root.
 
 In Claude Code they appear as `mcp__lazarus-ide__<tool_name>`.
 
@@ -41,8 +46,10 @@ prompts, skills and permission allow-lists, is in [renamed-tools.md](renamed-too
 | `editor_set_cursor` | Move the cursor (opens the file if needed) |
 | `editor_edit_text` | **Preferred edit.** Replace `old_text` with `new_text`; fails if missing or ambiguous; `replace_all` for every match. Undoable with Ctrl+Z |
 | `editor_replace_range` | Replace a range given by start and end, or start and `delete_len` (no end inserts, empty text deletes) — for coordinates from `code_*` tools |
-| `editor_save` | Save a buffer (a form unit saves its `.lfm` too) |
+| `editor_save` | Save a buffer (a form unit saves its `.lfm` too); `all` saves every buffer with unsaved changes |
 | `editor_revert` | Discard unsaved changes and reload from disk |
+| `editor_undo` | Undo in an open file's editor (same stack as Ctrl+Z): steps, or back to the saved file |
+| `editor_redo` | Redo what was undone, steps |
 | `editor_close` | Close a tab, discarding unsaved changes |
 
 Where the editing tools may write, and what the limits do not do: see [write-scope.md](write-scope.md).
@@ -51,12 +58,12 @@ Where the editing tools may write, and what the limits do not do: see [write-sco
 
 | Tool | Description |
 |---|---|
-| `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies) |
+| `code_get_outline` | Uses, types, class members and routines with line numbers (no bodies); each entry in a unit says its `section` (interface or implementation), a routine from an include file has that file and its line there. `directives: true` adds conditional directives, define/undef and includes from CodeTools' own directive parser: a branch has `to` (its last line) and `active` (compiled with the IDE's defines); code of an inactive branch is not in the outline, as the compiler skips it |
 | `code_get_unit_interface` | The interface section of a unit |
 | `code_get_procedure_ast` | Locals (with type) and the statements of one routine as a tree (if/for/while/repeat/try/case/with, calls, assignments) with lines and columns; `depth` sets how many levels ([ADR-008](adr/0008-structural-source-editing.md)) |
 | `code_find_declaration` | Where an identifier is declared, with a context snippet (`show=true` also jumps the editor cursor there); follows the uses clauses (RTL, sibling units) and works in a program; optional `line`/`col` pick a use |
-| `code_get_identifier_info` | Type, declaration and hint text for the identifier at file/line/col |
-| `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300) |
+| `code_get_identifier_info` | One call for the identifier at file/line/col: the IDE's hint text, the text of that line, and its declaration (file, line, col, the numbered lines around it; left out when there is none) |
+| `code_find_references` | Every reference to an identifier across the project (and the file asked about, even outside the project). `also` (`same_folder`, `lcl`, `components`, `rtl`, `fcl`, `packages`) and `search_dir` add other sources, e.g. to see how an API is used; only files that mention the name are parsed, at most `max_files` (default 300). The search runs 25 files at a time and stops after `max_seconds` (default 15, 0 = no limit) or about 2000 references: the answer is then an object with `truncated` and `files_not_searched`; a file CodeTools cannot search is listed under `failed` instead of failing the call |
 | `code_rename_identifier` | Rename across all project files from the declaration or any reference, as the IDE's Rename Identifier does; `dry_run` lists the references first. Unit names are refused |
 | `code_find_descendants` | The classes (and interface implementers) below a class or interface, the whole tree unless `direct_only`; scope as `code_find_references` ([ADR-027](adr/0027-navigation-and-refactoring-tools.md)) |
 | `code_find_overrides` | The methods of the same name in the classes below the one that declares a method: override, reintroduce or plain |
@@ -233,6 +240,8 @@ packages that are already installed never asks. See [ADR-013](adr/0013-user-cons
 | `ide_report` | Writes versions, plugin and project settings, packages and the last 200 lines of the three logs into one Markdown file in the Lazarus config folder (`mcp-report-<UTC time>.md`, three newest kept) and returns its path; the same as Tools > MCP Assistant > Write Report. For bug reports: read it before posting |
 | `ide_get_messages` | Everything in the Messages window, all urgency levels |
 | `ide_get_open_dialogs` | The dialogs blocking the IDE's main thread: LCL modal forms and native Windows dialogs, with caption, text and button captions |
+| `ide_list_windows` | The IDE's windows: id, kind, class, title, visible, modal, docked, focused (shows and moves nothing) |
+| `ide_get_window` | The text a window shows (its memos, lists, edit boxes, labels, source editors), by id from `ide_list_windows` |
 | `ide_answer_dialog` | Clicks a button of such a dialog: through the form for an LCL dialog, by clicking the button for a native one (Windows). Never answers a consent dialog (installing, cloning ...); `caption` picks one of several |
 | `ide_get_exceptions` | Unhandled exceptions the IDE showed in its error dialog (access violations and others), with stack and the last MCP tool called before; also appended to `mcp-exceptions.log` in the Lazarus config folder |
 | `ide_rebuild` | Rebuild and restart the IDE with its installed packages (`package_install` adds one); the server is gone for ~60 s. Refused, changing nothing, while an editor or a package has unsaved changes (`save_unsaved` saves them first; a package that was never saved, or has a file missing on disk, still stops it) or the package does not compile (`skip_compile` skips that check); a build that fails leaves the IDE running, reopens the editors and brings the server back, with the errors as the answer (ADR-026) |
@@ -338,3 +347,50 @@ program started by the IDE cannot keep a connection open.
 started (after `ide_rebuild`, say) gets HTTP 404, and the client starts a new session
 with `initialize`. Requests without either share one identity, `anonymous`; a client
 with a cookie jar (`curl -b jar -c jar`) gets its own.
+
+## Prompts
+
+Clients that show MCP prompts (as slash commands) list these. Each is an instruction that names the
+tools to use; none changes anything by itself.
+
+| Prompt | Argument | What it asks |
+|---|---|---|
+| `explain_compiler_errors` | | Explain the errors and warnings of the last build, and fix each |
+| `review_active_file` | | Review the file in the active editor |
+| `review_diff` | `ref` (optional) | Review the uncommitted changes, or a commit, branch or range |
+| `explain_exception` | | Find out why the last exception happened and how to fix the cause |
+| `fix_failing_test` | `suite` (optional) | Run the tests, fix the failures one at a time |
+| `write_adr` | `topic` (required) | Write an architecture decision record in the format of `docs/adr` |
+| `release_checklist` | `version` (optional) | Check git, build, tests, versions and TODOs; report, change nothing |
+
+## Hints for Claude Code
+
+Two `_meta` keys in `tools/list`, read by Claude Code and ignored by other clients:
+
+- `anthropic/maxResultSizeChars` (200000) on `editor_read_file`, `git_diff`, `git_log`, `git_blame`,
+  `project_search`, `form_get_lfm`, `ide_get_messages` and `code_get_unit_interface`: their answers
+  are long on purpose, and the default (a result over 50,000 characters is saved to a file) would cut them.
+- `anthropic/requiresUserInteraction` on `git_serve`: it opens a way into the working tree and has no
+  consent dialog of its own, so the client shows its permission prompt on every call, also in
+  bypass mode. The tools that already ask in the IDE (clone, package install, remote git verbs) do not
+  carry it, so nobody is asked twice.
+
+## Long calls: progress and cancel
+
+A call that has run for 5 s is answered as a stream (`text/event-stream`) when the client sent a
+`_meta.progressToken` and accepts event streams: a `notifications/progress` event every 15 s, then the
+result as the last event. Shorter calls, and clients without a token, get the usual JSON. A client's
+`notifications/cancelled` (same session, same request id) stops: a git or lazbuild child, an IDE build
+(`project_build`, `package_compile`), the wait of `project_run`, `debug_run`, `debug_step` and
+`debug_run_to_line` (the program keeps running), and `code_find_references` (the answer holds what
+was found). Nothing that changes files is stopped. The answer of a stopped call is an error result
+"Cancelled by the client after N s". Progress resets a client's idle timeout, not its wall-clock timeout:
+Claude Code's per-server `timeout` has to be raised for builds longer than it.
+
+While the IDE is busy inside a call that handles its messages (a build, a run, a dialog), a second call
+from any client runs inside it. A tool that changes things is then refused: "X was not run: the IDE is
+busy inside Y ... call it again when Y has finished". Read-only tools, `ide_answer_dialog` and
+`debug_stop` are served meanwhile. The session log has a `nested:` line for each such call and a
+`refused:` line for each refusal.
+
+`ide_run_tests` also writes a line `tests: 212/608 Suite.Test` in the IDE's Messages window (MCP Server view) every 10 s while the test program runs, whatever the client does. It needs the test program to use `tests/mcptestlistener.pas` (the plugin's own suite does); other fpcunit programs run as before.

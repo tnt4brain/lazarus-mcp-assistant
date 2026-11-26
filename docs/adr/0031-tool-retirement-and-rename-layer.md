@@ -173,3 +173,12 @@ nothing takes them back, and a removed breakpoint or requirement loses its condi
 version limits. `project_close` stays non-destructive: it is saved first (it is refused with unsaved
 changes) and `project_open` brings the project back. This amends ADR-009's note that all breakpoint tools
 are non-destructive.
+
+## Amendment 2: strict names (1.9.0)
+
+Tools > Options > MCP Assistant > Security has "Refuse old tool and parameter names (what 2.0 will do)",
+saved as `Tools/AliasStrict` (off by default). When on, `McpTranslateCall` does not translate an old
+tool or parameter name: the call fails with an error that names the old and the new form ("Strict names
+are on: the parameter "file_path" of "editor_open" is now "file"."). Each refusal is counted like a
+translation, so `ide_report` still shows which old names a client uses. The switch is read on every call:
+no restart. It lets a user find out what 2.0 will break before it does.

@@ -20,7 +20,7 @@ unit McpToolAliases;
 interface
 
 uses
-  Classes, SysUtils, fpjson;
+  Classes, SysUtils, StrUtils, fpjson;
 
 type
   TMcpAliasKind = (akParam, akTool);
@@ -46,6 +46,11 @@ function McpAliasCount: Integer;
 function McpAliasAt(AIndex: Integer): TMcpAlias;
 procedure McpAliasUsage(AInto: TStrings);   { 'old name=count' }
 procedure McpAliasForgetSessions;           { tests: tell everything again }
+
+{ Strict mode (1.9): an old name is refused with the current one instead of translated, so a user
+  can try 2.0 behaviour now.  Off by default. }
+procedure McpAliasSetStrict(AOn: Boolean);
+function McpAliasIsStrict: Boolean;
 
 implementation
 
@@ -99,6 +104,7 @@ const
     (Kind: akParam; Tool: 'package_create';          Old: 'type';       New: 'package_type'; FixedKey: ''; FixedVal: ''));
 
 var
+  GStrict   : Boolean;
   GLock     : TRTLCriticalSection;
   GTold     : TStringList;   { 'session|old name' already announced }
   GUsage    : TStringList;   { old name=count }
@@ -223,6 +229,13 @@ begin
         else Args.Add(A.FixedKey, A.FixedVal);
       end;
     end;
+    if GStrict then
+    begin
+      AError := Format('Strict names are on: the tool "%s" is now "%s"%s.', [A.Tool, A.New,
+        IfThen(A.FixedKey <> '', Format(' with %s=%s', [A.FixedKey, FixedText(A.FixedVal)]), '')]);
+      Count(A.Tool);
+      Exit;
+    end;
     Note := Format('deprecated: tool "%s" is now "%s"', [A.Tool, A.New]);
     if A.FixedKey <> '' then Note := Note + Format(' with %s=%s', [A.FixedKey, FixedText(A.FixedVal)]);
     Tell(A.Tool, Note + '; the old name works through 1.x and is refused from 2.0.');
@@ -239,6 +252,13 @@ begin
       if (A.Kind <> akParam) or not ToolMatches(A.Tool, Name) then Continue;
       OldIdx := Args.IndexOfName(A.Old);
       if OldIdx < 0 then Continue;
+      if GStrict then
+      begin
+        AError := Format('Strict names are on: the parameter "%s" of "%s" is now "%s".',
+          [A.Old, Name, A.New]);
+        Count(Name + '.' + A.Old);
+        Exit;
+      end;
       if Args.IndexOfName(A.New) >= 0 then
       begin
         if Args.Items[OldIdx].AsJSON <> Args.Find(A.New).AsJSON then
@@ -268,6 +288,16 @@ begin
   finally
     LeaveCriticalSection(GLock);
   end;
+end;
+
+procedure McpAliasSetStrict(AOn: Boolean);
+begin
+  GStrict := AOn;
+end;
+
+function McpAliasIsStrict: Boolean;
+begin
+  Result := GStrict;
 end;
 
 procedure McpAliasForgetSessions;

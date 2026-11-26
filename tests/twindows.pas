@@ -16,7 +16,7 @@ unit TWindows;
 interface
 
 uses
-  Classes, fpcunit, testregistry, testdecorator, THttpHelper;
+  Classes, fpcunit, testregistry, testdecorator, THttpHelper, McpUtils;
 
 type
   TWindoweeSetup = class(TTestSetup)
@@ -467,7 +467,7 @@ begin
     T := Call('ide_run_tests', '{"test_project":' + JsonStr(Lpi) + ',"env":{"A":1}}');
     CheckTrue(IsError(T), 'env value must be a string: ' + T);
   finally
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -515,7 +515,7 @@ begin
     CheckTrue(Pos('"already_open":true', T) > 0, 'second open: ' + T);
   finally
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -533,7 +533,9 @@ begin
   Lpr := Dir + 'quits.lpr';
   SL := TStringList.Create;
   try
-    SL.Text := 'program quits;' + LineEnding + 'begin' + LineEnding +
+    { a GUI program has no console: a console program started by the IDE is handed to Windows Terminal
+      when that is the default terminal, which takes the foreground and switches the user's tab }
+    SL.Text := 'program quits;' + LineEnding + '{$APPTYPE GUI}' + LineEnding + 'begin' + LineEnding +
                '  Halt(3);' + LineEnding + 'end.' + LineEnding;
     SL.SaveToFile(Lpr);
   finally
@@ -567,7 +569,7 @@ begin
   finally
     Call('debug_stop', '{}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -640,7 +642,7 @@ begin
   finally
     Call('project_run_output', '{"stop":true}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -712,7 +714,7 @@ begin
   finally
     Call('project_run_output', '{"stop":true}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -751,7 +753,7 @@ begin
   finally
     Call('debug_stop', '{}');
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -815,7 +817,7 @@ begin
     Call('editor_close', '{"file":' + JsonStr(Dir + 'unitsecond.pas') + '}');
     Call('project_set_settings', '{}');   { saves the project }
     Call('project_open', '{"file":' + JsonStr(WindoweeLpi) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -834,7 +836,7 @@ begin
   Lpr := Dir + 'sleeper.lpr';
   SL := TStringList.Create;
   try
-    SL.Text := 'program sleeper;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+    SL.Text := 'program sleeper;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding + '{$APPTYPE GUI}' + LineEnding +
                'uses SysUtils;' + LineEnding + 'begin' + LineEnding +
                '  Sleep(60000);' + LineEnding + 'end.' + LineEnding;
     SL.SaveToFile(Lpr);

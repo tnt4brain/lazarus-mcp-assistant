@@ -17,7 +17,7 @@ unit TGitHistory;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestGitHistory = class(TTestCase)
@@ -200,7 +200,7 @@ end;
 
 procedure TTestGitHistory.TearDown;
 begin
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
 end;
 
 { trunk and feature each have commits of their own after the base; with AConflict both

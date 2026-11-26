@@ -58,6 +58,17 @@ function McpClientHost(const AListen: string): string;
   of a server that listens on 0.0.0.0. }
 function McpPrimaryAddress: string;
 
+{ Delete ADir and everything in it; a link (symbolic, or a junction on Windows) is removed itself,
+  never followed.  True when ADir is gone.  The same on Lazarus 4.x and 5.x: FileUtil's DeleteDirectory
+  has a different signature in 5.0 and the old one is deprecated there. }
+function McpDeleteTree(const ADir: string): Boolean;
+
+{ Writes AData to AFile so that a reader, or a crash or a full disk half way, sees the old content
+  or the new, never half of either: the bytes go to a temporary file in the same folder, which then
+  replaces AFile in one step.  False, with AError, when it could not (AFile is then as it was and no
+  temporary file is left).  The folder must exist. }
+function McpWriteFileAtomic(const AFile, AData: string; out AError: string): Boolean;
+
 { An absolute path with native separators and no '.'/'..' segments, so
   D:/x/../y.pas and D:\y.pas compare equal.  Relative paths come back
   unchanged: tools resolve them against their own base (project or
@@ -92,7 +103,7 @@ procedure McpNormalizePathArgs(AArgs: TJSONObject);
 implementation
 
 uses
-  SysUtils, Sockets, LazFileUtils
+  Classes, SysUtils, Sockets, LazFileUtils
   {$IFDEF WINDOWS}, Windows{$ENDIF};
 
 {$IFDEF WINDOWS}
@@ -287,6 +298,76 @@ begin
     Result := McpLoopback
   else
     Result := AListen;
+end;
+
+function McpWriteFileAtomic(const AFile, AData: string; out AError: string): Boolean;
+var
+  Tmp : string;
+  FS  : TFileStream;
+begin
+  Result := False;
+  AError := '';
+  Tmp := AFile + '.mcp' + IntToStr(GetCurrentThreadId) + '.tmp';
+  try
+    FS := TFileStream.Create(Tmp, fmCreate);
+    try
+      if Length(AData) > 0 then FS.WriteBuffer(AData[1], Length(AData));
+      {$IFDEF UNIX}
+      FileFlush(FS.Handle);   { on disk before the rename makes it the file }
+      {$ELSE}
+      FlushFileBuffers(FS.Handle);
+      {$ENDIF}
+    finally
+      FS.Free;
+    end;
+    {$IFDEF WINDOWS}
+    { RenameFile does not replace an existing file on Windows }
+    Result := MoveFileExW(PWideChar(UTF8Decode(Tmp)), PWideChar(UTF8Decode(AFile)),
+                          MOVEFILE_REPLACE_EXISTING or $8);   { MOVEFILE_WRITE_THROUGH }
+    {$ELSE}
+    Result := RenameFile(Tmp, AFile);
+    {$ENDIF}
+    if not Result then AError := 'could not replace ' + AFile + ' with the new content';
+  except
+    on E: Exception do
+    begin
+      Result := False;
+      AError := E.Message;
+    end;
+  end;
+  if not Result and FileExists(Tmp) then SysUtils.DeleteFile(Tmp);
+end;
+
+function McpDeleteTree(const ADir: string): Boolean;
+{$WARN 5044 OFF}   { faSymLink: the same bit means a link on Unix and a junction on Windows }
+var
+  SR   : TSearchRec;
+  Dir  : string;
+  Path : string;
+begin
+  Dir := IncludeTrailingPathDelimiter(ADir);
+  if FindFirst(Dir + '*', faAnyFile, SR) = 0 then
+  try
+    repeat
+      if (SR.Name = '.') or (SR.Name = '..') then Continue;
+      Path := Dir + SR.Name;
+      { FindFirst does not flag a directory link on Linux (attr $30, no faSymLink) and the
+        walk then deleted what the link pointed at: ask the file system itself }
+      if ((SR.Attr and faDirectory) <> 0) and ((SR.Attr and faSymLink) = 0) and
+         not FileIsSymlink(Path) then
+        McpDeleteTree(Path)
+      else
+      begin
+        if not FileIsSymlink(Path) then
+          FileSetAttr(Path, 0);   { a read-only file is deleted too; a link would change its target }
+        if not SysUtils.DeleteFile(Path) then RemoveDir(Path);   { a directory link goes with RemoveDir }
+      end;
+    until FindNext(SR) <> 0;
+  finally
+    SysUtils.FindClose(SR);
+  end;
+  RemoveDir(ChompPathDelim(Dir));
+  Result := not DirectoryExists(ChompPathDelim(Dir));
 end;
 
 function McpPrimaryAddress: string;

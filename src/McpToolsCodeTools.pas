@@ -37,7 +37,8 @@ uses
   CodeToolManager, CodeTree, AVL_Tree, SourceChanger, CodeToolsStrConsts,
   BasicCodeTools,
   Controls,
-  jsonparser,
+  jsonparser, McpProgress,
+  DirectivesTree, LinkScanner,
   McpToolContext, McpToolHelpers, McpLineDiff, McpStatements, McpStatementEdit;
 
 function McpLoadCode(const AFileName: string; AUpdateFromDisk: Boolean): TCodeBuffer;
@@ -109,7 +110,11 @@ const
 
   SCHEMA_GET_CODE_OUTLINE =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path"}},' +
+    '"file":{"type":"string","description":"Absolute path"},' +
+    '"directives":{"type":"boolean","description":"Also list the conditional directives ' +
+    '(IFDEF, IFNDEF, IF, IFOPT, ELSE, ELSEIF, ENDIF), DEFINE, UNDEF and include directives in ' +
+    'order: a branch has to (its last line) and active (compiled with the IDE\''s defines). ' +
+    'Code in a branch that is not active is not in the outline. Default false"}},' +
     '"required":["file"]}';
 
   SCHEMA_FIND_ALL_REFERENCES =
@@ -120,6 +125,7 @@ const
     '"also":{"type":"array","items":{"type":"string"},"description":"Also search other sources: same_folder (the file''s folder), lcl, components, rtl, fcl (FPC packages), packages (the packages loaded in the IDE). Only files that mention the name are parsed. The answer then is an object with references, extra_files_searched and truncated"},' +
     '"search_dir":{"type":"string","description":"Also search this folder and its subfolders"},' +
     '"max_files":{"type":"integer","description":"At most this many extra files that mention the name are searched (default 300; 0 searches none); the answer says truncated if there were more"},' +
+    '"max_seconds":{"type":"number","description":"Stop searching more files after this many seconds (default 15; 0 = no limit); the IDE is busy meanwhile. The answer is then an object with truncated and files_not_searched"},' +
     PKG_SCOPE_PROPS + '},' +
     '"required":["file","line","col"]}';
 
@@ -239,6 +245,204 @@ begin
   end
   else
     CodeBuf.AbsoluteToLineCol(CleanPos, ALine, ACol);
+end;
+
+{ Like CleanToLineCol, but a position that belongs to an include file is answered with the line
+  in that file, and AIncFile names it ('' when the position is in CodeBuf itself): the line of an
+  include file's text means nothing in the unit that includes it. }
+procedure CleanToLineColFile(Tool: TCodeTool; CodeBuf: TCodeBuffer; CleanPos: Integer;
+  out ALine, ACol: Integer; out AIncFile: string);
+var
+  XY : TCodeXYPosition;
+begin
+  AIncFile := '';
+  if Assigned(Tool) and Tool.CleanPosToCaret(CleanPos, XY) and Assigned(XY.Code) then
+  begin
+    ALine := XY.Y;
+    ACol  := XY.X;
+    if XY.Code <> CodeBuf then AIncFile := XY.Code.Filename;
+  end
+  else
+    CodeBuf.AbsoluteToLineCol(CleanPos, ALine, ACol);
+end;
+
+{ The outline with the directives of the source between its entries, in line order (an entry that
+  comes from an include file stays where the one before it is).  A directive that opens a branch has
+  "to", the last line of the branch, and "active": whether CodeTools compiles it, which is what its
+  scanner says about the first line after the directive (-1: skipped code). }
+function OutlineWithDirectives(Tool: TCodeTool; CodeBuf: TCodeBuffer;
+  AOutline: TJSONArray): TJSONArray;
+var
+  DTool   : TCompilerDirectivesTree;
+  Node    : TCodeTreeNode;
+  DirLine : array of Integer;      { the directives, in the order of the source }
+  DirEnt  : array of TJSONObject;
+  ND      : Integer;
+  Disabled : array of Boolean;
+  Skipping : Boolean;
+  I, K, Last : Integer;
+  Item, Entry : TJSONObject;
+  XY      : TCodeXYPosition;
+  CP, R   : Integer;
+  LineX, LineY : Integer;
+
+  function LineOf(APos: Integer): Integer;
+  begin
+    CodeBuf.AbsoluteToLineCol(APos, LineY, LineX);
+    Result := LineY;
+  end;
+
+  { the directives CodeTools' own directive parser keeps: conditionals, define and undefine, include }
+  function Listed(N: TCodeTreeNode): Boolean;
+  begin
+    Result := (N.Desc = cdnIf) or (N.Desc = cdnElseIf) or (N.Desc = cdnElse) or (N.Desc = cdnEnd) or
+              ((N.Desc = cdnDefine) and ((N.SubDesc = cdnsDefine) or (N.SubDesc = cdnsUndef) or
+                                         (N.SubDesc = cdnsSetC))) or
+              ((N.Desc = cdnInclude) and (N.SubDesc = cdnsInclude));
+  end;
+
+  { the text of the directive between its braces, on one line }
+  function DirectiveText(N: TCodeTreeNode): string;
+  var
+    P : Integer;
+  begin
+    Result := DTool.GetDirective(N);
+    if Copy(Result, 1, 3) = '(*$' then
+      Result := Copy(Result, 4, Length(Result) - 5)
+    else if Copy(Result, 1, 2) = '{$' then
+      Result := Copy(Result, 3, Length(Result) - 3);
+    for P := 1 to Length(Result) do
+      if Result[P] < ' ' then Result[P] := ' ';
+    Result := Trim(Result);
+  end;
+
+  procedure Push(ALine: Integer; AEntry: TJSONObject);
+  begin
+    if ND = Length(DirLine) then
+    begin
+      SetLength(DirLine, ND * 2 + 16);
+      SetLength(DirEnt, ND * 2 + 16);
+    end;
+    DirLine[ND] := ALine;
+    DirEnt[ND] := AEntry;
+    Inc(ND);
+  end;
+
+begin
+  Result := TJSONArray.Create;
+  ND := 0;
+  DTool := CodeToolBoss.GetDirectivesToolForSource(CodeBuf, False);
+  try
+    DTool.Parse(CodeBuf, DTool.NestedComments);
+  except
+    on E: Exception do
+    begin
+      { an unbalanced IF, an ENDIF without IF: the compiler stops there too }
+      Entry := TJSONObject.Create;
+      Entry.Add('kind', 'directive_error');
+      Entry.Add('name', E.Message);
+      Result.Add(Entry);
+      DTool := nil;
+    end;
+  end;
+  if Assigned(DTool) then
+  begin
+    { which links of the scanner lie in code a conditional skips: the same walk CodeTools makes }
+    SetLength(Disabled, Tool.Scanner.LinkCount);
+    Skipping := False;
+    for I := 0 to Tool.Scanner.LinkCount - 1 do
+    begin
+      case Tool.Scanner.Links[I].Kind of
+        slkSkipStart: Skipping := True;
+        slkSkipEnd:   Skipping := False;
+      end;
+      Disabled[I] := Skipping;
+    end;
+    Node := DTool.Tree.Root;
+    while Assigned(Node) do
+    begin
+      if Listed(Node) then
+      begin
+        Entry := TJSONObject.Create;
+        Entry.Add('kind', 'directive');
+        Entry.Add('line', LineOf(Node.StartPos));
+        Entry.Add('name', DirectiveText(Node));
+        if (Node.Desc = cdnIf) or (Node.Desc = cdnElseIf) or (Node.Desc = cdnElse) then
+        begin
+          { a branch ends where the directive that closes it begins }
+          K := LineOf(Node.EndPos) - 1;
+          if K < Entry.Integers['line'] then K := Entry.Integers['line'];
+          Entry.Add('to', K);
+          XY.Code := CodeBuf;
+          XY.X := 1;
+          XY.Y := Entry.Integers['line'] + 1;
+          R := Tool.CaretToCleanPos(XY, CP);
+          if R = -1 then
+            Entry.Add('active', False)    { between two links: skipped }
+          else if R = 0 then
+          begin
+            { CodeTools turns code an IFDEF skips into a special comment: a position in it is "valid",
+              so ask the link it is in whether a skip started before it }
+            K := Tool.Scanner.LinkIndexAtCleanPos(CP);
+            Entry.Add('active', (K < 0) or (K >= Length(Disabled)) or not Disabled[K]);
+          end;
+        end;
+        Push(Entry.Integers['line'], Entry);
+      end;
+      if Assigned(Node.FirstChild) then
+        Node := Node.FirstChild
+      else if Assigned(Node.NextBrother) then
+        Node := Node.NextBrother
+      else
+      begin
+        Node := Node.Parent;
+        while Assigned(Node) and not Assigned(Node.NextBrother) do
+          Node := Node.Parent;
+        if Assigned(Node) then Node := Node.NextBrother;
+      end;
+    end;
+  end;
+  { the outline entries, with each directive before the first entry that is on a later line; an
+    entry from an include file stays where the one before it is }
+  K := 0;
+  Last := 0;
+  for I := 0 to AOutline.Count - 1 do
+  begin
+    Item := AOutline.Objects[I];
+    if Item.IndexOfName('file') < 0 then Last := Item.Get('line', 0);
+    while (K < ND) and (DirLine[K] <= Last) do
+    begin
+      Result.Add(DirEnt[K]);
+      Inc(K);
+    end;
+    Result.Add(Item.Clone);
+  end;
+  while K < ND do
+  begin
+    Result.Add(DirEnt[K]);
+    Inc(K);
+  end;
+end;
+
+{ In a unit, adds "section": "interface" or "implementation" to an outline entry: without it the
+  declaration of a routine and its body, or the two uses clauses, look like repeats.  Programs and
+  libraries have no sections and get nothing. }
+procedure AddSection(AEntry: TJSONObject; ANode: TCodeTreeNode);
+begin
+  while Assigned(ANode) do
+  begin
+    if ANode.Desc = ctnInterface then
+    begin
+      AEntry.Add('section', 'interface');
+      Exit;
+    end;
+    if ANode.Desc = ctnImplementation then
+    begin
+      AEntry.Add('section', 'implementation');
+      Exit;
+    end;
+    ANode := ANode.Parent;
+  end;
 end;
 
 { Extract qualified name from a ctnProcedure node's source line, lower-cased.
@@ -1085,6 +1289,166 @@ begin
   Result := AddExtraFiles(Params, Code, X, Y, Files, Used, Truncated, Searched, Err);
 end;
 
+const
+  DefaultMaxSeconds : Double = 15;
+  RefChunk          = 25;      { files per CodeTools call: the clock is read between calls }
+  RefMaxResults     = 2000;
+
+{ The references of the identifier at DeclPt of Code in Files, as JSON.  The files go to CodeTools
+  RefChunk at a time, so that the time limit can stop the search between two calls.  A chunk
+  CodeTools refuses (one file it cannot parse) is tried file by file; the files that fail are
+  listed, not fatal.  The answer stays a plain array unless something has to be said besides the
+  references (an extra scope was asked for, the search was cut short, a file failed). }
+function McpFindReferences(Code: TCodeBuffer; DeclPt: TPoint; Files: TStringList;
+  MaxSeconds: Double; ExtraUsed, ExtraTrunc: Boolean; ExtraCount: Integer;
+  out Json, Err: string): Boolean;
+var
+  Refs, Failed : TJSONArray;
+  Obj, F       : TJSONObject;
+  Chunk, One   : TStringList;
+  I, J, Left   : Integer;
+  Started      : QWord;
+  AnyOk, Cut   : Boolean;
+  LastErr      : string;
+
+  function RunChunk(AFiles: TStringList): Boolean;
+  var
+    Tree : TAVLTree;
+    Node : TAVLTreeNode;
+    Pos  : PCodeXYPosition;
+    O    : TJSONObject;
+  begin
+    Tree := nil;
+    Result := CodeToolBoss.FindReferencesInFiles(AFiles, Code, DeclPt, False, Tree);
+    if Result then
+    begin
+      if Assigned(Tree) then
+      begin
+        Node := Tree.FindLowest;
+        while Assigned(Node) do
+        begin
+          Pos := PCodeXYPosition(Node.Data);
+          O := TJSONObject.Create;
+          O.Add('file', Pos^.Code.Filename);
+          O.Add('line', Pos^.Y);
+          O.Add('col',  Pos^.X);
+          Refs.Add(O);
+          Node := Node.Successor;
+        end;
+      end;
+    end
+    else
+      LastErr := CodeToolBoss.ErrorMessage;
+    if Assigned(Tree) then
+      CodeToolBoss.FreeTreeOfPCodeXYPosition(Tree);
+  end;
+
+begin
+  Result := False;
+  Json := ''; Err := '';
+  Refs := TJSONArray.Create;
+  Failed := TJSONArray.Create;
+  Chunk := TStringList.Create;
+  One := TStringList.Create;
+  try
+    Started := GetTickCount64;
+    AnyOk := False; Cut := False; Left := 0; LastErr := '';
+    I := 0;
+    while I < Files.Count do
+    begin
+      Chunk.Clear;
+      J := I + RefChunk;
+      if J > Files.Count then J := Files.Count;
+      while I + Chunk.Count < J do
+        Chunk.Add(Files[I + Chunk.Count]);
+      Inc(I, Chunk.Count);
+      if RunChunk(Chunk) then
+        AnyOk := True
+      else
+      begin
+        for J := 0 to Chunk.Count - 1 do
+        begin
+          One.Clear;
+          One.Add(Chunk[J]);
+          if RunChunk(One) then
+            AnyOk := True
+          else
+          begin
+            F := TJSONObject.Create;
+            F.Add('file', Chunk[J]);
+            F.Add('error', LastErr);
+            Failed.Add(F);
+          end;
+        end;
+        if not AnyOk then
+        begin
+          { not one file could be searched: the position, not the files }
+          Err := LastErr;
+          if Err = '' then
+            Err := 'no identifier at line ' + IntToStr(DeclPt.Y) + ', col ' + IntToStr(DeclPt.X);
+          Exit;
+        end;
+      end;
+      if (I < Files.Count) and
+         ((Refs.Count >= RefMaxResults) or McpCancelRequested or   { the client cancelled (ADR-036) }
+          ((MaxSeconds > 0) and (GetTickCount64 - Started >= QWord(Round(MaxSeconds * 1000))))) then
+      begin
+        Cut := True;
+        Left := Files.Count - I;
+        Break;
+      end;
+    end;
+    if ExtraUsed or ExtraTrunc or Cut or (Failed.Count > 0) then
+    begin
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('references', Refs); Refs := nil;
+        if ExtraUsed then Obj.Add('extra_files_searched', ExtraCount);
+        if ExtraTrunc or Cut then Obj.Add('truncated', True);
+        if Cut then Obj.Add('files_not_searched', Left);
+        if Failed.Count > 0 then begin Obj.Add('failed', Failed); Failed := nil; end;
+        Json := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
+    end
+    else
+      Json := Refs.AsJSON;
+    Result := True;
+  finally
+    One.Free; Chunk.Free;
+    Failed.Free; Refs.Free;     { nil once they went into Obj }
+  end;
+end;
+
+{ Where the identifier at X/Y of Code is declared: file, line, col, and the lines around it, numbered.
+  nil when CodeTools finds no declaration. }
+function DeclarationInfo(Code: TCodeBuffer; X, Y: Integer): TJSONObject;
+var
+  DCode : TCodeBuffer;
+  DX, DY, DTop, DBlockTop, DBlockBottom, I, First, Last : Integer;
+  Snip  : string;
+begin
+  Result := nil;
+  if (X < 1) or (Y < 1) then Exit;
+  DCode := nil;
+  if not CodeToolBoss.FindDeclaration(Code, X, Y, DCode, DX, DY, DTop,
+                                      DBlockTop, DBlockBottom) then Exit;
+  if (DCode = nil) or (DY < 1) then Exit;
+  First := DY - 2;
+  if First < 1 then First := 1;
+  Last := DY + 2;
+  if Last > DCode.LineCount then Last := DCode.LineCount;
+  Snip := '';
+  for I := First to Last do
+    Snip := Snip + IntToStr(I) + ': ' + Copy(DCode.GetLine(I - 1, False), 1, 256) + #10;
+  Result := TJSONObject.Create;
+  Result.Add('file',    DCode.Filename);
+  Result.Add('line',    DY);
+  Result.Add('col',     DX);
+  Result.Add('snippet', Snip);
+end;
+
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
 
 { The statements of the body whose begin block is BeginNode.  McpStatements has no scanner: the
@@ -1329,14 +1693,11 @@ var
   Tool       : TCodeTool;
   TreeNode   : TCodeTreeNode;
   Outline    : TJSONArray;
+  IncFile    : string;       { the include file a node is in; '' in the unit itself }
+  Merged     : TJSONArray;   { the outline with the directives }
   Entry      : TJSONObject;
   FileListJ  : TJSONArray;
   FileNames  : TStringList;
-  RefTree    : TAVLTree;
-  RefNode    : TAVLTreeNode;
-  RefPos     : PCodeXYPosition;
-  RefArr     : TJSONArray;
-  RefObj     : TJSONObject;
   Obj        : TJSONObject;
   Ed         : TSourceEditorInterface;
   Proj       : TLazProject;
@@ -1483,7 +1844,18 @@ begin
         Ctx.Error := True; Ctx.Result := 'Could not load file: ' + FilePath; Exit;
       end;
       Snippet := CodeToolBoss.FindSmartHint(CodeBuf, NewX, NewY);
-      Ctx.Result := '{"hint":' + TJSONString.Create(Snippet).AsJSON + '}';
+      Obj := TJSONObject.Create;
+      try
+        Obj.Add('hint', Snippet);
+        if NewY >= 1 then
+          Obj.Add('line_text', Copy(Trim(CodeBuf.GetLine(NewY - 1, False)), 1, 256));
+        Entry := DeclarationInfo(CodeBuf, NewX, NewY);
+        if Entry <> nil then
+          Obj.Add('declaration', Entry);
+        Ctx.Result := Obj.AsJSON;
+      finally
+        Obj.Free;
+      end;
     end;
 
     'code_get_outline':
@@ -1513,7 +1885,7 @@ begin
           if TreeNode.Desc in [ctnTypeDefinition, ctnVarDefinition, ctnConstDefinition,
                                 ctnProcedure, ctnProperty, ctnUseUnit] then
           begin
-            CleanToLineCol(Tool, CodeBuf, TreeNode.StartPos, NewY, NewX);
+            CleanToLineColFile(Tool, CodeBuf, TreeNode.StartPos, NewY, NewX, IncFile);
             Entry := TJSONObject.Create;
             Entry.Add('kind', NodeDescriptionAsString(TreeNode.Desc));
             Entry.Add('line', NewY);
@@ -1524,6 +1896,9 @@ begin
               Entry.Add('name', Tool.ExtractPropName(TreeNode, False))
             else
               Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
+            AddSection(Entry, TreeNode);
+            { a routine that an include directive brings in: its line is in that file }
+            if IncFile <> '' then Entry.Add('file', IncFile);
             Outline.Add(Entry);
           end;
           if Assigned(TreeNode.FirstChild) and
@@ -1544,7 +1919,17 @@ begin
               TreeNode := TreeNode.NextBrother;
           end;
         end;
-        Ctx.Result := Outline.AsJSON;
+        if Ctx.Params.Get('directives', False) then
+        begin
+          Merged := OutlineWithDirectives(Tool, CodeBuf, Outline);
+          try
+            Ctx.Result := Merged.AsJSON;
+          finally
+            Merged.Free;
+          end;
+        end
+        else
+          Ctx.Result := Outline.AsJSON;
       finally
         Outline.Free;
       end;
@@ -1578,7 +1963,6 @@ begin
       end;
       FileListJ := TJSONArray(GetJSON(TmpCtx.Result));
       FileNames := TStringList.Create;
-      RefTree   := nil;
       try
         for En in FileListJ do
           FileNames.Add(En.Value.AsString);
@@ -1593,54 +1977,17 @@ begin
           Ctx.Error := True; Ctx.Result := ExtraErr; Exit;
         end;
         DeclPt := Point(NewX, NewY);
-        if not CodeToolBoss.FindReferencesInFiles(FileNames, CodeBuf,
-               DeclPt, False, RefTree) then
+        if not McpFindReferences(CodeBuf, DeclPt, FileNames,
+               Ctx.Params.Get('max_seconds', DefaultMaxSeconds),
+               ExtraUsed, ExtraTrunc, ExtraCount, Ctx.Result, ExtraErr) then
         begin
           Ctx.Error  := True;
-          Ctx.Result := 'FindReferences failed: ' +
-            IfThen(CodeToolBoss.ErrorMessage <> '', CodeToolBoss.ErrorMessage,
-                   'no identifier at line ' + IntToStr(NewY) + ', col ' + IntToStr(NewX));
+          Ctx.Result := 'FindReferences failed: ' + ExtraErr;
           Exit;
-        end;
-        RefArr := TJSONArray.Create;
-        try
-          if Assigned(RefTree) then
-          begin
-            RefNode := RefTree.FindLowest;
-            while Assigned(RefNode) do
-            begin
-              RefPos := PCodeXYPosition(RefNode.Data);
-              RefObj := TJSONObject.Create;
-              RefObj.Add('file', RefPos^.Code.Filename);
-              RefObj.Add('line', RefPos^.Y);
-              RefObj.Add('col',  RefPos^.X);
-              RefArr.Add(RefObj);
-              RefNode := RefNode.Successor;
-            end;
-          end;
-          if ExtraUsed then
-          begin
-            { with an extra scope the answer says how far the search went }
-            Obj := TJSONObject.Create;
-            try
-              Obj.Add('references', RefArr.Clone as TJSONArray);
-              Obj.Add('extra_files_searched', ExtraCount);
-              if ExtraTrunc then
-                Obj.Add('truncated', True);
-              Ctx.Result := Obj.AsJSON;
-            finally
-              Obj.Free;
-            end;
-          end else
-            Ctx.Result := RefArr.AsJSON;
-        finally
-          RefArr.Free;
         end;
       finally
         FileNames.Free;
         FileListJ.Free;
-        if Assigned(RefTree) then
-          CodeToolBoss.FreeTreeOfPCodeXYPosition(RefTree);
       end;
     end;
 
@@ -1760,6 +2107,9 @@ begin
       end
       else
       begin
+        { CodeTools asks the tree for the source type before it has built one: on a buffer it has not
+          parsed yet that is a nil node and an access violation.  Parsing it first is enough (1.9.0). }
+        CodeToolBoss.GetSourceType(CodeBuf, False);
         if not CodeToolBoss.AddUnitToImplementationUsesSection(CodeBuf, Symbol, '') then
         begin
           Ctx.Error := True;
@@ -2240,12 +2590,17 @@ begin
     '(everything above the implementation keyword).',
     SCHEMA_GET_UNIT_INTERFACE, MCP_ANN_RO));
   Tools.Add(MakeTool('code_get_identifier_info',
-    'Return type, declaration location, and hint text for the identifier ' +
-    'at a given file/line/col using Codetools FindSmartHint.',
+    'What the identifier at a file/line/col is, in one call: the IDE''s hint text (kind, type, ' +
+    'owner), the text of that line, and where it is declared (file, line, col, and the lines ' +
+    'around the declaration, numbered). declaration is left out when CodeTools finds none.',
     SCHEMA_GET_IDENTIFIER_CONTEXT, MCP_ANN_RO));
   Tools.Add(MakeTool('code_get_outline',
     'Return the structural outline of a Pascal unit: uses clauses, type ' +
     'names, class members, and top-level routines with their line numbers. ' +
+    'With directives:true the conditional directives are listed too, each branch with its last ' +
+    'line ("to") and whether it is compiled ("active"). ' +
+    'In a unit each entry says which section it is in ("section": interface or implementation): ' +
+    'a routine declared in the interface appears again, with its body, in the implementation. ' +
     'Does not include method bodies.',
     SCHEMA_GET_CODE_OUTLINE, MCP_ANN_RO));
   Tools.Add(MakeTool('code_find_references',

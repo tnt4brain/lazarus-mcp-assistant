@@ -10,7 +10,7 @@ unit TCreateFile;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestCreateFile = class(TTestCase)
@@ -61,7 +61,7 @@ end;
 
 procedure TTestCreateFile.TearDown;
 begin
-  DeleteDirectory(ExcludeTrailingPathDelimiter(FRoot), False);
+  McpDeleteTree(ExcludeTrailingPathDelimiter(FRoot));
   RemoveDir(ExcludeTrailingPathDelimiter(FRoot));
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FRoot))));
 end;

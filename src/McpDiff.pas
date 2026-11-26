@@ -51,11 +51,6 @@ type
     HunkRow             : array of Integer;   { the first row of each change }
   end;
 
-const
-  { More changes than this between two texts, and the whole stretch between the
-    common beginning and the common end is taken as one change. }
-  McpDiffMaxEdits = 1500;
-
 { Splits at LF or CRLF.  A final line ending does not make an empty last line;
   FinalNewline tells whether there was one.  An empty text has no lines. }
 function SplitLines(const S: string; out FinalNewline: Boolean): TDiffLines;
@@ -65,6 +60,15 @@ function LinesOf(const S: string): TDiffLines;
 function JoinLines(const Lines: TDiffLines; const EOL: string;
   FinalNewline: Boolean): string;
 
+{ The hunks that turn A into B, the smallest set of changed lines.  Lines common to both
+  versions are matched by a longest common subsequence between the common head and tail,
+  so edits far apart are separate hunks.  Where the part between them is too large for
+  that table (a formatted unit of thousands of lines), lines that occur once in each
+  version anchor it (patience diff) and each part between anchors is matched the same
+  way; with no such line the whole part is one hunk.  A hunk that only adds or only
+  removes lines is moved down as far as the unchanged lines after it allow, as git does:
+  an inserted method then starts at its comment and ends with its own "end;", not with
+  the one before it. }
 function DiffLines(const A, B: TDiffLines): TDiffHunks;
 
 { The text A with the hunks that have Take[i] = True replaced by B's lines;
@@ -119,6 +123,8 @@ function Slice(const Lines: TDiffLines; AStart, ALen: Integer): TDiffLines;
 procedure DifferingSpan(const A, B: string; out AFrom, ATo, BFrom, BTo: Integer);
 
 implementation
+
+uses Classes;
 
 function SplitLines(const S: string; out FinalNewline: Boolean): TDiffLines;
 var
@@ -181,18 +187,41 @@ begin
     Result[I] := Lines[AStart + I];
 end;
 
-function OneHunk(AStart, ALen, BStart, BLen: Integer): TDiffHunks;
+{ The lines A[Lo..Hi-1], sorted, each with its index; compared byte by byte, as the
+  matching does. }
+function LineIndex(const A: TDiffLines; Lo, Hi: Integer): TStringList;
+var
+  I : Integer;
 begin
-  Result := nil;
-  SetLength(Result, 1);
-  Result[0].AStart := AStart;
-  Result[0].ALen   := ALen;
-  Result[0].BStart := BStart;
-  Result[0].BLen   := BLen;
+  Result := TStringList.Create;
+  Result.CaseSensitive := True;
+  Result.UseLocale := False;
+  Result.Capacity := Hi - Lo;
+  for I := Lo to Hi - 1 do
+    Result.AddObject(A[I], TObject(PtrInt(I)));
+  Result.Sorted := True;
 end;
 
-{ Myers' O(ND) difference of the middle parts; ADel/BIns mark the lines that are
-  not part of the common subsequence.  False when more than McpDiffMaxEdits. }
+{ The index of S if it occurs exactly once in Index, otherwise -1. }
+function UniqueAt(Index: TStringList; const S: string): Integer;
+var
+  X : Integer;
+begin
+  Result := -1;
+  if not Index.Find(S, X) then Exit;
+  if (X > 0) and (Index[X - 1] = S) then Exit;
+  if (X < Index.Count - 1) and (Index[X + 1] = S) then Exit;
+  Result := PtrInt(Index.Objects[X]);
+end;
+
+const
+  { most changed lines Myers' search looks for before it gives up (the trace costs about its square) }
+  MyersMaxEdits = 1500;
+
+{ Myers' O(ND) difference of A[AOff..AOff+N-1] and B[BOff..BOff+M-1]: ADel/BIns mark the lines that
+  are not part of the common subsequence.  False when more than MyersMaxEdits lines differ.  It is
+  the middle tier of DiffLines: where the table is too big and the lines are not unique (a file of
+  mostly repeated lines), the anchors have nothing to hold on to, and a few edits are cheap here. }
 function MyersMarks(const A, B: TDiffLines; AOff, N, BOff, M: Integer;
   var ADel, BIns: array of Boolean): Boolean;
 var
@@ -203,7 +232,7 @@ var
 begin
   Result := False;
   DMax := N + M;
-  if DMax > McpDiffMaxEdits then DMax := McpDiffMaxEdits;
+  if DMax > MyersMaxEdits then DMax := MyersMaxEdits;
   Off := DMax + 1;
   SetLength(V, 2 * DMax + 3);
   SetLength(Trace, DMax + 1);
@@ -268,53 +297,235 @@ begin
 end;
 
 function DiffLines(const A, B: TDiffLines): TDiffHunks;
+const
+  MaxCells = 4000000;  { the largest table for one exact match }
 var
-  Pre, Suf, N, M, I, J, Cnt, SI, SJ: Integer;
-  ADel : array of Boolean = nil;
-  BIns : array of Boolean = nil;
+  MA, MB : array of Integer;  { matched line pairs, increasing }
+  MC     : Integer;
+  K, Limit, PA, PB : Integer;
+
+  procedure AddMatch(I, J: Integer);
+  begin
+    if MC = Length(MA) then
+    begin
+      SetLength(MA, 2 * MC + 64);
+      SetLength(MB, 2 * MC + 64);
+    end;
+    MA[MC] := I;
+    MB[MC] := J;
+    Inc(MC);
+  end;
+
+  { Longest common subsequence of A[ALo..AHi-1] and B[BLo..BHi-1]. }
+  procedure TableMatch(ALo, AHi, BLo, BHi: Integer);
+  var
+    N, M, I, J : Integer;
+    L          : array of Integer = nil;
+
+    function Cell(AI, AJ: Integer): Integer; inline;
+    begin
+      Result := L[AI * (M + 1) + AJ];
+    end;
+
+  begin
+    N := AHi - ALo;
+    M := BHi - BLo;
+    SetLength(L, (N + 1) * (M + 1));
+    for I := N - 1 downto 0 do
+      for J := M - 1 downto 0 do
+        if A[ALo + I] = B[BLo + J] then
+          L[I * (M + 1) + J] := Cell(I + 1, J + 1) + 1
+        else if Cell(I + 1, J) >= Cell(I, J + 1) then
+          L[I * (M + 1) + J] := Cell(I + 1, J)
+        else
+          L[I * (M + 1) + J] := Cell(I, J + 1);
+    I := 0;
+    J := 0;
+    while (I < N) and (J < M) do
+      if A[ALo + I] = B[BLo + J] then
+      begin
+        AddMatch(ALo + I, BLo + J);
+        Inc(I);
+        Inc(J);
+      end
+      else if Cell(I + 1, J) >= Cell(I, J + 1) then
+        Inc(I)
+      else
+        Inc(J);
+  end;
+
+  { Myers on A[ALo..AHi-1], B[BLo..BHi-1]: False (nothing matched) when more than MyersMaxEdits differ. }
+  function MyersMatch(ALo, AHi, BLo, BHi: Integer): Boolean;
+  var
+    N, M, I, J : Integer;
+    ADel, BIns : array of Boolean;
+  begin
+    N := AHi - ALo;
+    M := BHi - BLo;
+    ADel := nil;
+    BIns := nil;
+    SetLength(ADel, N);
+    SetLength(BIns, M);
+    for I := 0 to N - 1 do ADel[I] := False;
+    for J := 0 to M - 1 do BIns[J] := False;
+    Result := MyersMarks(A, B, ALo, N, BLo, M, ADel, BIns);
+    if not Result then Exit;
+    I := 0;
+    J := 0;
+    while (I < N) or (J < M) do
+    begin
+      while (I < N) and ADel[I] do Inc(I);
+      while (J < M) and BIns[J] do Inc(J);
+      if (I < N) and (J < M) then
+      begin
+        AddMatch(ALo + I, BLo + J);
+        Inc(I);
+        Inc(J);
+      end;
+    end;
+  end;
+
+  procedure Match(ALo, AHi, BLo, BHi: Integer); forward;
+
+  { Lines that occur once in each range, in the longest run whose positions
+    increase in both, with the parts between them matched recursively.
+    False if there is no such line. }
+  function AnchorMatch(ALo, AHi, BLo, BHi: Integer): Boolean;
+  var
+    InA, InB      : TStringList;
+    I, J, X, Lo, Hi, Mid, Len : Integer;
+    CandA, CandB  : array of Integer;
+    Tails         : array of Integer = nil;
+    Prev          : array of Integer = nil;
+    Chain         : array of Integer = nil;
+    PrevA, PrevB  : Integer;
+  begin
+    InA := LineIndex(A, ALo, AHi);
+    InB := LineIndex(B, BLo, BHi);
+    try
+      CandA := nil;
+      CandB := nil;
+      for I := ALo to AHi - 1 do
+        if (UniqueAt(InA, A[I]) = I) and (UniqueAt(InB, A[I]) >= 0) then
+        begin
+          J := UniqueAt(InB, A[I]);
+          SetLength(CandA, Length(CandA) + 1);
+          SetLength(CandB, Length(CandB) + 1);
+          CandA[High(CandA)] := I;
+          CandB[High(CandB)] := J;
+        end;
+    finally
+      InA.Free;
+      InB.Free;
+    end;
+    Result := Length(CandA) > 0;
+    if not Result then Exit;
+    { longest increasing run of CandB (patience sorting) }
+    SetLength(Tails, Length(CandB));
+    SetLength(Prev, Length(CandB));
+    Len := 0;
+    for X := 0 to High(CandB) do
+    begin
+      Lo := 0;
+      Hi := Len;
+      while Lo < Hi do
+      begin
+        Mid := (Lo + Hi) div 2;
+        if CandB[Tails[Mid]] < CandB[X] then Lo := Mid + 1 else Hi := Mid;
+      end;
+      if Lo > 0 then Prev[X] := Tails[Lo - 1] else Prev[X] := -1;
+      Tails[Lo] := X;
+      if Lo = Len then Inc(Len);
+    end;
+    SetLength(Chain, Len);
+    X := Tails[Len - 1];
+    for I := Len - 1 downto 0 do
+    begin
+      Chain[I] := X;
+      X := Prev[X];
+    end;
+    PrevA := ALo;
+    PrevB := BLo;
+    for I := 0 to Len - 1 do
+    begin
+      Match(PrevA, CandA[Chain[I]], PrevB, CandB[Chain[I]]);
+      AddMatch(CandA[Chain[I]], CandB[Chain[I]]);
+      PrevA := CandA[Chain[I]] + 1;
+      PrevB := CandB[Chain[I]] + 1;
+    end;
+    Match(PrevA, AHi, PrevB, BHi);
+  end;
+
+  procedure Match(ALo, AHi, BLo, BHi: Integer);
+  var
+    Tail, X : Integer;
+  begin
+    while (ALo < AHi) and (BLo < BHi) and (A[ALo] = B[BLo]) do
+    begin
+      AddMatch(ALo, BLo);
+      Inc(ALo);
+      Inc(BLo);
+    end;
+    Tail := 0;
+    while (Tail < AHi - ALo) and (Tail < BHi - BLo) and
+          (A[AHi - 1 - Tail] = B[BHi - 1 - Tail]) do
+      Inc(Tail);
+    if (AHi - Tail > ALo) and (BHi - Tail > BLo) then
+      if Int64(AHi - Tail - ALo + 1) * (BHi - Tail - BLo + 1) <= MaxCells then
+        TableMatch(ALo, AHi - Tail, BLo, BHi - Tail)
+      else if not MyersMatch(ALo, AHi - Tail, BLo, BHi - Tail) then
+        AnchorMatch(ALo, AHi - Tail, BLo, BHi - Tail);  { none: one hunk }
+    for X := Tail downto 1 do
+      AddMatch(AHi - X, BHi - X);
+  end;
+
+  procedure AddHunk(AEnd, BEnd: Integer);
+  begin
+    if (AEnd <= PA) and (BEnd <= PB) then Exit;
+    SetLength(Result, Length(Result) + 1);
+    with Result[High(Result)] do
+    begin
+      AStart := PA; ALen := AEnd - PA;
+      BStart := PB; BLen := BEnd - PB;
+    end;
+  end;
+
 begin
   Result := nil;
-  Pre := 0;
-  while (Pre < Length(A)) and (Pre < Length(B)) and (A[Pre] = B[Pre]) do
-    Inc(Pre);
-  Suf := 0;
-  while (Suf < Length(A) - Pre) and (Suf < Length(B) - Pre) and
-        (A[Length(A) - 1 - Suf] = B[Length(B) - 1 - Suf]) do
-    Inc(Suf);
-  N := Length(A) - Pre - Suf;
-  M := Length(B) - Pre - Suf;
-  if (N = 0) and (M = 0) then Exit;
-  if (N = 0) or (M = 0) then
-    Exit(OneHunk(Pre, N, Pre, M));
-  SetLength(ADel, N);
-  SetLength(BIns, M);
-  for I := 0 to N - 1 do ADel[I] := False;
-  for J := 0 to M - 1 do BIns[J] := False;
-  if not MyersMarks(A, B, Pre, N, Pre, M, ADel, BIns) then
-    Exit(OneHunk(Pre, N, Pre, M));
-  { runs of marked lines are the hunks }
-  Cnt := 0;
-  I := 0;
-  J := 0;
-  while (I < N) or (J < M) do
+  MC := 0;
+  MA := nil;
+  MB := nil;
+  Match(0, Length(A), 0, Length(B));
+  { the hunks are the gaps between matched lines }
+  PA := 0;
+  PB := 0;
+  for K := 0 to MC - 1 do
   begin
-    if (I < N) and (J < M) and (not ADel[I]) and (not BIns[J]) then
-    begin
-      Inc(I);
-      Inc(J);
-      Continue;
-    end;
-    SI := I;
-    SJ := J;
-    while (I < N) and ADel[I] do Inc(I);
-    while (J < M) and BIns[J] do Inc(J);
-    SetLength(Result, Cnt + 1);
-    Result[Cnt].AStart := Pre + SI;
-    Result[Cnt].ALen   := I - SI;
-    Result[Cnt].BStart := Pre + SJ;
-    Result[Cnt].BLen   := J - SJ;
-    Inc(Cnt);
+    AddHunk(MA[K], MB[K]);
+    PA := MA[K] + 1;
+    PB := MB[K] + 1;
   end;
+  AddHunk(Length(A), Length(B));
+  { a hunk that only adds or only removes lines slides down as far as the lines after
+    it allow, as git does }
+  for K := 0 to High(Result) do
+    with Result[K] do
+      if ALen = 0 then
+      begin
+        if K < High(Result) then Limit := Result[K + 1].BStart else Limit := Length(B);
+        while (BStart + BLen < Limit) and (B[BStart] = B[BStart + BLen]) do
+        begin
+          Inc(AStart); Inc(BStart);
+        end;
+      end
+      else if BLen = 0 then
+      begin
+        if K < High(Result) then Limit := Result[K + 1].AStart else Limit := Length(A);
+        while (AStart + ALen < Limit) and (A[AStart] = A[AStart + ALen]) do
+        begin
+          Inc(AStart); Inc(BStart);
+        end;
+      end;
 end;
 
 procedure AddLine(var R: TDiffLines; var N: Integer; const S: string);

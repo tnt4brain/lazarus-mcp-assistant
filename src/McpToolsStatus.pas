@@ -35,6 +35,21 @@ const
     'project''s directory (in_repo, branch, changed files count); default false, ' +
     'because git status can be slow on big repositories"}}}';
 
+  { What the answer looks like.  Only "debugger" is always there: the project section is left out
+    when no project is open, editors when the IDE has no source editor manager, git unless asked. }
+  OUTPUT_GET_STATUS =
+    '{"type":"object","properties":{' +
+    '"project":{"type":"object","properties":{"name":{"type":"string"},"project_file":{"type":"string"},' +
+    '"directory":{"type":"string"}}},' +
+    '"git":{"type":"object"},' +
+    '"editors":{"type":"object","properties":{"unsaved_count":{"type":"integer"},' +
+    '"unsaved":{"type":"array","items":{"type":"string"}},"truncated":{"type":"boolean"}},' +
+    '"required":["unsaved_count"]},' +
+    '"debugger":{"type":"object","properties":{"state":{"type":"string"},"lease":{"type":"object"}},' +
+    '"required":["state"]},' +
+    '"server":{"type":"object","properties":{"version":{"type":"string"}}}},' +
+    '"required":["debugger"]}';
+
   { at most this many unsaved file names in the answer }
   UNSAVED_CAP = 10;
 
@@ -200,8 +215,10 @@ end;
 { ── Schema registration ──────────────────────────────────────────────────── }
 
 procedure RegisterStatusSchemas(Tools: TJSONArray);
+var
+  T : TJSONObject;
 begin
-  Tools.Add(MakeTool('ide_get_status',
+  T := MakeTool('ide_get_status',
     'Overview, several tools in one call: the open project as ' +
     'project_get_directory reports it (name, project_file, directory; the ' +
     'section is omitted when no project is open), unsaved editors as ' +
@@ -210,7 +227,9 @@ begin
     'version. include_git=true adds the git section of git_status (in_repo, ' +
     'branch, changed files count) for the project''s directory; it is off by ' +
     'default because git status can be slow.',
-    SCHEMA_GET_STATUS, MCP_ANN_RO));
+    SCHEMA_GET_STATUS, MCP_ANN_RO);
+  McpSetOutputSchema(T, OUTPUT_GET_STATUS);
+  Tools.Add(T);
 end;
 
 initialization

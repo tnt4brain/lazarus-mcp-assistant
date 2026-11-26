@@ -37,7 +37,7 @@ The `code_*` and `form_*` tools that change files follow the same rule (`code_re
 file it would touch and renames nothing if one is outside); `dry_run` is never refused. So do the tools that
 change an existing package's `.lpk` (`package_add_file`, `package_remove_file`, `package_add_dependency`,
 `package_remove_dependency`, `package_set_info`, `package_set_settings`, and both packages of `package_move_unit`).
-Not limited: `editor_save`, `editor_revert`, `editor_close`, and the tools listed below that create, open,
+Not limited: `editor_save`, `editor_revert`, `editor_undo`, `editor_redo`, `editor_close`, and the tools listed below that create, open,
 download, install or uninstall.
 
 ## What the limits do not do

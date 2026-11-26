@@ -33,6 +33,7 @@ type
     function  HandleRPC(const Body, AClientId: string; out ANewSession: string): string;
     function  HandleInitialize(ID: TJSONData; Params: TJSONObject;
                                out ANewSession: string): string;
+    procedure HandleCancelled(Params: TJSONObject; const AClientId: string);
     function  HandlePing(ID: TJSONData): string;
     function  HandleToolsList(ID: TJSONData): string;
     function  HandleToolsCall(ID: TJSONData; Params: TJSONObject;
@@ -107,8 +108,8 @@ uses
   IDEExternToolIntf, IDEMsgIntf, McpUtils, McpToolAliases, McpToolContext,
   McpToolHelpers, McpDebugGuard, McpDebugLease, McpExceptionLog,
   McpToolsProject, McpDialogWatch, McpSessionLog, McpRunProgram, McpTokens,
-  McpToolLog, McpMessages, McpReport, McpLimitedMode, McpProcess, LCLVersion,
-  DateUtils;
+  McpToolLog, McpMessages, McpReport, McpLimitedMode, McpProcess, McpPrompts,
+  LCLVersion, DateUtils, McpProgress;
 
 threadvar
   { the token of the request this thread is handling (ADR-021) }
@@ -266,8 +267,7 @@ begin
   FServer := TMcpHttpServer.Create(nil);
   FServer.Address   := AAddress;
   FServer.Port      := APort;
-  FServer.Threaded  := True;   { each connection gets its own thread — required for blocking tools }
-  FServer.OnRequest := @HandleRequest;
+  FServer.Threaded  := True;   { each connection gets its own thread — required for blocking tools }  FServer.OnRequest := @HandleRequest;
   FServer.OnAllowConnect := @HandleAllowConnect;
   FServer.QueueSize := 5;
 end;
@@ -434,8 +434,11 @@ begin
       '; Path=/mcp; HttpOnly; SameSite=Strict');
   end;
 
+  McpStreamPrepare(AResponse, Pos('text/event-stream', LowerCase(ARequest.Accept)) > 0);
   try
     ResponseBody := HandleRPC(ARequest.Content, ClientId, NewSession);
+    { a call that ran long was answered as a stream, the result as its last event (ADR-036) }
+    if McpStreamDone then Exit;
     if NewSession <> '' then
     begin
       AResponse.SetCustomHeader('Mcp-Session-Id', NewSession);
@@ -476,6 +479,8 @@ var
   Method : string;
   ID     : TJSONData;
   Params : TJSONObject;
+  Meta   : TJSONObject;
+  PToken : TJSONData;
 begin
   Result := '';
   ANewSession := '';
@@ -493,6 +498,15 @@ begin
     ID     := Req.Find('id');
     Params := TJSONObject(Req.Find('params'));
 
+    Method := Req.Get('method', '');
+
+    { the client gave up on a call (ADR-036); answered with 202 like every notification }
+    if (Method = 'notifications/cancelled') and Assigned(Params) then
+    begin
+      HandleCancelled(Params, AClientId);
+      Exit('');
+    end;
+
     // Notification: no id field; respond 202 (caller uses empty body)
     if not Assigned(ID) then
     begin
@@ -500,7 +514,6 @@ begin
       Exit;
     end;
 
-    Method := Req.Get('method', '');
     case Method of
       'initialize':
         Result := HandleInitialize(ID, Params, ANewSession);
@@ -512,7 +525,19 @@ begin
       begin
         InterLockedIncrement(GMcpToolCallsActive);  { lets IDE modals be auto-answered }
         try
-          Result := HandleToolsCall(ID, Params, AClientId);
+          if Assigned(Params) then
+          begin
+            Meta := TJSONObject(Params.Find('_meta', jtObject));
+            if Assigned(Meta) then PToken := Meta.Find('progressToken') else PToken := nil;
+            McpCallBegin(AClientId, ID.AsJSON, Params.Get('name', ''), PToken);
+          end;
+          try
+            Result := HandleToolsCall(ID, Params, AClientId);
+            { a long call answers as a stream: the result is its last event }
+            if McpCallStreamResult(Result) then Result := '';
+          finally
+            McpCallEnd;
+          end;
         finally
           InterLockedDecrement(GMcpToolCallsActive);
         end;
@@ -591,8 +616,10 @@ type
     Done     : TEvent;      { set when Run finished; only for queued calls }
     Finished : Boolean;     { guarded by GCallLock }
     Abandoned: Boolean;     { the waiting thread gave up: Run frees the call }
+    Cx       : TMcpMainCancel;   { the client's cancel, relayed to the main thread (ADR-036) }
     destructor Destroy; override;
     procedure RunQueued;    { main thread: Run, then hand over or free }
+    procedure FinishRun;    { the call has its answer: wake the waiting thread, or free the call }
     procedure RunAsync(Data: PtrInt);       { RunQueued as an async call }
     procedure LogAndFreeAsync(Data: PtrInt);
     procedure LogAndFree;   { main thread, queued: Log, then free this call }
@@ -602,6 +629,8 @@ type
 
 var
   GCallLock : TCriticalSection;
+  GMainDepth   : Integer = 0;   { tool calls running on the main thread, nested ones included }
+  GMainRunning : string  = '';  { the innermost one }
 
 destructor TMcpMainCall.Destroy;
 begin
@@ -631,13 +660,54 @@ begin
 end;
 {$POP}
 
+{ What may run while the main thread is inside another call: what only reads, what answers a dialog
+  (the dialog is why the IDE is waiting), what stops a debug session, and the test hooks. }
+function NestedAllowed(const AToolName: string): Boolean;
+begin
+  Result := McpToolIsReadOnly(AToolName) or
+            (AToolName = 'ide_answer_dialog') or (AToolName = 'debug_stop') or
+            (Copy(AToolName, 1, 7) = '__test_');
+end;
+
 procedure TMcpMainCall.RunQueued;
 var
-  Release : Boolean;
+  Outer   : string;
+  OuterCx : PMcpMainCancel;
 begin
+  { Main thread only.  An IDE call that pumps messages (a build, a run, a dialog)
+    runs the next queued call inside itself; that shows here as a depth above 0. }
+  Outer := GMainRunning;
+  if GMainDepth > 0 then
+  begin
+    McpLogSession(Format('nested: %s started inside %s (depth %d)',
+                         [ToolName, Outer, GMainDepth + 1]));
+    { A tool that changes things does not run in the middle of another: the IDE is inside a build,
+      a run or a dialog, and an edit, a save or a second build there lands on half-finished state. }
+    if not NestedAllowed(ToolName) then
+    begin
+      Ctx.Error  := True;
+      Ctx.Result := Format('%s was not run: the IDE is busy inside %s (it handles other calls ' +
+        'while it builds, runs or waits for a dialog), and a tool that changes things must not ' +
+        'run in the middle of it. Call it again when %s has finished. Read-only tools, ' +
+        'ide_answer_dialog and debug_stop are served meanwhile.', [ToolName, Outer, Outer]);
+      McpLogSession('refused: ' + ToolName + ' inside ' + Outer);
+      FinishRun;
+      Exit;
+    end;
+  end;
+  Inc(GMainDepth);
+  GMainRunning := ToolName;
+  OuterCx := GMcpMainCancel;
+  GMcpMainCancel := @Cx;
   try
-    McpEnsureDialogWatch;
-    Run;
+    try
+      McpEnsureDialogWatch;
+      Run;
+    finally
+      Dec(GMainDepth);
+      GMainRunning := Outer;
+      GMcpMainCancel := OuterCx;
+    end;
   except
     { whatever goes wrong, the thread waiting for this call must get its answer:
       an exception leaving here would end in the IDE's event loop and leave it
@@ -649,6 +719,13 @@ begin
       Ctx.Result := E.Message;
     end;
   end;
+  FinishRun;
+end;
+
+procedure TMcpMainCall.FinishRun;
+var
+  Release : Boolean;
+begin
   GCallLock.Enter;
   try
     Finished := True;
@@ -824,6 +901,8 @@ begin
     while Call.Done.WaitFor(250) <> wrSignaled do
     begin
       Inc(WaitedMs, 250);
+      { a cancel reaches a tool that runs on the main thread through this copy }
+      if McpCancelPending then InterlockedExchange(Call.Cx.Cancel, 1);
       { a call the main thread does not finish is a hang worth knowing about }
       if (WaitedMs mod 20000) = 0 then
       begin
@@ -863,11 +942,61 @@ begin
         Dialogs.Free;
       end;
     end;
+    if Call.Cx.Honored <> 0 then McpMarkHonored;   { a main-thread tool stopped for a cancel }
     Result  := Call.Ctx.Result;
     AErr    := Call.Ctx.Error;
     AImages := Call.Ctx.Images;
   finally
     Call.Free;
+  end;
+end;
+
+type
+  { LazarusIDE.AbortBuild, on the main thread: a build pumps messages, so this runs inside it
+    (measured, see the "nested:" line of the session log) }
+  TAbortBuildCall = class
+    procedure RunAsync(Data: PtrInt);
+  end;
+
+{ QueueAsyncCall fixes the signature; Data is not needed }
+{$PUSH}{$WARN 5024 OFF}
+procedure TAbortBuildCall.RunAsync(Data: PtrInt);
+begin
+  try
+    if Assigned(LazarusIDE) then LazarusIDE.AbortBuild;
+  except
+    on E: Exception do McpLogSession('cancel: AbortBuild raised ' + E.ClassName + ': ' + E.Message);
+  end;
+  Free;
+end;
+{$POP}
+
+{ What a cancel needs beyond the flag (ADR-036): the IDE's own build has to be told to stop.
+  Child processes, waits and searches look at the flag themselves. }
+function CancelAction(const ATool: string): Boolean;
+begin
+  Result := (ATool = 'project_build') or (ATool = 'package_compile');
+  if Result then
+    Application.QueueAsyncCall(@TAbortBuildCall.Create.RunAsync, 0);
+end;
+
+procedure TMcpServerThread.HandleCancelled(Params: TJSONObject; const AClientId: string);
+var
+  ReqId  : TJSONData;
+  Tool   : string;
+  Secs   : Integer;
+begin
+  ReqId := Params.Find('requestId');
+  if not Assigned(ReqId) then Exit;
+  GMcpCancelAction := @CancelAction;
+  case McpCancelCall(AClientId, ReqId.AsJSON, Params.Get('reason', ''), Tool, Secs) of
+    cnCancelled:
+      McpLogSession(Format('cancel: %s after %d s (%s)',
+        [Tool, Secs, Params.Get('reason', 'no reason given')]));
+    cnForeign:
+      McpLogSession(Format('cancel ignored: %s belongs to another session', [Tool]));
+  else
+    ;   { unknown or finished: the spec says to ignore it }
   end;
 end;
 
@@ -1141,16 +1270,7 @@ var
   Res     : TJSONObject;
 begin
   Prompts := TJSONArray.Create;
-
-  P := TJSONObject.Create;
-  P.Add('name',        'explain_compiler_errors');
-  P.Add('description', 'Fetch current compiler output and ask Claude to explain errors and suggest fixes');
-  Prompts.Add(P);
-
-  P := TJSONObject.Create;
-  P.Add('name',        'review_active_file');
-  P.Add('description', 'Review the currently active editor file for code quality and improvements');
-  Prompts.Add(P);
+  McpPromptsList(Prompts);   { the table is in McpPrompts }
 
   Res := TJSONObject.Create;
   Res.Add('prompts', Prompts);
@@ -1175,6 +1295,12 @@ begin
     Exit(RPCError(ID, -32602, 'Missing params'));
   Name := Params.Get('name', '');
 
+  { the prompts that need no IDE state are built by McpPrompts }
+  if McpPromptText(Name, TJSONObject(Params.Find('arguments', jtObject)), Text, Out) then
+  begin
+    if Out <> '' then Exit(RPCError(ID, -32602, Out));
+  end
+  else
   case Name of
     'explain_compiler_errors':
     begin
@@ -1334,6 +1460,7 @@ var
   Args        : TJSONObject;
   Content     : TJSONArray;
   TextNode    : TJSONObject;
+  Structured  : TJSONData;
   Res         : TJSONObject;
   Err         : Boolean;
   Text        : string;
@@ -1347,6 +1474,7 @@ var
   BHandled    : Boolean;
   Images      : TStringArray;
   I           : Integer;
+  Cancelled   : string;
 begin
   AToolErr  := False;
   AToolText := '';
@@ -1355,6 +1483,7 @@ begin
 
   { Old tool and parameter names become the current ones, in place, before anything looks at
     them (ADR-031); the client is told once per session and old name }
+  McpAliasSetStrict(Assigned(McpSettings) and McpSettings.AliasStrict);
   McpTranslateCall(Params, AClientId, AliasNotice, AliasErr);
   ToolName := Params.Get('name', '');
   Args     := TJSONObject(Params.Find('arguments'));
@@ -1512,6 +1641,14 @@ begin
     McpGateLeave(ToolName, AClientId);
   end;
 
+  { a tool that stopped because the client cancelled it says so (ADR-036) }
+  Cancelled := McpCallCancelNote;
+  if Cancelled <> '' then
+  begin
+    Text := Cancelled + IfThen(Text <> '', ': ' + Text, '');
+    Err  := True;
+  end;
+
   AToolErr  := Err;
   AToolText := Text;
 
@@ -1529,6 +1666,20 @@ begin
 
   Res := TJSONObject.Create;
   Res.Add('content', Content);
+  { a tool with an outputSchema: the same object again as structuredContent (the text stays) }
+  if not Err and McpToolHasOutputSchema(ToolName) then
+  begin
+    Structured := nil;
+    try
+      Structured := GetJSON(Text);
+    except
+      FreeAndNil(Structured);
+    end;
+    if Structured is TJSONObject then
+      Res.Add('structuredContent', Structured)
+    else
+      Structured.Free;
+  end;
   Res.Add('isError', Err);
   Result := RPCResult(ID, Res);
 end;
@@ -1790,6 +1941,7 @@ begin
           IfThen(GetServerPort = McpSettings.ServerPort, '',
                  ' (saved; this run listens on ' + IntToStr(GetServerPort) + ')') + LineEnding +
           '- assistants may install packages: ' + YesNo(McpSettings.AllowPackageInstall) + LineEnding +
+          '- old tool and parameter names refused (strict): ' + YesNo(McpSettings.AliasStrict) + LineEnding +
           '- limited mode (file access of the tools): ' +
           IfThen(McpLimitedOn, 'on, allowed folders ' + McpLimitFoldersText, 'off') + LineEnding +
           '- tool-call log: ' + YesNo(McpSettings.ToolCallLog) + LineEnding +

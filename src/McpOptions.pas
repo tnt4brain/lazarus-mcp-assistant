@@ -36,6 +36,7 @@ type
     FWinIds          : TStringList;
     FGitPath        : TFileNameEdit;
     FAllowInstall    : TCheckBox;
+    FAliasStrict     : TCheckBox;
     FReviewGroup     : TGroupBox;
     FReviewPolicy    : TComboBox;  { ask, editor wins, disk wins (ADR-025) }
     FServerGroup     : TGroupBox;
@@ -242,6 +243,9 @@ begin
   Place(FAllowInstall, FSecurityGroup, 2);
   AddLabel(FSecurityGroup, 'Each install is still shown to you for confirmation.');
   AddLabel(FSecurityGroup, 'Limiting the tools to folders: see the Directories page.');
+  FAliasStrict := TCheckBox.Create(Self);
+  FAliasStrict.Caption := 'Refuse old tool and parameter names (what 2.0 will do)';
+  Place(FAliasStrict, FSecurityGroup, 2);
 
   FFileLabel := TLabel.Create(Self);
   FFileLabel.Align := alTop;
@@ -413,6 +417,7 @@ begin
   {$ENDIF}
   FGitPath.Text       := McpSettings.GitPath;
   FAllowInstall.Checked := McpSettings.AllowPackageInstall;
+  FAliasStrict.Checked  := McpSettings.AliasStrict;
   case McpSettings.ReviewPolicy of
     'editor': FReviewPolicy.ItemIndex := 1;
     'disk':   FReviewPolicy.ItemIndex := 2;
@@ -456,6 +461,7 @@ begin
   {$ENDIF}
   McpSettings.GitPath             := Trim(FGitPath.Text);
   McpSettings.AllowPackageInstall := FAllowInstall.Checked;
+  McpSettings.AliasStrict         := FAliasStrict.Checked;
   case FReviewPolicy.ItemIndex of
     1: McpSettings.ReviewPolicy := 'editor';
     2: McpSettings.ReviewPolicy := 'disk';

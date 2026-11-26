@@ -94,7 +94,7 @@ implementation
 
 uses
   LazIDEIntf, ProjectIntf, PackageIntf, MacroIntf, SrcEditorIntf, McpUtils,
-  McpLimitedMode, McpProcess;
+  McpLimitedMode, McpProcess, McpProgress, McpMessages, IDEExternToolIntf, Forms;
 
 procedure AddRoot(ARoots: TStrings; const ADir: string);
 var
@@ -548,6 +548,60 @@ begin
   end;
 end;
 
+type
+  { a line for the Messages window, made on the request thread, added on the main one }
+  TTestsPaneLine = class
+    Text : string;
+    procedure AddAsync(Data: PtrInt);
+  end;
+
+{ QueueAsyncCall fixes the signature; Data is not needed }
+{$PUSH}{$WARN 5024 OFF}
+procedure TTestsPaneLine.AddAsync(Data: PtrInt);
+begin
+  try
+    McpAddMessage(mluProgress, Text);
+  finally
+    Free;
+  end;
+end;
+{$POP}
+
+threadvar
+  GTestsLineAt : QWord;
+
+{ The test program says which test it is at ("212/608 TTestX.TestY"): a line in the Messages window
+  every 10 s, and the first at once, so a run that takes minutes shows where it is. }
+procedure TestsProgressLine(const AMessage: string);
+var
+  L : TTestsPaneLine;
+begin
+  if (GTestsLineAt <> 0) and (GetTickCount64 - GTestsLineAt < 10000) then Exit;
+  GTestsLineAt := GetTickCount64;
+  L := TTestsPaneLine.Create;
+  L.Text := 'tests: ' + AMessage;
+  Application.QueueAsyncCall(@L.AddAsync, 0);
+end;
+
+{ RunOut without the lines the test program wrote for the progress }
+function WithoutProgressLines(const AOutput: string): string;
+var
+  Lines : TStringList;
+  I     : Integer;
+begin
+  if Pos(McpProgressMark, AOutput) = 0 then Exit(AOutput);
+  Lines := TStringList.Create;
+  try
+    Lines.Text := AOutput;
+    for I := Lines.Count - 1 downto 0 do
+      if Copy(Lines[I], 1, Length(McpProgressMark)) = McpProgressMark then
+        Lines.Delete(I);
+    Result := Lines.Text;
+  finally
+    Lines.Free;
+  end;
+end;
+
 function McpRunTests(const ResolvedLpi, JUnitOut, ASuite: string; AEnv: TJSONObject;
   out IsError: Boolean): string;
 var
@@ -631,7 +685,14 @@ begin
   if JUnitOut <> '' then
     McpAddArg(Args, '--junit-out=' + JUnitOut);
   { a non-zero exit is test failures, not a tool error }
-  McpRunCapture(TestExe, Args, '', RunOut, Code, 0, '', Env);
+  GTestsLineAt := 0;
+  McpProgressSetHook(@TestsProgressLine);
+  try
+    McpRunCapture(TestExe, Args, '', RunOut, Code, 0, '', Env);
+  finally
+    McpProgressSetHook(nil);
+  end;
+  RunOut := WithoutProgressLines(RunOut);
 
   Parsed := ParseFPCUnitSummary(RunOut, Total, Errors, Failures, Ignored);
 

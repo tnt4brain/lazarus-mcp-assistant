@@ -27,6 +27,7 @@ type
     procedure TestOtherToolsAndNilAreLeftAlone;
     procedure TestNothingToTranslate;
     procedure TestFusedToolGetsItsFixedArgument;
+    procedure TestStrictModeRefusesOldNames;
     procedure TestShippedDocumentsTeachCurrentNames;
     procedure TestRenamedToolsDocListsEveryEntry;
   end;
@@ -35,6 +36,8 @@ type
   published
     procedure TestTableMatchesToolList;
     procedure TestOldCallsAnswerLikeNewOnes;
+    procedure TestToolListIsSortedAndStable;
+    procedure TestClientMetaIsDeclared;
   end;
 
 implementation
@@ -212,6 +215,47 @@ begin
   end;
 end;
 
+{ strict mode (1.9): an old name is refused with the new one, the current names pass untouched }
+procedure TTestToolAliases.TestStrictModeRefusesOldNames;
+var
+  P : TJSONObject;
+  N, E : string;
+begin
+  McpAliasSetStrict(True);
+  try
+    P := Call('{"name":"editor_open","arguments":{"file_path":"x.pas"}}', 's', N, E);
+    try
+      CheckTrue(Pos('"file_path"', E) > 0, 'names the old parameter: ' + E);
+      CheckTrue(Pos('"file"', E) > 0, 'names the new one: ' + E);
+    finally
+      P.Free;
+    end;
+    P := Call('{"name":"debug_step_into"}', 's', N, E);
+    try
+      CheckTrue(Pos('debug_step_into', E) > 0, 'names the old tool: ' + E);
+      CheckTrue(Pos('kind=', E) > 0, 'and what it became: ' + E);
+      CheckEquals('debug_step_into', P.Get('name', ''), 'the request is left as it was');
+    finally
+      P.Free;
+    end;
+    P := Call('{"name":"editor_open","arguments":{"file":"x.pas"}}', 's', N, E);
+    try
+      CheckEquals('', E, 'current names pass');
+      CheckEquals('', N, 'with no notice');
+    finally
+      P.Free;
+    end;
+  finally
+    McpAliasSetStrict(False);
+  end;
+  P := Call('{"name":"editor_open","arguments":{"file_path":"x.pas"}}', 's', N, E);
+  try
+    CheckEquals('', E, 'off again: translated');
+  finally
+    P.Free;
+  end;
+end;
+
 procedure TTestToolAliases.TestFusedToolGetsItsFixedArgument;
 var
   P : TJSONObject;
@@ -342,6 +386,73 @@ begin
 end;
 
 { ---- the table against the live tools/list ---------------------------------------------------- }
+
+{ the list comes in one order whatever the order the units start in: by name }
+procedure TTestToolAliasTable.TestToolListIsSortedAndStable;
+var
+  R1, R2 : THttpResult;
+  Root   : TJSONObject;
+  Tools  : TJSONArray;
+  I      : Integer;
+  Prev, Cur : string;
+begin
+  R1 := McpPost('{"jsonrpc":"2.0","id":9,"method":"tools/list"}');
+  R2 := McpPost('{"jsonrpc":"2.0","id":9,"method":"tools/list"}');
+  CheckEquals(R1.Body, R2.Body, 'two requests, one answer');
+  Root := TJSONObject(GetJSON(R1.Body));
+  try
+    Tools := TJSONArray(TJSONObject(Root.Find('result')).Find('tools'));
+    CheckTrue(Tools.Count > 100, 'the list is there');
+    Prev := '';
+    for I := 0 to Tools.Count - 1 do
+    begin
+      Cur := TJSONObject(Tools[I]).Get('name', '');
+      CheckTrue(CompareStr(Prev, Cur) < 0, 'sorted by name: ' + Prev + ' before ' + Cur);
+      Prev := Cur;
+    end;
+  finally
+    Root.Free;
+  end;
+end;
+
+procedure TTestToolAliasTable.TestClientMetaIsDeclared;
+var
+  R     : THttpResult;
+  Root  : TJSONObject;
+  Tools : TJSONArray;
+  I     : Integer;
+  T, M  : TJSONObject;
+  Big, Human : Integer;
+begin
+  R := McpPost('{"jsonrpc":"2.0","id":10,"method":"tools/list"}');
+  Root := TJSONObject(GetJSON(R.Body));
+  try
+    Tools := TJSONArray(TJSONObject(Root.Find('result')).Find('tools'));
+    Big := 0; Human := 0;
+    for I := 0 to Tools.Count - 1 do
+    begin
+      T := TJSONObject(Tools[I]);
+      M := TJSONObject(T.Find('_meta'));
+      if M = nil then Continue;
+      if M.IndexOfName('anthropic/maxResultSizeChars') >= 0 then
+      begin
+        Inc(Big);
+        CheckEquals(200000, M.Integers['anthropic/maxResultSizeChars'], T.Get('name', ''));
+      end;
+      if M.IndexOfName('anthropic/requiresUserInteraction') >= 0 then
+      begin
+        Inc(Human);
+        CheckEquals('git_serve', T.Get('name', ''), 'only the tool without its own consent step');
+        CheckTrue(M.Find('anthropic/requiresUserInteraction').JSONType = jtBoolean, 'the JSON Boolean true');
+        CheckTrue(M.Booleans['anthropic/requiresUserInteraction'], 'true');
+      end;
+    end;
+    CheckEquals(8, Big, 'eight tools with long answers');
+    CheckEquals(1, Human, 'one tool that always asks the person');
+  finally
+    Root.Free;
+  end;
+end;
 
 procedure TTestToolAliasTable.TestTableMatchesToolList;
 var

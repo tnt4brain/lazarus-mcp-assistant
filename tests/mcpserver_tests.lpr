@@ -17,12 +17,12 @@ uses
   SysUtils, Classes, fphttpclient,
   fpcunit, testregistry,
   consoletestrunner, fpcunitreport,
-  THttpHelper,
+  THttpHelper, McpTestListener,
   TUtils, TProtocol, TAuth, TTestInfra,
   TJUnitWriter, TProjectTools, TLauncher, TSettings, TSession, TToolSmoke,
   TConsent, TDebugger, TPackageEdit, TPackageManage, TFormUndo, TCodeComplete, TCodeFormat,
   TCodeRename, TWindows, TFindDeclaration, TGitWrite, TGitRemote, TGitHistory, TConflictFiles, TTokens, TStatus,
-  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks, TToolAliases, TWriteScope, TLimitedMode, TSelfTest, TGitServeTests, TMcpProcess;
+  TProjectGuard, TSessionLog, TToolLog, TReport, TMarkdown, TReloadFiles, TDiff, TCodeNav, TProcedures, TStatements, TStatementEdit, TCreateFile, THeapReport, TDialogHooks, TToolAliases, TWriteScope, TLimitedMode, TSelfTest, TGitServeTests, TMcpProcess, TPrivacy, TDiffEngines, TPrompts, TProgress;
 
 { ── Test runner with optional JUnit XML side-output ─────────────────────── }
 
@@ -59,6 +59,7 @@ var
   JWriter : TJUnitResultsWriter;
   JStream : TFileStream;
   Res     : TTestResult;
+  Lst     : ITestListener;
 begin
   JWriter := nil;
   JStream := nil;
@@ -67,6 +68,9 @@ begin
   try
     RWriter.FileName := FileName;
     Res.AddListener(RWriter);
+    { a line per test on standard output, for ide_run_tests (progress of the call) }
+    Lst := TMcpTestListener.Create(ATest.CountTestCases);   { held here: the result does not count it }
+    Res.AddListener(Lst);
     if FJUnitOut <> '' then
     begin
       JStream := TFileStream.Create(FJUnitOut, fmCreate);

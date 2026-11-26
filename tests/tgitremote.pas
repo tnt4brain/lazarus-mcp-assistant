@@ -24,7 +24,7 @@ unit TGitRemote;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestGitRemote = class(TTestCase)
@@ -227,7 +227,7 @@ end;
 
 procedure TTestGitRemote.TearDown;
 begin
-  DeleteDirectory(FBase, False);
+  McpDeleteTree(FBase);
 end;
 
 { The remote has trunk, as the working repository has it. }

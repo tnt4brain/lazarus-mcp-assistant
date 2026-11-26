@@ -11,7 +11,7 @@ unit TProcedures;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestProcedures = class(TTestCase)
@@ -121,7 +121,7 @@ end;
 procedure TTestProcedures.TearDown;
 begin
   CallToolText('editor_close', '{"file":' + JsonStr(FUnit) + '}', []);
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));
 end;
 

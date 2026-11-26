@@ -67,6 +67,9 @@ function  McpGateEnter(const AToolName, AClientId: string; AArgs: TJSONObject;
   out AMsg: string): Boolean;
 procedure McpGateLeave(const AToolName, AClientId: string);
 
+{ True for a tool annotated readOnlyHint (any thread). }
+function  McpToolIsReadOnly(const AToolName: string): Boolean;
+
 { ── Main thread ── }
 { Debugger session ended (from McpDebugGuard's state handler). }
 procedure McpLeaseSessionEnded;
@@ -284,6 +287,17 @@ begin
     end;
   finally
     Tools.Free;
+  end;
+end;
+
+function McpToolIsReadOnly(const AToolName: string): Boolean;
+begin
+  Lock.Enter;
+  try
+    EnsureReadOnlyListLocked;
+    Result := GReadOnly.IndexOf(AToolName) >= 0;
+  finally
+    Lock.Leave;
   end;
 end;
 

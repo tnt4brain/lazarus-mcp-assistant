@@ -12,7 +12,7 @@ unit TToolSmoke;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestToolSmoke = class(TTestCase)
@@ -21,6 +21,13 @@ type
     procedure TestResultsAreCompactJson;
     procedure TestCodeGetOutline;
     procedure TestCodeGetOutlineWholeUnit;
+    procedure TestCodeGetOutlineDirectives;
+    { directives:true, and the far corners of it: the parser is CodeTools', these tests say what we pass on }
+    procedure TestDirectivesBranchesAndActivity;
+    procedure TestDirectivesSeveralOnOneLineAndOverLines;
+    procedure TestDirectivesUnbalanced;
+    procedure TestDirectivesLineEndingsQuotesAndBytes;
+    procedure TestDirectivesHugeAndDeep;
     procedure TestCodeGetUnitInterface;
     procedure TestCodeNewFileInKnownFolder;
     procedure TestProjectCreateRefusesUnsavedEditor;
@@ -43,6 +50,9 @@ type
     procedure TestArgsValidated;
     procedure TestCodeToolsKeepDiskUntouched;
     procedure TestAddUnknownPackageRefused;
+    procedure TestEditorUndoRedo;
+    procedure TestEditorSaveAll;
+    procedure TestIdeWindows;
     procedure TestProjectListPackages;
     procedure TestDebugGetState;
   end;
@@ -151,6 +161,11 @@ begin
     CheckTrue(Pos('"line":10,"name":"Count"', T) > 0, 'property: ' + T);
     CheckTrue(Pos('"line":13,"name":"Helper"', T) > 0, 'implementation routine: ' + T);
     CheckTrue(Pos('"line":16,"name":"TShown.Bump"', T) > 0, 'method body: ' + T);
+    { each entry says which section it is in }
+    CheckTrue(Pos('"line":7,"name":"FCount","section":"interface"', T) > 0, 'section of a field: ' + T);
+    CheckTrue(Pos('"line":9,"name":"Bump","section":"interface"', T) > 0, 'section of a declaration: ' + T);
+    CheckTrue(Pos('"line":13,"name":"Helper","section":"implementation"', T) > 0, 'section of a routine: ' + T);
+    CheckTrue(Pos('"line":16,"name":"TShown.Bump","section":"implementation"', T) > 0, 'section of a body: ' + T);
     Call('editor_replace_range', '{"file":' + JsonStr(F) +
       ',"start_line":4,"start_col":1,"new_text":"// a\n// b\n"}');
     T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');
@@ -158,8 +173,232 @@ begin
   finally
     Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
-    DeleteDirectory(ExtractFileDir(F), False);
+    McpDeleteTree(ExtractFileDir(F));
   end;
+end;
+
+{ Directives: a branch that is not compiled is not in the outline (as for the compiler), and a routine
+  an include file brings in is reported with that file and its line there (it used to get a line of
+  the unit, which meant another routine). }
+procedure TTestToolSmoke.TestCodeGetOutlineDirectives;
+var
+  Dir, F, T : string;
+  SL        : TStringList;
+begin
+  Dir := GetTempDir(False) + 'mcpoutlinedir' + PathDelim;
+  ForceDirectories(Dir);
+  F  := Dir + 'dirunit.pas';
+  SL := TStringList.Create;
+  try
+    SL.Text :=
+      'unit dirunit;' + LineEnding +                        { 1 }
+      '{$mode objfpc}{$H+}' + LineEnding +                  { 2 }
+      'interface' + LineEnding +                            { 3 }
+      '{$IFDEF MCP_NEVER_DEFINED}' + LineEnding +           { 4 }
+      'procedure OnlyInInactiveBranch;' + LineEnding +      { 5 }
+      '{$ELSE}' + LineEnding +                              { 6 }
+      'procedure InActiveBranch;' + LineEnding +            { 7 }
+      '{$ENDIF}' + LineEnding +                             { 8 }
+      '{$I dirinc.inc}' + LineEnding +                      { 9 }
+      'procedure AfterTheInclude;' + LineEnding +           { 10 }
+      'implementation' + LineEnding +
+      'procedure InActiveBranch;' + LineEnding + 'begin' + LineEnding + 'end;' + LineEnding +
+      'procedure FromTheInclude;' + LineEnding + 'begin' + LineEnding + 'end;' + LineEnding +
+      'procedure AfterTheInclude;' + LineEnding + 'begin' + LineEnding + 'end;' + LineEnding +
+      'end.';
+    SL.SaveToFile(F);
+    SL.Text := LineEnding + '{ a comment line }' + LineEnding + 'procedure FromTheInclude;' + LineEnding;
+    SL.SaveToFile(Dir + 'dirinc.inc');
+  finally
+    SL.Free;
+  end;
+  try
+    T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');
+    CheckNoError(Self, 'code_get_outline', T);
+    CheckTrue(Pos('OnlyInInactiveBranch', T) = 0, 'a branch that is not compiled is not listed: ' + T);
+    CheckTrue(Pos('"line":7,"name":"InActiveBranch","section":"interface"', T) > 0, 'the branch that is: ' + T);
+    CheckTrue(Pos('"line":3,"name":"FromTheInclude","section":"interface","file":', T) > 0,
+      'a routine from the include file has its line there: ' + T);
+    CheckTrue(Pos('dirinc.inc', T) > 0, 'and names that file: ' + T);
+    CheckTrue(Pos('"line":10,"name":"AfterTheInclude","section":"interface"', T) > 0,
+      'what follows the include is in the unit again: ' + T);
+  finally
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    McpDeleteTree(Dir);
+  end;
+end;
+
+{ ── directives:true ─────────────────────────────────────────────────────── }
+
+var
+  NastyCount: Integer = 0;
+
+{ Writes ASource exactly as it is (a string list would change the line endings) and returns the
+  outline with directives. }
+function DirectiveOutline(const ASource: string): string;
+var
+  Dir, F : string;
+  FS     : TFileStream;
+begin
+  { a new folder and name each time: CodeTools keeps the buffer of a path it has seen }
+  Inc(NastyCount);
+  Dir := GetTempDir(False) + 'mcpdirnasty' + IntToStr(NastyCount) + '_' + IntToStr(GetTickCount64) + PathDelim;
+  ForceDirectories(Dir);
+  F  := Dir + 'nasty.pas';
+  FS := TFileStream.Create(F, fmCreate);
+  try
+    if Length(ASource) > 0 then FS.WriteBuffer(ASource[1], Length(ASource));
+  finally
+    FS.Free;
+  end;
+  try
+    Result := Call('code_get_outline', '{"file":' + JsonStr(F) + ',"directives":true}');
+  finally
+    Call('editor_close', '{"file":' + JsonStr(F) + '}');
+    McpDeleteTree(Dir);
+  end;
+end;
+
+function CountOf(const ASub, AText: string): Integer;
+var
+  P : Integer;
+begin
+  Result := 0;
+  P := Pos(ASub, AText);
+  while P > 0 do
+  begin
+    Inc(Result);
+    P := Pos(ASub, AText, P + Length(ASub));
+  end;
+end;
+
+procedure TTestToolSmoke.TestDirectivesBranchesAndActivity;
+var
+  T : string;
+begin
+  T := DirectiveOutline(
+    'unit nasty;' + #10 +                         { 1 }
+    '{$mode objfpc}' + #10 +                      { 2 }
+    'interface' + #10 +                           { 3 }
+    '{$IFDEF MCP_NEVER_DEFINED}' + #10 +          { 4 }
+    'procedure Hidden;' + #10 +                   { 5 }
+    '{$ELSE}' + #10 +                             { 6 }
+    'procedure Shown;' + #10 +                    { 7 }
+    '{$ENDIF}' + #10 +                            { 8 }
+    '{$DEFINE LOCAL}' + #10 +                     { 9 }
+    '{$UNDEF LOCAL}' + #10 +                      { 10 }
+    'implementation' + #10 +
+    'procedure Shown; begin end;' + #10 +
+    'end.');
+  CheckNoError(Self, 'code_get_outline', T);
+  CheckTrue(Pos('"line":4,"name":"IFDEF MCP_NEVER_DEFINED","to":5,"active":false', T) > 0, 'the inactive branch: ' + T);
+  CheckTrue(Pos('"line":6,"name":"ELSE","to":7,"active":true', T) > 0, 'the active one: ' + T);
+  CheckTrue(Pos('"line":8,"name":"ENDIF"', T) > 0, 'the end: ' + T);
+  CheckTrue(Pos('"line":9,"name":"DEFINE LOCAL"', T) > 0, 'define: ' + T);
+  CheckTrue(Pos('"line":10,"name":"UNDEF LOCAL"', T) > 0, 'undef: ' + T);
+  CheckTrue(Pos('Hidden', T) = 0, 'code of a branch that is not compiled is not listed: ' + T);
+  CheckTrue(Pos('"mode', LowerCase(T)) = 0, 'a switch like mode is not a directive entry: ' + T);
+  { the directives are among the entries, in the order of the source }
+  CheckTrue(Pos('"name":"ELSE"', T) < Pos('"name":"Shown"', T), 'in line order: ' + T);
+end;
+
+procedure TTestToolSmoke.TestDirectivesSeveralOnOneLineAndOverLines;
+var
+  T : string;
+begin
+  T := DirectiveOutline(
+    'unit nasty;' + #10 +                                        { 1 }
+    'interface' + #10 +                                          { 2 }
+    '{$IFDEF A}{$IFDEF B}procedure P;{$ENDIF}{$ENDIF}' + #10 +   { 3 }
+    '{$IF defined(A) and' + #10 +                                { 4 }
+    '      defined(B)}' + #10 +                                  { 5 }
+    'procedure Q;' + #10 +                                       { 6 }
+    '{$ENDIF}' + #10 +                                           { 7 }
+    'implementation' + #10 + 'end.');
+  CheckNoError(Self, 'code_get_outline', T);
+  CheckEquals(2, CountOf('"line":3,"name":"IFDEF', T), 'two directives on line 3: ' + T);
+  CheckTrue(Pos('"line":3,"name":"IFDEF A","to":3', T) > 0, 'a branch that ends on its own line: ' + T);
+  CheckTrue(Pos('"line":4,"name":"IF defined(A) and       defined(B)","to":6', T) > 0,
+    'a directive over two lines is one line of text: ' + T);
+  CheckTrue(Pos('"line":7,"name":"ENDIF"', T) > 0, 'what follows is on the right line: ' + T);
+end;
+
+{ Unbalanced directives: CodeTools' scanner and directive parser decide, as they do for the IDE.  We
+  pass on what they say: a parse error of the tool, or the outline with a directive_error entry.
+  What must never happen: a hang, a crash, or an empty answer. }
+procedure TTestToolSmoke.TestDirectivesUnbalanced;
+  procedure Sane(const AWhat, T: string);
+  begin
+    CheckTrue((Pos('TOOL ERROR', T) > 0) or (Pos('directive_error', T) > 0) or (Pos('"kind":"directive"', T) > 0),
+      AWhat + ': ' + T);
+  end;
+begin
+  Sane('an IF never closed', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '{$IFDEF A}' + #10 +
+    'procedure P;' + #10 + 'implementation' + #10 + 'end.'));
+  Sane('an ENDIF without an IF', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.'));
+  Sane('an ELSE without an IF', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '{$ELSE}' + #10 +
+    'implementation' + #10 + 'end.'));
+  { after "end." CodeTools reads nothing: an empty outline is its answer }
+  CheckTrue(DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 +
+    'implementation' + #10 + 'end.' + #10 + '{$IFDEF X') <> '', 'a directive comment never closed');
+  Sane('a directive comment never closed before the end', DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 +
+    '{$IFDEF X' + #10 + 'implementation' + #10 + 'end.'));
+end;
+
+{ CR LF, a bare CR, quotes and apostrophes, UTF-8 and stray bytes }
+procedure TTestToolSmoke.TestDirectivesLineEndingsQuotesAndBytes;
+var
+  T : string;
+begin
+  T := DirectiveOutline('unit nasty;' + #13 + 'interface' + #13 + '{$IFDEF A}' + #13 + 'implementation' + #13 + '{$ENDIF}' + #13 + 'end.');
+  CheckTrue(Pos('"line":3,"name":"IFDEF A"', T) > 0, 'a file of bare CRs: ' + T);
+  T := DirectiveOutline('unit nasty;' + #13#10 + 'interface' + #13#10 + '{$IFDEF A}' + #13#10 + '{$ENDIF}' + #13#10 +
+    'implementation' + #13#10 + 'end.');
+  CheckTrue(Pos('"line":3,"name":"IFDEF A"', T) > 0, 'CR LF: ' + T);
+  T := DirectiveOutline(
+    'unit nasty;' + #10 +                                        { 1 }
+    'interface' + #10 +                                          { 2 }
+    'const S = ''it''''s {$IFDEF Fake} here'';' + #10 +          { 3 }
+    '{ it''s a comment }' + #10 +                                { 4 }
+    '// don''t {$IFDEF AlsoFake}' + #10 +                        { 5 }
+    '(* isn''t {$IFDEF StillFake} *)' + #10 +                    { 6 }
+    '{ ' + #$D0#$9F#$D1#$80#$D0#$B8#$D0#$B2#$D0#$B5#$D1#$82 + ' }' + #10 +   { 7 }
+    '{$IFDEF Real}' + #10 + '{$ENDIF}' + #10 +                   { 8, 9 }
+    'implementation' + #10 + 'end.');
+  CheckTrue(Pos('Fake', T) = 0, 'a directive inside a string or a comment is none: ' + T);
+  CheckTrue(Pos('"line":8,"name":"IFDEF Real"', T) > 0, 'the real one after all that: ' + T);
+  { a stray high byte is text; a NUL ends the source for CodeTools (FF FE looks like a UTF-16 BOM to
+    it): in each case an answer comes, error or not }
+  T := DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '// ' + #$80 + #10 + '{$IFDEF A}{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.');
+  CheckTrue(T <> '', 'a stray byte in a comment');
+  T := DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '// ' + #255#254 + #10 + '{$IFDEF A}{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.');
+  CheckTrue(T <> '', 'FF FE in a comment');
+  T := DirectiveOutline('unit nasty;' + #10 + 'interface' + #10 + '// ' + #0 + #10 + '{$IFDEF A}{$ENDIF}' + #10 +
+    'implementation' + #10 + 'end.');
+  CheckTrue(T <> '', 'a NUL byte');
+end;
+
+{ thousands of directives and a deep nesting: no recursion that runs out, no minutes }
+procedure TTestToolSmoke.TestDirectivesHugeAndDeep;
+var
+  S, T : string;
+  I    : Integer;
+  T0   : QWord;
+begin
+  S := 'unit nasty;' + #10 + 'interface' + #10;
+  for I := 1 to 3000 do
+    S := S + '{$IFDEF D' + IntToStr(I) + '}' + #10 + '// filler' + #10 + '{$ENDIF}' + #10;
+  for I := 1 to 500 do S := S + '{$IFDEF N' + IntToStr(I) + '}' + #10;
+  for I := 1 to 500 do S := S + '{$ENDIF}' + #10;
+  S := S + 'implementation' + #10 + 'end.';
+  T0 := GetTickCount64;
+  T := DirectiveOutline(S);
+  CheckTrue(GetTickCount64 - T0 < 20000, 'took ' + IntToStr(GetTickCount64 - T0) + ' ms');
+  CheckEquals(7000, CountOf('"kind":"directive"', T), 'every directive is there (3000 pairs and 500 nested)');
+  CheckEquals(0, CountOf('directive_error', T), 'no error: ' + Copy(T, 1, 200));
 end;
 
 procedure TTestToolSmoke.TestCodeGetUnitInterface;
@@ -358,7 +597,7 @@ var
   SL        : TStringList;
 begin
   Dir := GetTempDir(False) + 'mcpgitcommit';
-  DeleteDirectory(Dir, False);
+  McpDeleteTree(Dir);
   ForceDirectories(Dir);
   try
     if not RunCommandInDir(Dir, 'git', ['init', '-q'], O, [poNoConsole], swoHide) then
@@ -381,7 +620,7 @@ begin
     RunCommandInDir(Dir, 'git', ['log', '-1', '--format=%B'], O, [poNoConsole], swoHide);
     CheckEquals(Msg, TrimRight(AdjustLineBreaks(O, tlbsLF)), 'message kept whole');
   finally
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -421,7 +660,7 @@ begin
   finally
     Call('editor_revert', '{"file":' + JsonStr(F) + '}');
     Call('editor_close', '{"file":' + JsonStr(F) + '}');
-    DeleteDirectory(Dir, False);
+    McpDeleteTree(Dir);
   end;
 end;
 
@@ -763,6 +1002,144 @@ begin
       Call('editor_close', '{"file":' + JsonStr(F) + '}');
       DeleteFile(F);
       RemoveDir(ExtractFileDir(F));
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
+{ ide_list_windows names the windows of the IDE, ide_get_window reads one; an id that is not a window
+  is refused }
+procedure TTestToolSmoke.TestIdeWindows;
+var
+  T, Id : string;
+  P     : Integer;
+begin
+  T := Call('ide_list_windows', '{}');
+  CheckTrue(Pos('TOOL ERROR', T) <> 1, 'listed: ' + T);
+  CheckTrue(Pos('"kind":"ide"', T) > 0, 'the main window of the IDE is in the list: ' + T);
+  P := Pos('"id":"', T);
+  CheckTrue(P > 0, 'every window has an id: ' + T);
+  Id := Copy(T, P + 6, Pos('"', Copy(T, P + 6, 40)) - 1);
+  T := Call('ide_get_window', '{"id":' + JsonStr(Id) + ',"max_chars":50}');
+  CheckTrue(Pos('TOOL ERROR', T) <> 1, 'read: ' + T);
+  CheckTrue(Pos('"text_parts"', T) > 0, 'the answer has its text parts: ' + T);
+  T := Call('ide_get_window', '{"id":"w1"}');
+  CheckTrue(Pos('TOOL ERROR', T) = 1, 'an id that is no window is refused: ' + T);
+  CheckTrue(Pos('No window', T) > 0, 'and says why: ' + T);
+end;
+
+{ editor_undo and editor_redo walk the editor's own stack: one tool edit is one step; to_saved goes
+  back to the file on disk; a file that is not open is refused, nothing is opened }
+procedure TTestToolSmoke.TestEditorUndoRedo;
+var
+  F, T : string;
+  SL   : TStringList;
+begin
+  F  := GetTempDir(False) + 'mcpundo' + PathDelim + 'undo.pas';
+  ForceDirectories(ExtractFileDir(F));
+  SL := TStringList.Create;
+  try
+    SL.Text := 'unit undo;' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+               'interface' + LineEnding + 'implementation' + LineEnding + 'end.' + LineEnding;
+    SL.SaveToFile(F);
+    try
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('TOOL ERROR', T) = 1, 'not open: refused: ' + T);
+      CheckTrue(Pos('not open', T) > 0, 'says why: ' + T);
+      CheckTrue(Pos('undo.pas', Call('editor_list_open', '{}')) = 0, 'nothing was opened');
+
+      Call('editor_open', '{"file":' + JsonStr(F) + '}');
+      Call('editor_edit_text', '{"file":' + JsonStr(F) +
+           ',"old_text":"interface","new_text":"// one\ninterface"}');
+      Call('editor_edit_text', '{"file":' + JsonStr(F) +
+           ',"old_text":"implementation","new_text":"// two\nimplementation"}');
+
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + '}');
+      CheckNoError(Self, 'editor_undo', T);
+      CheckTrue(Pos('"steps":1', T) > 0, 'one step: ' + T);
+      CheckTrue(Pos('"can_redo":true', T) > 0, 'can redo: ' + T);
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue((Pos('// two', T) = 0) and (Pos('// one', T) > 0), 'only the last edit is undone: ' + T);
+
+      T := Call('editor_redo', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('"steps":1', T) > 0, 'redo took a step: ' + T);
+      CheckTrue(Pos('"can_redo":false', T) > 0, 'nothing more to redo: ' + T);
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('// two', T) > 0, 'redone: ' + T);
+
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + ',"to_saved":true}');
+      CheckTrue(Pos('"steps":2', T) > 0, 'two steps back to the saved file: ' + T);
+      CheckTrue(Pos('"modified":false', T) > 0, 'not modified any more: ' + T);
+      T := Call('editor_read_file', '{"file":' + JsonStr(F) + '}');
+      CheckTrue((Pos('// one', T) = 0) and (Pos('// two', T) = 0), 'both edits gone: ' + T);
+
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + '}');
+      CheckTrue(Pos('"steps":0', T) > 0, 'nothing left to undo: ' + T);
+      T := Call('editor_undo', '{"file":' + JsonStr(F) + ',"steps":0}');
+      CheckTrue(Pos('TOOL ERROR', T) = 1, 'steps 0 refused: ' + T);
+    finally
+      Call('editor_revert', '{"file":' + JsonStr(F) + '}');
+      Call('editor_close', '{"file":' + JsonStr(F) + '}');
+      DeleteFile(F);
+      RemoveDir(ExtractFileDir(F));
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
+{ editor_save all writes every modified editor (it would also write any other unsaved buffer
+  of the IDE under test, which is the point of the tool) }
+procedure TTestToolSmoke.TestEditorSaveAll;
+var
+  Dir, A, B, T : string;
+  SL           : TStringList;
+  procedure Make(const AFile: string);
+  begin
+    SL.Text := 'unit x;' + LineEnding + 'interface' + LineEnding + 'implementation' + LineEnding +
+               'end.' + LineEnding;
+    SL.SaveToFile(AFile);
+  end;
+  function OnDisk(const AFile: string): string;
+  begin
+    SL.LoadFromFile(AFile);
+    Result := SL.Text;
+  end;
+begin
+  Dir := GetTempDir(False) + 'mcpsaveall' + PathDelim;
+  A := Dir + 'a.pas';
+  B := Dir + 'b.pas';
+  ForceDirectories(Dir);
+  SL := TStringList.Create;
+  try
+    Make(A); Make(B);
+    try
+      Call('editor_open', '{"file":' + JsonStr(A) + '}');
+      Call('editor_open', '{"file":' + JsonStr(B) + '}');
+      Call('editor_edit_text', '{"file":' + JsonStr(A) + ',"old_text":"interface","new_text":"// in a\ninterface"}');
+      Call('editor_edit_text', '{"file":' + JsonStr(B) + ',"old_text":"interface","new_text":"// in b\ninterface"}');
+      CheckTrue(Pos('// in a', OnDisk(A)) = 0, 'not written yet');
+
+      T := Call('editor_save', '{"all":true,"file":' + JsonStr(A) + '}');
+      CheckTrue(Pos('TOOL ERROR', T) = 1, 'file and all together are refused: ' + T);
+      CheckTrue(Pos('// in a', OnDisk(A)) = 0, 'and nothing was written');
+
+      T := Call('editor_save', '{"all":true}');
+      CheckNoError(Self, 'editor_save', T);
+      CheckTrue(Pos('a.pas', T) > 0, 'a is listed: ' + T);
+      CheckTrue(Pos('b.pas', T) > 0, 'b is listed: ' + T);
+      CheckTrue(Pos('"failed":[]', T) > 0, 'nothing failed: ' + T);
+      CheckTrue(Pos('// in a', OnDisk(A)) > 0, 'a is on disk');
+      CheckTrue(Pos('// in b', OnDisk(B)) > 0, 'b is on disk');
+
+      T := Call('editor_save', '{"all":true}');
+      CheckTrue(Pos('"saved_count":0', T) > 0, 'a second call has nothing to do: ' + T);
+    finally
+      Call('editor_close', '{"file":' + JsonStr(A) + '}');
+      Call('editor_close', '{"file":' + JsonStr(B) + '}');
+      DeleteFile(A); DeleteFile(B);
+      RemoveDir(Dir);
     end;
   finally
     SL.Free;

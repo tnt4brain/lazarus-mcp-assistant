@@ -30,6 +30,7 @@ type
     FWinTerminalCustom: string;     { Windows custom: exe plus argument template }
     FGitPath: string;               { '' = git on PATH }
     FAllowPackageInstall: Boolean;  { assistants may install new packages (ADR-013) }
+    FAliasStrict: Boolean;          { old tool and parameter names are refused (ADR-031) }
     FMarkdownZoom: Integer;         { Markdown view: points added to the default text size (Ctrl+wheel) }
     FToolCallLog: Boolean;          { mcp-tools.log, one record per tool call (ADR-022) }
     FToolLogFile: string;           { where that file is; '' = in the Lazarus config folder }
@@ -67,6 +68,7 @@ type
     property WinTerminalCustom: string read FWinTerminalCustom write FWinTerminalCustom;
     property GitPath: string read FGitPath write FGitPath;
     property AllowPackageInstall: Boolean read FAllowPackageInstall write FAllowPackageInstall;
+    property AliasStrict: Boolean read FAliasStrict write FAliasStrict;
     { the zoom the Markdown view last had, as points above its default size; new tabs start there }
     property MarkdownZoom: Integer read FMarkdownZoom write FMarkdownZoom;
     property ToolCallLog: Boolean read FToolCallLog write FToolCallLog;
@@ -117,6 +119,7 @@ begin
   FWinTerminalCustom   := '';
   FGitPath             := '';
   FAllowPackageInstall := False;
+  FAliasStrict := False;
   FMarkdownZoom        := 0;
   FToolCallLog         := False;
   FToolLogFile         := '';
@@ -255,6 +258,7 @@ begin
     FWinTerminalCustom := FXmlConfig.GetValue('Claude/WinTerminalCustom', '');
     FGitPath          := FXmlConfig.GetValue('Tools/GitPath', '');
     FAllowPackageInstall := FXmlConfig.GetValue('Security/AllowPackageInstall', False);
+    FAliasStrict         := FXmlConfig.GetValue('Tools/AliasStrict', False);
     FMarkdownZoom        := FXmlConfig.GetValue('Markdown/Zoom', 0);
     { the logging section; the file switch was Tools/ToolCallLog before 1.2 }
     FToolCallLog         := FXmlConfig.GetValue('Logging/ToolCallLog',
@@ -287,6 +291,7 @@ begin
     FXmlConfig.SetValue('Claude/WinTerminalCustom', FWinTerminalCustom);
     FXmlConfig.SetValue('Tools/GitPath',           FGitPath);
     FXmlConfig.SetValue('Security/AllowPackageInstall', FAllowPackageInstall);
+    FXmlConfig.SetValue('Tools/AliasStrict',       FAliasStrict);
     FXmlConfig.SetValue('Markdown/Zoom',           FMarkdownZoom);
     FXmlConfig.SetValue('Logging/ToolCallLog',     FToolCallLog);
     FXmlConfig.SetValue('Logging/ToolCallLogFile', FToolLogFile);

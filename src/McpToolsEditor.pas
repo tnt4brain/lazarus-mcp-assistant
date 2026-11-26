@@ -15,6 +15,7 @@ implementation
 uses
   Classes, SysUtils, StrUtils,
   LazIDEIntf, SrcEditorIntf, ProjectIntf, LazFileUtils, Controls,
+  SynEdit,
   fpjson,
   PackageIntf, PackageDefs,
   McpToolContext, McpToolHelpers, McpToolsPackages, McpUtils, McpLimitedMode;
@@ -78,7 +79,9 @@ const
 
   SCHEMA_SAVE_FILE =
     '{"type":"object","properties":{' +
-    '"file":{"type":"string","description":"Absolute path of the file to save; omit to save the active editor"}}}';
+    '"file":{"type":"string","description":"Absolute path of the file to save; omit to save the active editor"},' +
+    '"all":{"type":"boolean","description":"Save every editor that has unsaved changes (a form unit ' +
+    'writes its .lfm too); not together with file. Editors of files never saved to disk are skipped and listed"}}}';
 
   SCHEMA_CLOSE_FILE =
     '{"type":"object","properties":{' +
@@ -87,6 +90,16 @@ const
   SCHEMA_REVERT_FILE =
     '{"type":"object","properties":{' +
     '"file":{"type":"string","description":"Absolute path of the file to revert; omit to revert the active editor"}}}';
+
+  SCHEMA_UNDO_REDO =
+    '{"type":"object","properties":{' +
+    '"file":{"type":"string","description":"Absolute path of an open file; omit to use the active editor"},' +
+    '"steps":{"type":"integer","description":"How many undo steps to take (default 1, at most 1000)"},' +
+    '"to_saved":{"type":"boolean","description":"editor_undo only: undo until the buffer matches ' +
+    'the saved file again (or nothing is left to undo); steps is ignored"}}}';
+
+  { most steps one undo or redo call takes }
+  UNDO_CAP = 1000;
 
   SCHEMA_OPEN_FILE =
     '{"type":"object","properties":{' +
@@ -110,7 +123,7 @@ procedure DoCreateFile(var Ctx: TMcpToolCall);
 var
   FilePath, Text, Err : string;
   Overwrite, DoOpen, Existed : Boolean;
-  FS    : TFileStream;
+  WriteErr : string;
   Obj   : TJSONObject;
 begin
   if not Assigned(Ctx.Params) or (Ctx.Params.Get('file', '') = '') then
@@ -165,11 +178,10 @@ begin
     begin
       Ctx.Error := True; Ctx.Result := 'Could not create the folder of ' + FilePath; Exit;
     end;
-    FS := TFileStream.Create(FilePath, fmCreate);
-    try
-      if Length(Text) > 0 then FS.WriteBuffer(Text[1], Length(Text));
-    finally
-      FS.Free;
+    { a file that is replaced is never seen half written }
+    if not McpWriteFileAtomic(FilePath, Text, WriteErr) then
+    begin
+      Ctx.Error := True; Ctx.Result := 'Could not write ' + FilePath + ': ' + WriteErr; Exit;
     end;
   except
     on E: Exception do
@@ -194,6 +206,129 @@ begin
 end;
 
 { ── Dispatch ─────────────────────────────────────────────────────────────── }
+
+{ editor_undo / editor_redo: the editor's own undo stack, the one Ctrl+Z uses, so one step is one
+  Ctrl+Z.  The file must be open (nothing is opened or created); an edit made by a tool and one
+  made by hand sit on the same stack. }
+{ editor_save with all: every editor with unsaved changes, one by one, through the IDE's own save
+  (a form unit writes its .lfm).  A file that was never written has no name to save under and
+  would make the IDE ask for one, so it is skipped and listed. }
+procedure DoSaveAll(var Ctx: TMcpToolCall);
+var
+  I       : Integer;
+  Ed      : TSourceEditorInterface;
+  Names   : TStringList;
+  Saved, Failed, Skipped : TJSONArray;
+  Obj     : TJSONObject;
+begin
+  Names   := TStringList.Create;
+  Saved   := TJSONArray.Create;
+  Failed  := TJSONArray.Create;
+  Skipped := TJSONArray.Create;
+  try
+    for I := 0 to SourceEditorManagerIntf.UniqueSourceEditorCount - 1 do
+    begin
+      Ed := SourceEditorManagerIntf.UniqueSourceEditors[I];
+      if Ed.Modified then Names.Add(Ed.FileName);
+    end;
+    for I := 0 to Names.Count - 1 do
+    begin
+      if not FileExists(Names[I]) then
+      begin
+        Skipped.Add(Names[I]);
+        Continue;
+      end;
+      Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(Names[I]);
+      if Assigned(Ed) and (LazarusIDE.DoSaveEditorFile(Ed, []) = mrOK) then
+        Saved.Add(Names[I])
+      else
+        Failed.Add(Names[I]);
+    end;
+    Obj := TJSONObject.Create;
+    try
+      Obj.Add('saved_count', Saved.Count);
+      Obj.Add('saved', Saved);       Saved := nil;
+      Obj.Add('failed', Failed);     Failed := nil;
+      Obj.Add('skipped', Skipped);   Skipped := nil;
+      Ctx.Error := TJSONArray(Obj.Find('failed')).Count > 0;
+      Ctx.Result := Obj.AsJSON;
+    finally
+      Obj.Free;
+    end;
+  finally
+    Names.Free;
+    Saved.Free; Failed.Free; Skipped.Free;     { nil after they went into Obj }
+  end;
+end;
+
+procedure DoUndoRedo(var Ctx: TMcpToolCall; ARedo: Boolean);
+var
+  Ed    : TSourceEditorInterface;
+  Syn   : TCustomSynEdit;
+  Path  : string;
+  Steps : Integer;
+  Done  : Integer;
+  ToSaved: Boolean;
+  Obj   : TJSONObject;
+begin
+  Path := '';
+  Steps := 1;
+  ToSaved := False;
+  if Assigned(Ctx.Params) then
+  begin
+    Path    := Ctx.Params.Get('file', '');
+    Steps   := Ctx.Params.Get('steps', 1);
+    ToSaved := (not ARedo) and Ctx.Params.Get('to_saved', False);
+  end;
+  if (Steps < 1) or (Steps > UNDO_CAP) then
+  begin
+    Ctx.Error := True;
+    Ctx.Result := 'steps must be between 1 and ' + IntToStr(UNDO_CAP);
+    Exit;
+  end;
+  if Path = '' then
+    Ed := SourceEditorManagerIntf.ActiveEditor
+  else
+    Ed := SourceEditorManagerIntf.SourceEditorIntfWithFilename(Path);
+  if Ed = nil then
+  begin
+    Ctx.Error := True;
+    if Path = '' then Ctx.Result := 'No active editor'
+    else Ctx.Result := 'The file is not open in the editor: ' + Path;
+    Exit;
+  end;
+  if not (Ed.EditorControl is TCustomSynEdit) then
+  begin
+    Ctx.Error := True; Ctx.Result := 'The editor has no undo stack: ' + Ed.FileName; Exit;
+  end;
+  Syn := TCustomSynEdit(Ed.EditorControl);
+  Done := 0;
+  if ToSaved then
+  begin
+    while Syn.CanUndo and Ed.Modified and (Done < UNDO_CAP) do
+    begin
+      Syn.Undo;
+      Inc(Done);
+    end;
+  end
+  else
+    while (Done < Steps) and ((ARedo and Syn.CanRedo) or (not ARedo and Syn.CanUndo)) do
+    begin
+      if ARedo then Syn.Redo else Syn.Undo;
+      Inc(Done);
+    end;
+  Obj := TJSONObject.Create;
+  try
+    Obj.Add('file',     Ed.FileName);
+    Obj.Add('steps',    Done);
+    Obj.Add('can_undo', Syn.CanUndo);
+    Obj.Add('can_redo', Syn.CanRedo);
+    Obj.Add('modified', Ed.Modified);
+    Ctx.Result := Obj.AsJSON;
+  finally
+    Obj.Free;
+  end;
+end;
 
 function DispatchEditorTool(const Name: string; var Ctx: TMcpToolCall): Boolean;
 var
@@ -695,6 +830,15 @@ begin
     'editor_save':
     begin
       Result := True;
+      if Assigned(Ctx.Params) and Ctx.Params.Get('all', False) then
+      begin
+        if Ctx.Params.Get('file', '') <> '' then
+        begin
+          Ctx.Error := True; Ctx.Result := 'Give either file or all, not both'; Exit;
+        end;
+        DoSaveAll(Ctx);
+        Exit;
+      end;
       SyncFilePath := '';
       if Assigned(Ctx.Params) then
         SyncFilePath := Ctx.Params.Get('file', '');
@@ -802,6 +946,12 @@ begin
       end;
     end;
 
+    'editor_undo', 'editor_redo':
+    begin
+      Result := True;
+      DoUndoRedo(Ctx, Name = 'editor_redo');
+    end;
+
     'editor_create_file':
     begin
       Result := True;
@@ -881,7 +1031,8 @@ begin
     'temp folder; anything else is refused.',
     SCHEMA_EDIT_TEXT, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_save',
-    'Save the editor buffer to disk. Omit file to save the active editor.',
+    'Save the editor buffer to disk. Omit file to save the active editor, or pass all=true to ' +
+    'save every editor with unsaved changes (the compiler sees only saved files).',
     SCHEMA_SAVE_FILE, MCP_ANN_WRITE_IDEM));
   Tools.Add(MakeTool('editor_close',
     'Close an editor tab. Omit file to close the active editor. ' +
@@ -891,6 +1042,16 @@ begin
     'Discard unsaved editor changes and reload the file from disk. ' +
     'Omit file to revert the active editor.',
     SCHEMA_REVERT_FILE, MCP_ANN_DEST_IDEM));
+  Tools.Add(MakeTool('editor_undo',
+    'Undo in the editor of an open file, the same stack as Ctrl+Z (one step is one Ctrl+Z), also ' +
+    'for edits made by tools. steps (default 1) or to_saved: undo until the buffer matches the ' +
+    'saved file. Returns steps taken, can_undo, can_redo, modified. editor_revert reloads the ' +
+    'file from disk instead.',
+    SCHEMA_UNDO_REDO, MCP_ANN_DEST));
+  Tools.Add(MakeTool('editor_redo',
+    'Redo what editor_undo or Ctrl+Z took back, in the editor of an open file. steps (default 1). ' +
+    'Returns steps taken, can_undo, can_redo, modified.',
+    SCHEMA_UNDO_REDO, MCP_ANN_WRITE));
   Tools.Add(MakeTool('editor_create_file',
     'Create a new text file with the given content, on the machine the IDE runs on, and open it ' +
     'in the editor. Allowed inside the project directory, the folder of a loaded package and the ' +

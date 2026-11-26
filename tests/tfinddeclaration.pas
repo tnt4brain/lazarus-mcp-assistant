@@ -11,7 +11,7 @@ unit TFindDeclaration;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestFindDeclaration = class(TTestCase)
@@ -33,10 +33,14 @@ type
     procedure TestAlsoSameFolder;
     procedure TestSearchDirAndLimit;
     procedure TestAlsoUnknownScope;
+    procedure TestIdentifierInfoHasDeclaration;
+    procedure TestSearchTimeLimit;
+    procedure TestBrokenFileIsListed;
     procedure TestAddToClassIndent;
     procedure TestAddToClassPublishedAfterImplicit;
     procedure TestRevertOfAMissingFile;
     procedure TestAddUsesFileNotOpen;
+    procedure TestAddUsesImplementationOnAFreshFile;
     procedure TestAddUsesMovedFromImplementation;
   end;
 
@@ -133,7 +137,7 @@ end;
 
 procedure TTestFindDeclaration.TearDown;
 begin
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));
 end;
 
@@ -289,6 +293,73 @@ begin
     ',"line":5,"col":3,"also":["moon"]}', []);
   CheckTrue(IsError(T) and (Pos('Unknown "also" scope moon', T) > 0), T);
 end;
+{ THelper at line 11 of user.pas: the hint, the line, and the declaration in helperu.pas }
+procedure TTestFindDeclaration.TestIdentifierInfoHasDeclaration;
+var
+  T : string;
+  D : TJSONData;
+  O, Decl : TJSONObject;
+begin
+  T := CallToolText('code_get_identifier_info',
+    '{"file":' + JsonStr(FDir + 'user.pas') + ',"line":11,"col":7}', []);
+  CheckFalse(IsError(T), T);
+  D := GetJSON(T);
+  try
+    O := TJSONObject(D);
+    CheckTrue(O.Get('hint', '') <> '', 'a hint: ' + T);
+    CheckTrue(Pos('THelper', O.Get('line_text', '')) > 0, 'the line: ' + T);
+    Decl := O.Find('declaration') as TJSONObject;
+    CheckTrue(Decl <> nil, 'a declaration: ' + T);
+    CheckEquals('helperu.pas', ExtractFileName(Decl.Get('file', '')), T);
+    CheckEquals(5, Decl.Get('line', 0), T);
+    CheckTrue(Pos('5:   THelper = class', Decl.Get('snippet', '')) > 0, 'numbered lines: ' + T);
+  finally
+    D.Free;
+  end;
+  T := CallToolText('code_get_identifier_info',
+    '{"file":' + JsonStr(FDir + 'user.pas') + ',"line":6,"col":1}', []);
+  CheckFalse(IsError(T), 'a keyword has no declaration, and that is no error: ' + T);
+  CheckTrue(Pos('"declaration"', T) = 0, 'none: ' + T);
+end;
+
+{ a search over more files than one CodeTools call takes stops when the time is up, and says so }
+procedure TTestFindDeclaration.TestSearchTimeLimit;
+var
+  T, Base, Sub : string;
+  I            : Integer;
+begin
+  Sub := FDir;       { next to helperu.pas, or "uses helperu" does not resolve }
+  for I := 1 to 80 do
+    Save(Sub + 'm' + IntToStr(I) + '.pas',
+      'unit m' + IntToStr(I) + ';' + LineEnding + '{$mode objfpc}{$H+}' + LineEnding +
+      'interface' + LineEnding + 'uses helperu;' + LineEnding + 'var H: THelper;' + LineEnding +
+      'implementation' + LineEnding + 'end.' + LineEnding);
+  Base := '{"file":' + JsonStr(FDir + 'helperu.pas') + ',"line":5,"col":3,"search_dir":' +
+          JsonStr(ExcludeTrailingPathDelimiter(Sub));
+  T := CallToolText('code_find_references', Base + ',"max_seconds":0.001}', []);
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"truncated":true', T) > 0, 'cut short: ' + T);
+  CheckTrue(Pos('"files_not_searched"', T) > 0, 'says how many were left: ' + T);
+  T := CallToolText('code_find_references', Base + ',"max_seconds":0}', []);
+  CheckFalse(IsError(T), T);
+  CheckTrue(Pos('"files_not_searched"', T) = 0, 'no limit, nothing left: ' + T);
+  CheckTrue(Pos('m80.pas', FilesOf(T)) > 0, 'the last file was searched: ' + T);
+end;
+
+{ a file CodeTools cannot parse does not fail the whole search: it is listed }
+procedure TTestFindDeclaration.TestBrokenFileIsListed;
+var
+  T, Base : string;
+begin
+  Save(FDir + 'broken.pas',
+    'unit broken;' + LineEnding + 'interface' + LineEnding + 'uses helperu;' + LineEnding +
+    'var H: THelper; begin begin begin' + LineEnding);   { no end, not a unit }
+  Base := '{"file":' + JsonStr(FDir + 'helperu.pas') + ',"line":5,"col":3,"also":["same_folder"]}';
+  T := CallToolText('code_find_references', Base, []);
+  CheckFalse(IsError(T), 'the search still answers: ' + T);
+  CheckTrue(Pos('user.pas', FilesOf(T)) > 0, 'the good files are searched: ' + T);
+end;
+
 { code_add_to_class indents the new member like the ones around it. }
 procedure TTestFindDeclaration.TestAddToClassIndent;
 var
@@ -449,6 +520,36 @@ begin
     Text := ReadLf(Src);
     CheckTrue(Pos('Contnrs', Text) > 0, 'and the implementation one: ' + Text);
     CheckEquals(1, CountOf('interface', Text), 'the file is otherwise as it was: ' + Text);
+  finally
+    CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
+    CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);
+  end;
+end;
+
+{ 1.9.0: the implementation uses as the FIRST call on a file CodeTools has not parsed yet used to end
+  in an access violation (it asked for the source type of a tree it had not built) }
+procedure TTestFindDeclaration.TestAddUsesImplementationOnAFreshFile;
+var
+  T, Src, Text : string;
+begin
+  Src := FDir + 'usesfresh.pas';
+  Save(Src,
+    'unit usesfresh;' + LineEnding +
+    '{$mode objfpc}{$H+}' + LineEnding +
+    'interface' + LineEnding +
+    'uses' + LineEnding +
+    '  Classes;' + LineEnding +
+    'implementation' + LineEnding +
+    'uses' + LineEnding +
+    '  SysUtils;' + LineEnding +
+    'end.' + LineEnding);
+  try
+    T := CallToolText('code_add_uses', '{"file":' + JsonStr(Src) +
+      ',"unit_name":"Contnrs","in_interface":false,"auto_save":true}', []);
+    CheckFalse(IsError(T), T);
+    Text := ReadLf(Src);
+    CheckTrue(Pos('Contnrs', Text) > Pos('implementation', Text), 'in the implementation part: ' + Text);
+    CheckEquals(1, CountOf('Classes', Text), 'the rest as it was: ' + Text);
   finally
     CallToolText('editor_revert', '{"file":' + JsonStr(Src) + '}', []);
     CallToolText('editor_close', '{"file":' + JsonStr(Src) + '}', []);

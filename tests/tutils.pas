@@ -29,13 +29,15 @@ type
     procedure TestPathHasSegment;
     procedure TestRepoRoot;
     procedure TestProgramIsFoundThroughPath;
+    procedure TestDeleteTree;
+    procedure TestWriteFileAtomic;
   end;
 
 implementation
 
 uses
   {$IFDEF WINDOWS}Windows{$ELSE}BaseUnix{$ENDIF},   { first: SysUtils must win the shared names }
-  SysUtils, Classes, Sockets, fpjson, jsonparser, LazFileUtils, FileUtil;
+  SysUtils, Classes, Sockets, fpjson, jsonparser, LazFileUtils, FileUtil, Process;
 
 {$IFNDEF WINDOWS}
 function setenv(AName, AValue: PChar; AOverwrite: LongInt): LongInt; cdecl; external 'c' name 'setenv';
@@ -302,6 +304,103 @@ begin
     Args.Free;
   end;
   McpNormalizePathArgs(nil);   { no arguments at all }
+end;
+
+{ a directory link: a junction on Windows (no privilege needed), a symbolic link elsewhere }
+function MakeDirLink(const ATarget, ALink: string): Boolean;
+{$IFDEF WINDOWS}
+var
+  Out_ : string;
+begin
+  Result := RunCommand('cmd.exe', ['/c', 'mklink', '/J', ALink, ATarget], Out_);
+end;
+{$ELSE}
+begin
+  Result := fpSymlink(PChar(ATarget), PChar(ALink)) = 0;
+end;
+{$ENDIF}
+
+{ McpDeleteTree: nested folders and a read-only file go; a link to a folder outside goes as a link,
+  what it points at stays; a folder that is not there is already gone }
+procedure TTestUtils.TestWriteFileAtomic;
+var
+  Dir, F, Err : string;
+  L : TStringList;
+  SR : TSearchRec;
+  Left : Integer;
+begin
+  Dir := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpatomic' + IntToStr(GetProcessID) + PathDelim;
+  ForceDirectories(Dir);
+  F := Dir + 'unit1.pas';
+  L := TStringList.Create;
+  try
+    AssertTrue('a new file', McpWriteFileAtomic(F, 'first', Err));
+    L.LoadFromFile(F);
+    AssertEquals('first', Trim(L.Text));
+    { replaced, also a read-only-free existing file, with more and with less }
+    AssertTrue('replaced', McpWriteFileAtomic(F, 'second version, longer', Err));
+    L.LoadFromFile(F);
+    AssertEquals('second version, longer', Trim(L.Text));
+    AssertTrue('replaced by less', McpWriteFileAtomic(F, 'x', Err));
+    L.LoadFromFile(F);
+    AssertEquals('x', Trim(L.Text));
+    AssertTrue('empty content', McpWriteFileAtomic(F, '', Err));
+    AssertEquals(0, FileSize(F));
+    { no temporary file is left }
+    Left := 0;
+    if FindFirst(Dir + '*', faAnyFile, SR) = 0 then
+    begin
+      repeat
+        if (SR.Name <> '.') and (SR.Name <> '..') then Inc(Left);
+      until FindNext(SR) <> 0;
+      FindClose(SR);
+    end;
+    AssertEquals('only the file itself', 1, Left);
+    { a folder that is not there: false with a message, nothing created }
+    AssertFalse('no folder', McpWriteFileAtomic(Dir + 'nodir' + PathDelim + 'a.pas', 'x', Err));
+    AssertTrue('says why', Err <> '');
+    AssertFalse('nothing made', DirectoryExists(Dir + 'nodir'));
+  finally
+    L.Free;
+    McpDeleteTree(Dir);
+  end;
+end;
+
+procedure TTestUtils.TestDeleteTree;
+var
+  Base, Dir, Outside, Ro : string;
+  L : TStringList;
+
+  procedure Touch(const AFile: string);
+  begin
+    ForceDirectories(ExtractFileDir(AFile));
+    L.Text := 'x';
+    L.SaveToFile(AFile);
+  end;
+
+begin
+  Base := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'mcpdeltree' + IntToStr(GetProcessID) + PathDelim;
+  Dir := Base + 'tree' + PathDelim;
+  Outside := Base + 'outside' + PathDelim;
+  L := TStringList.Create;
+  try
+    Touch(Dir + 'a' + PathDelim + 'b' + PathDelim + 'deep.txt');
+    Touch(Dir + 'top.txt');
+    Ro := Dir + 'a' + PathDelim + 'readonly.txt';
+    Touch(Ro);
+    FileSetAttr(Ro, faReadOnly);
+    Touch(Outside + 'keep.txt');
+    { a link out of the tree: made where the system lets an ordinary user make one }
+    if MakeDirLink(ExcludeTrailingPathDelimiter(Outside), Dir + 'link') then
+      CheckTrue(DirectoryExists(Dir + 'link'), 'the link works');   { else: the rest is still checked }
+  finally
+    L.Free;
+  end;
+  CheckTrue(McpDeleteTree(Dir), 'deleted');
+  CheckFalse(DirectoryExists(Dir), 'the tree is gone');
+  CheckTrue(FileExists(Outside + 'keep.txt'), 'what the link pointed at is untouched');
+  CheckTrue(McpDeleteTree(Base), 'the rest');
+  CheckTrue(McpDeleteTree(Base), 'a folder that is not there');
 end;
 
 initialization

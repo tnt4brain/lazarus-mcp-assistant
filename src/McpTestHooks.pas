@@ -24,7 +24,7 @@ implementation
 
 uses
   SysUtils, TypInfo, System.UITypes, fpjson, Forms,
-  IDEDialogs, SrcEditorIntf, SynEdit, McpToolContext, McpConsent;
+  IDEDialogs, SrcEditorIntf, SynEdit, McpToolContext, McpConsent, McpProgress;
 
 const
   SHOW_HOOK_NAME  = '__test_show_dialog__';
@@ -33,6 +33,9 @@ const
   ARM_CONSENT_HOOK_NAME = '__test_arm_consent__';
   GET_CONSENT_HOOK_NAME = '__test_get_consent__';
   UNDO_HOOK_NAME  = '__test_editor_undo__';
+  SLOW_HOOK_NAME  = '__test_slow__';
+  SLOWMAIN_HOOK_NAME = '__test_slow_main__';
+  CALLS_HOOK_NAME = '__test_calls__';
 
 type
   { Screen.AddHandlerActiveFormChanged/AddHandlerFormAdded want a method,
@@ -263,9 +266,39 @@ begin
   Ctx.Result := IntToStr(Steps);
 end;
 
+{ Like __test_slow__, but on the main thread (it holds the IDE for `seconds`): a tool that runs there
+  sees the cancel too (ADR-036) }
+function DispatchSlowMain(var Ctx: TMcpToolCall): Boolean;
+var
+  Secs, I : Integer;
+  Pump    : Boolean;
+begin
+  Result := True;
+  if not HooksEnabled(Ctx, SLOWMAIN_HOOK_NAME) then Exit;
+  Secs := 5;
+  Pump := False;
+  if Assigned(Ctx.Params) then
+  begin
+    Secs := Ctx.Params.Get('seconds', 5);
+    Pump := Ctx.Params.Get('pump', False);   { handles the IDE's messages, as a build does: a queued call runs inside this one }
+  end;
+  for I := 1 to Secs * 20 do
+  begin
+    if McpCancelRequested then
+    begin
+      Ctx.Result := Format('stopped at step %d of %d', [I div 20, Secs]);
+      Exit;
+    end;
+    if Pump then Application.ProcessMessages;
+    Sleep(50);
+  end;
+  Ctx.Result := Format('finished %d steps', [Secs]);
+end;
+
 function DispatchTestHooks(const Name: string; var Ctx: TMcpToolCall): Boolean;
 begin
   case Name of
+    SLOWMAIN_HOOK_NAME:    Exit(DispatchSlowMain(Ctx));
     UNDO_HOOK_NAME:        Exit(DispatchEditorUndo(Ctx));
     SHOW_HOOK_NAME:        Exit(DispatchShowDialog(Ctx));
     CLOSE_HOOK_NAME:       Exit(DispatchCloseLastDialog(Ctx));
@@ -276,8 +309,44 @@ begin
   Result := False;
 end;
 
+{ Blocking hooks (they run on the request thread, like git_fetch): a call that takes `seconds`,
+  says "step N" every second and stops when the client cancels it (ADR-036) }
+function DispatchBlockingHooks(const Name: string; var Ctx: TMcpToolCall): Boolean;
+var
+  Secs, I : Integer;
+begin
+  Result := True;
+  case Name of
+    SLOW_HOOK_NAME:
+      begin
+        if not HooksEnabled(Ctx, Name) then Exit;
+        Secs := 5;
+        if Assigned(Ctx.Params) then Secs := Ctx.Params.Get('seconds', 5);
+        for I := 1 to Secs * 20 do
+        begin
+          if McpCancelRequested then
+          begin
+            Ctx.Result := Format('stopped at step %d of %d', [I div 20, Secs]);
+            Exit;
+          end;
+          if I mod 20 = 0 then McpProgressSay(Format('step %d of %d', [I div 20, Secs]));
+          Sleep(50);
+        end;
+        Ctx.Result := Format('finished %d steps', [Secs]);
+      end;
+    CALLS_HOOK_NAME:
+      begin
+        if not HooksEnabled(Ctx, Name) then Exit;
+        Ctx.Result := IntToStr(McpCallCount);
+      end;
+  else
+    Result := False;
+  end;
+end;
+
 procedure RegisterTestHooks;
 begin
+  RegisterMcpBlockingGroup(@DispatchBlockingHooks);
   GCapture := TTestDialogCapture.Create;
   Screen.AddHandlerActiveFormChanged(@GCapture.OnActiveFormChanged);
   Screen.AddHandlerFormAdded(@GCapture.OnFormAdded);

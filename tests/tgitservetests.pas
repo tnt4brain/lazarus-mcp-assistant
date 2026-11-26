@@ -11,7 +11,7 @@ unit TGitServeTests;
 interface
 
 uses
-  fpcunit, testregistry;
+  fpcunit, testregistry, McpUtils;
 
 type
   TTestGitServe = class(TTestCase)
@@ -48,7 +48,7 @@ implementation
 
 uses
   {$IFDEF WINDOWS} Windows, {$ENDIF}
-  Classes, SysUtils, FileUtil, Process, base64, McpGitServe, McpUtils;
+  Classes, SysUtils, FileUtil, Process, base64, McpGitServe;
 
 function Hex(const S: string): string;
 begin
@@ -81,7 +81,7 @@ end;
 procedure TTestGitServe.TearDown;
 begin
   if DirectoryExists(FBase) then
-    DeleteDirectory(FBase, False);
+    McpDeleteTree(FBase);
 end;
 
 function TTestGitServe.GitRun(const ADir: string; const AArgs: array of string;

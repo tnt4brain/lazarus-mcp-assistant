@@ -32,7 +32,7 @@ uses
   Classes, SysUtils, SyncObjs, process, pipes, jsonparser, Controls, Forms,
   LazIDEIntf, ProjectIntf, MacroIntf, LazFileUtils, LazUTF8,
   {$IFDEF UNIX} BaseUnix, {$ENDIF}
-  McpToolContext, McpHeapReport;
+  McpToolContext, McpHeapReport, McpProgress;
 
 const
   MaxBuffer = 256 * 1024;   { unread bytes kept per stream; the oldest are dropped }
@@ -673,6 +673,7 @@ function McpRunFinish(const LaunchText: string; WaitSeconds: Integer): string;
 var
   Data: TJSONData;
   Run : TRunThread;
+  Total, Waited : Integer;
 begin
   Result := LaunchText;
   Data := nil;
@@ -686,7 +687,14 @@ begin
       Exit;
     Run := CurrentRun;
     if Run = nil then Exit;
-    Run.WaitDone(ClampWait(WaitSeconds) * 1000);
+    Total  := ClampWait(WaitSeconds) * 1000;
+    Waited := 0;
+    { a cancel ends the wait, not the program: it keeps running (project_run_output stop=true) }
+    while (Waited < Total) and not Run.WaitDone(100) do
+    begin
+      Inc(Waited, 100);
+      if McpCancelRequested then Break;
+    end;
     Result := ReportJSON(Run, TJSONObject(Data));
   finally
     Data.Free;
@@ -754,7 +762,8 @@ begin
   if Assigned(Ctx.Params) then
     Wait := ClampWait(Ctx.Params.Get('timeout_s', 0)) * 1000;
   Waited := 0;
-  while (Waited < Wait) and not Run.WaitDone(0) and not Run.Pending do
+  while (Waited < Wait) and not Run.WaitDone(0) and not Run.Pending and
+        not McpCancelRequested do
   begin
     Sleep(50);
     Inc(Waited, 50);

@@ -10,7 +10,7 @@ unit TCodeNav;
 interface
 
 uses
-  fpcunit, testregistry, THttpHelper;
+  fpcunit, testregistry, THttpHelper, McpUtils;
 
 type
   TTestCodeNav = class(TTestCase)
@@ -161,7 +161,7 @@ end;
 procedure TTestCodeNav.TearDown;
 begin
   CallToolText('editor_close', '{"file":' + JsonStr(FDir + 'extractu.pas') + '}', []);
-  DeleteDirectory(FDir, False);
+  McpDeleteTree(FDir);
   RemoveDir(ExcludeTrailingPathDelimiter(ExtractFileDir(ExcludeTrailingPathDelimiter(FDir))));
 end;
 
