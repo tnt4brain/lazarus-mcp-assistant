@@ -382,4 +382,10 @@ was found). Nothing that changes files is stopped. The answer of a stopped call 
 "Cancelled by the client after N s". Progress resets a client's idle timeout, not its wall-clock timeout:
 Claude Code's per-server `timeout` has to be raised for builds longer than it.
 
+While the IDE is busy inside a call that handles its messages (a build, a run, a dialog), a second call
+from any client runs inside it. A tool that changes things is then refused: "X was not run: the IDE is
+busy inside Y ... call it again when Y has finished". Read-only tools, `ide_answer_dialog` and
+`debug_stop` are served meanwhile. The session log has a `nested:` line for each such call and a
+`refused:` line for each refusal.
+
 `ide_run_tests` also writes a line `tests: 212/608 Suite.Test` in the IDE's Messages window (MCP Server view) every 10 s while the test program runs, whatever the client does. It needs the test program to use `tests/mcptestlistener.pas` (the plugin's own suite does); other fpcunit programs run as before.
