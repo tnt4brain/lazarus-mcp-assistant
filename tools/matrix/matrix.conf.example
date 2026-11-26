@@ -1,21 +1,22 @@
 # Copy to tools\matrix\matrix.conf (ignored by git) and adjust.  NAME=value, no quotes, Windows paths.
 
 # the Lazarus the plugin is developed in; it builds the test program
-MAIN_LAZBUILD=E:\Prog\lazarus\lazbuild.exe
+MAIN_LAZBUILD=C:\lazarus\lazbuild.exe
 MAIN_PCP=C:\Users\me\AppData\Local\lazarus
 
 # Windows versions to test besides the main one: for each NAME a Lazarus folder, its own config
 # folder (with mcpassistantoptions.xml: the server port below, LastCalledByLazarusFullPath = that
 # Lazarus) and the server port of that config
 WIN_NAMES=48 50
-WIN_48_LAZ=E:\Prog\lazarus48
+WIN_48_LAZ=C:\lazarus48
 WIN_48_PCP=C:\matrix\pcp48
 WIN_48_PORT=56281
-WIN_50_LAZ=E:\Prog\lazarus50rc1
+WIN_50_LAZ=C:\lazarus50
 WIN_50_PCP=C:\matrix\pcp50
 WIN_50_PORT=56281
 
-# the Linux box: an HTTP shell executor that runs {"command": "..."} inside the container
-LINUX_EXECUTOR=http://192.168.1.228:8765
-LINUX_CONTAINER=lazmcp-test
-LINUX_VERSIONS=46 48 50
+# Linux (optional): a command, run from the repository root, that runs the suite on the Linux
+# machines named in LINUX_VERSIONS and leaves tools\matrix\out\linux<V>.full.txt and
+# linux<V>.prog.txt for each (see docs/testing.md).  Leave both lines out for a Windows-only matrix.
+#LINUX_DRIVER=your-command arguments
+#LINUX_VERSIONS=46 48 50

@@ -23,3 +23,4 @@ packagefiles.xml
 # Test matrix (tools/matrix)
 /tools/matrix/matrix.conf
 /tools/matrix/out/
+/tools/matrix/local/

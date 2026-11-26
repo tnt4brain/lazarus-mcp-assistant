@@ -11,18 +11,19 @@ program run_matrix;
       with lazbuild --build-ide=, the IDE is started with the test hooks and the fixture project, the
       full suite runs (hooks off in the test program), then the progress suite alone (hooks on), then
       the IDE is closed and the project files the IDE rewrote are restored.
-    Linux (each LINUX_VERSIONS entry): linrun.sh is put on the box and run there, one version after
-      the other, while the Windows runs go on.  The tree must have been sent first (git_serve start,
-      then on the box, in /root/mcp-code: git fetch mcp && git reset --hard refs/remotes/mcp/snapshot);
-      the script compares the sources of HEAD with the box's and stops if they differ.
+    Linux: not in the repository.  LINUX_DRIVER in matrix.conf is a command that runs the suite on
+      the Linux machines of LINUX_VERSIONS while the Windows runs go on, and leaves
+      tools/matrix/out/linux<V>.full.txt and linux<V>.prog.txt (the output of the test program, full
+      run and progress suite) for each version; it exits with 0 when it ran.  Without it there are
+      no Linux rows.
   Results go to tools/matrix/out/.  "summary" only prints the table of the last run.  Exit code 1 if
   anything failed or is missing.  MATRIX_ALLOW_DIRTY=1 allows uncommitted changes (HEAD is what is
-  tested on Windows; the Linux comparison then says whether the box has the working tree or not).
+  tested on Windows).
 
   Settings: tools/matrix/matrix.conf (NAME=value lines, see matrix.conf.example). }
 
 uses
-  Windows, Classes, SysUtils, Process, fphttpclient, base64, sha1;
+  Windows, Classes, SysUtils, Process, fphttpclient;
 
 var
   Conf    : TStringList;
@@ -346,75 +347,13 @@ end;
 
 { ── Linux ────────────────────────────────────────────────────────────────── }
 
-{ The script runs in the container: it goes over as base64, so no quoting can go wrong. }
-function Lx(const AScript: string; ATimeoutMs: Integer = 60000): string;
-var
-  C: TFPHTTPClient;
-  B: string;
-begin
-  B := EncodeStringBase64(StringReplace(AScript, #13, '', [rfReplaceAll]) + #10);
-  C := TFPHTTPClient.Create(nil);
-  try
-    C.IOTimeout := ATimeoutMs;
-    C.AddHeader('Content-Type', 'application/json');
-    C.RequestBody := TStringStream.Create('{"command":"echo ' + B + ' | base64 -d | podman exec -i ' +
-      Cfg('LINUX_CONTAINER') + ' bash"}');
-    try
-      Result := C.Post(Cfg('LINUX_EXECUTOR'));
-    finally
-      C.RequestBody.Free;
-    end;
-  finally
-    C.Free;
-  end;
-end;
+{ How a Linux machine is reached is the maintainer's own business and not in the repository:
+  LINUX_DRIVER in matrix.conf is a command (run from the repository root, in parallel with the Windows
+  runs) that, for each version of LINUX_VERSIONS, writes tools\matrix\out\linux<V>.full.txt and
+  linux<V>.prog.txt, and exits with 0 when it ran.  Its output goes to tools\matrix\out\linux.log. }
 
-function CompareBytes(List: TStringList; I, J: Integer): Integer;
-begin
-  Result := CompareStr(List[I], List[J]);
-end;
-
-{ SHA-1 over the sources (sorted by name, carriage returns left out): the box computes the same. }
-function SourceHash: string;
 var
-  Names : TStringList;
-  Ctx   : TSHA1Context;
-  Dig   : TSHA1Digest;
-  S     : TFileStream;
-  Buf   : array of Byte;
-  Clean : array of Byte;
-  I, J, N, K : Integer;
-  Text  : string;
-begin
-  Git(['ls-files', 'src/*.pas', 'tests/*.pas', 'src/*.lpk'], Text);
-  Names := TStringList.Create;
-  try
-    Names.Text := StringReplace(Text, #13, '', [rfReplaceAll]);
-    Names.CustomSort(@CompareBytes);
-    SHA1Init(Ctx);
-    for I := 0 to Names.Count - 1 do
-    begin
-      if Names[I] = '' then Continue;
-      S := TFileStream.Create(Repo + '\' + StringReplace(Names[I], '/', '\', [rfReplaceAll]), fmOpenRead or fmShareDenyNone);
-      try
-        N := S.Size;
-        SetLength(Buf, N);
-        SetLength(Clean, N);
-        if N > 0 then S.ReadBuffer(Buf[0], N);
-      finally
-        S.Free;
-      end;
-      K := 0;
-      for J := 0 to N - 1 do
-        if Buf[J] <> 13 then begin Clean[K] := Buf[J]; Inc(K); end;
-      if K > 0 then SHA1Update(Ctx, Clean[0], K);
-    end;
-    SHA1Final(Ctx, Dig);
-    Result := LowerCase(SHA1Print(Dig));
-  finally
-    Names.Free;
-  end;
-end;
+  LinuxProc : TProcess = nil;
 
 function LinuxVersions: TStringList;
 begin
@@ -424,96 +363,70 @@ begin
   Result.DelimitedText := Cfg('LINUX_VERSIONS');
 end;
 
-function BoxHash: string;
-begin
-  Result := Trim(Lx('cd /root/mcp-code && git ls-files ''src/*.pas'' ''tests/*.pas'' ''src/*.lpk'' | LC_ALL=C sort | ' +
-    'xargs -d ''\n'' cat | tr -d ''\r'' | sha1sum | cut -c1-40'));
-end;
-
-function LinuxStart: Boolean;
+function LinuxStart(AAskedFor: Boolean): Boolean;
 var
-  Mine, Theirs, Dummy, Script, List, V : string;
-  Vs : TStringList;
-  F  : TStringList;
+  V     : string;
+  Batch : TStringList;
 begin
   Result := False;
-  if GetEnvironmentVariable('MATRIX_ALLOW_DIRTY') = '' then
-    if Git(['diff', '--quiet'], Dummy) <> 0 then
-      Exit(Fail('uncommitted changes in tracked files: commit first (the matrix tests HEAD), or set MATRIX_ALLOW_DIRTY=1'));
-  Mine := SourceHash;
-  Theirs := BoxHash;
-  if Mine <> Theirs then
+  if Cfg('LINUX_DRIVER') = '' then
   begin
-    { git_serve start sends the tree once; this takes it }
-    Say('== Linux: the box has other sources, fetching what git_serve serves');
-    Lx('cd /root/mcp-code && timeout 60 git fetch -q mcp && git reset -q --hard refs/remotes/mcp/snapshot', 90000);
-    Theirs := BoxHash;
+    if AAskedFor then
+      Exit(Fail('no LINUX_DRIVER in tools\matrix\matrix.conf: there is no Linux run (see docs/testing.md)'));
+    Say('== Linux: no LINUX_DRIVER in matrix.conf, Windows only');
+    Exit(True);
   end;
-  if Mine <> Theirs then
-    Exit(Fail('the sources on the box (' + Theirs + ') are not these (' + Mine + '): git_serve start, then on the box' + LineEnding +
-      '  cd /root/mcp-code && git fetch mcp && git reset --hard refs/remotes/mcp/snapshot'));
-  F := TStringList.Create;
+  { results of an earlier run must not pass for this one's }
+  for V in LinuxVersions do
+    if V <> '' then
+    begin
+      DeleteFile(OutDir + 'linux' + V + '.full.txt');
+      DeleteFile(OutDir + 'linux' + V + '.prog.txt');
+    end;
+  { the command goes through a batch file: its redirection needs no quoting then }
+  Batch := TStringList.Create;
   try
-    F.LoadFromFile(Repo + '\tools\matrix\linrun.sh');
-    Script := StringReplace(F.Text, #13, '', [rfReplaceAll]);
+    Batch.Add('@' + Cfg('LINUX_DRIVER') + ' > "' + OutDir + 'linux.log" 2>&1');
+    Batch.SaveToFile(OutDir + 'linux_driver.cmd');
   finally
-    F.Free;
+    Batch.Free;
   end;
-  Lx('echo ' + EncodeStringBase64(Script) + ' | base64 -d > /root/linrun.sh && chmod +x /root/linrun.sh; ' +
-     'rm -f /root/jx*.done');
-  Vs := LinuxVersions;
+  LinuxProc := TProcess.Create(nil);
+  LinuxProc.Executable := 'cmd.exe';
+  LinuxProc.Parameters.Add('/c');
+  LinuxProc.Parameters.Add(OutDir + 'linux_driver.cmd');
+  LinuxProc.CurrentDirectory := Repo;
+  LinuxProc.Options := [poNoConsole];
+  LinuxProc.ShowWindow := swoHide;
   try
-    List := '';
-    for V in Vs do
-      if V <> '' then List := List + ' /root/linrun.sh ' + V + ';';
-  finally
-    Vs.Free;
+    LinuxProc.Execute;
+  except
+    on E: Exception do
+      Exit(Fail('the Linux driver did not start: ' + E.Message));
   end;
-  Lx('(setsid nohup sh -c ''' + List + ''' </dev/null >/root/linall.log 2>&1 &); sleep 1; echo started');
-  Say('== Linux started: ' + Cfg('LINUX_VERSIONS'));
+  Say('== Linux driver started (its output: tools\matrix\out\linux.log)');
   Result := True;
 end;
 
 procedure LinuxWait;
 var
-  Vs : TStringList;
-  V  : string;
-  I  : Integer;
-  Done : Boolean;
-
-  procedure Save(const AFile, AText: string);
-  var
-    L: TStringList;
+  L : TStringList;
+begin
+  if LinuxProc = nil then Exit;
+  LinuxProc.WaitOnExit;
+  if FileExists(OutDir + 'linux.log') then
   begin
     L := TStringList.Create;
     try
-      L.Text := AText;
-      L.SaveToFile(AFile);
+      L.LoadFromFile(OutDir + 'linux.log');
+      WriteLn(L.Text);
     finally
       L.Free;
     end;
   end;
-
-begin
-  Vs := LinuxVersions;
-  try
-    for V in Vs do
-    begin
-      if V = '' then Continue;
-      Done := False;
-      for I := 1 to 300 do
-      begin
-        if Trim(Lx('cat /root/jx' + V + '.done 2>/dev/null', 30000)) <> '' then begin Done := True; Break; end;
-        Sleep(20000);
-      end;
-      if not Done then Fail('Linux ' + V + ' did not finish');
-      Save(OutDir + 'linux' + V + '.full.txt', Lx('cat /root/tx' + V + '.txt', 120000));
-      Save(OutDir + 'linux' + V + '.prog.txt', Lx('cat /root/tp' + V + '.txt', 60000));
-      Say('== Linux ' + V + ': ' + Trim(Lx('cat /root/jx' + V + '.done', 30000)));
-    end;
-  finally
-    Vs.Free;
-  end;
+  if LinuxProc.ExitStatus <> 0 then
+    Fail('the Linux driver ended with exit code ' + IntToStr(LinuxProc.ExitStatus));
+  FreeAndNil(LinuxProc);
 end;
 
 { ── The table ────────────────────────────────────────────────────────────── }
@@ -644,11 +557,18 @@ begin
     Halt(2);
   end;
   Conf.LoadFromFile(Repo + '\tools\matrix\matrix.conf');
+  { the test program is built from the working tree and the IDEs from HEAD: both must be the same }
+  if (What <> 'summary') and (GetEnvironmentVariable('MATRIX_ALLOW_DIRTY') = '') then
+    if Git(['diff', '--quiet'], Top) <> 0 then
+    begin
+      WriteLn(ErrOutput, 'uncommitted changes in tracked files: commit first (the matrix tests HEAD), or set MATRIX_ALLOW_DIRTY=1');
+      Halt(2);
+    end;
   if What = 'windows' then Windows
-  else if What = 'linux' then begin if LinuxStart then LinuxWait; end
+  else if What = 'linux' then begin if LinuxStart(True) then LinuxWait; end
   else if What = 'all' then
   begin
-    if LinuxStart then begin Windows; LinuxWait; end;
+    if LinuxStart(False) then begin Windows; LinuxWait; end;
   end
   else if What <> 'summary' then
   begin
