@@ -154,6 +154,11 @@ begin
     CheckTrue(Pos('"line":10,"name":"Count"', T) > 0, 'property: ' + T);
     CheckTrue(Pos('"line":13,"name":"Helper"', T) > 0, 'implementation routine: ' + T);
     CheckTrue(Pos('"line":16,"name":"TShown.Bump"', T) > 0, 'method body: ' + T);
+    { each entry says which section it is in }
+    CheckTrue(Pos('"line":7,"name":"FCount","section":"interface"', T) > 0, 'section of a field: ' + T);
+    CheckTrue(Pos('"line":9,"name":"Bump","section":"interface"', T) > 0, 'section of a declaration: ' + T);
+    CheckTrue(Pos('"line":13,"name":"Helper","section":"implementation"', T) > 0, 'section of a routine: ' + T);
+    CheckTrue(Pos('"line":16,"name":"TShown.Bump","section":"implementation"', T) > 0, 'section of a body: ' + T);
     Call('editor_replace_range', '{"file":' + JsonStr(F) +
       ',"start_line":4,"start_col":1,"new_text":"// a\n// b\n"}');
     T := Call('code_get_outline', '{"file":' + JsonStr(F) + '}');

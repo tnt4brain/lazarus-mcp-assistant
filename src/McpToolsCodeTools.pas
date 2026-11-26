@@ -242,6 +242,27 @@ begin
     CodeBuf.AbsoluteToLineCol(CleanPos, ALine, ACol);
 end;
 
+{ In a unit, adds "section": "interface" or "implementation" to an outline entry: without it the
+  declaration of a routine and its body, or the two uses clauses, look like repeats.  Programs and
+  libraries have no sections and get nothing. }
+procedure AddSection(AEntry: TJSONObject; ANode: TCodeTreeNode);
+begin
+  while Assigned(ANode) do
+  begin
+    if ANode.Desc = ctnInterface then
+    begin
+      AEntry.Add('section', 'interface');
+      Exit;
+    end;
+    if ANode.Desc = ctnImplementation then
+    begin
+      AEntry.Add('section', 'implementation');
+      Exit;
+    end;
+    ANode := ANode.Parent;
+  end;
+end;
+
 { Extract qualified name from a ctnProcedure node's source line, lower-cased.
   E.g. 'TMyClass.DoSomething' or 'dosomething'. }
 function ExtractProcNodeName(Tool: TCodeTool; CodeBuf: TCodeBuffer;
@@ -1691,6 +1712,7 @@ begin
               Entry.Add('name', Tool.ExtractPropName(TreeNode, False))
             else
               Entry.Add('name', Tool.ExtractIdentifier(TreeNode.StartPos));
+            AddSection(Entry, TreeNode);
             Outline.Add(Entry);
           end;
           if Assigned(TreeNode.FirstChild) and
@@ -2379,6 +2401,8 @@ begin
   Tools.Add(MakeTool('code_get_outline',
     'Return the structural outline of a Pascal unit: uses clauses, type ' +
     'names, class members, and top-level routines with their line numbers. ' +
+    'In a unit each entry says which section it is in ("section": interface or implementation): ' +
+    'a routine declared in the interface appears again, with its body, in the implementation. ' +
     'Does not include method bodies.',
     SCHEMA_GET_CODE_OUTLINE, MCP_ANN_RO));
   Tools.Add(MakeTool('code_find_references',
