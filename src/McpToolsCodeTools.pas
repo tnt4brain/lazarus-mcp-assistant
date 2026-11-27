@@ -348,6 +348,7 @@ begin
   if Assigned(DTool) then
   begin
     { which links of the scanner lie in code a conditional skips: the same walk CodeTools makes }
+    Disabled := nil;
     SetLength(Disabled, Tool.Scanner.LinkCount);
     Skipping := False;
     for I := 0 to Tool.Scanner.LinkCount - 1 do

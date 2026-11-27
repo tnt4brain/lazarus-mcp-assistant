@@ -21,6 +21,10 @@ type
     procedure TestScriptShape;
     procedure TestScriptWithoutWorkDir;
     procedure TestScriptQuotesExtraArgs;
+    procedure TestLaunchArgsDefault;
+    procedure TestLaunchArgsOtherAssistant;
+    procedure TestLaunchArgsNoConfig;
+    procedure TestScriptsOtherAssistant;
     procedure TestTerminalConfigured;
     procedure TestTerminalMac;
     procedure TestTerminalNoneFound;
@@ -51,6 +55,7 @@ begin
   Result := Default(TMcpLaunchRequest);
   Result.WorkDir       := AWorkDir;
   Result.McpConfigPath := '/tmp/mcp config.json';
+  Result.ConfigArgs    := MCP_DEFAULT_CONFIG_ARGS;
   Result.ExtraArgs     := AExtra;
 end;
 
@@ -97,6 +102,83 @@ begin
   S := McpBuildLaunchScript(Req('', '--model  opus --name it''s'), 'claude');
   CheckTrue(Pos('--strict-mcp-config ''--model'' ''opus'' ''--name'' ''it''\''''s''' + #10, S) > 0,
     'each extra argument quoted on its own: ' + S);
+end;
+
+{ Claude Code's arguments are the default: nothing changes for its users }
+procedure TTestLauncher.TestLaunchArgsDefault;
+var
+  L : TStringList;
+begin
+  L := TStringList.Create;
+  try
+    McpLaunchArgs(Req('', '--model opus'), L);
+    CheckEquals('--mcp-config|/tmp/mcp config.json|--strict-mcp-config|--model|opus',
+      StringReplace(Trim(L.Text), LineEnding, '|', [rfReplaceAll]),
+      'the path with a space is one argument');
+  finally
+    L.Free;
+  end;
+end;
+
+{ another assistant: its own flag, the placeholder inside a longer argument }
+procedure TTestLauncher.TestLaunchArgsOtherAssistant;
+var
+  L : TStringList;
+  R : TMcpLaunchRequest;
+begin
+  R := Req('', '--verbose');
+  R.ConfigArgs := '--config={config} --mcp';
+  L := TStringList.Create;
+  try
+    McpLaunchArgs(R, L);
+    CheckEquals(3, L.Count);
+    CheckEquals('--config=/tmp/mcp config.json', L[0]);
+    CheckEquals('--mcp', L[1]);
+    CheckEquals('--verbose', L[2]);
+  finally
+    L.Free;
+  end;
+end;
+
+{ an assistant that finds the server itself gets no config argument at all }
+procedure TTestLauncher.TestLaunchArgsNoConfig;
+var
+  L : TStringList;
+  R : TMcpLaunchRequest;
+begin
+  R := Req('', '');
+  R.ConfigArgs := '';
+  L := TStringList.Create;
+  try
+    McpLaunchArgs(R, L);
+    CheckEquals(0, L.Count, 'no arguments');
+    R.ExtraArgs := '--resume';
+    McpLaunchArgs(R, L);
+    CheckEquals(1, L.Count, 'only the extra one');
+    CheckEquals('--resume', L[0]);
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TTestLauncher.TestScriptsOtherAssistant;
+var
+  R : TMcpLaunchRequest;
+begin
+  R := Req('', '');
+  R.ConfigArgs := '';
+  CheckEquals('exec ''/usr/bin/opencode'''#10, Copy(McpBuildLaunchScript(R, '/usr/bin/opencode'),
+    Pos('exec', McpBuildLaunchScript(R, '/usr/bin/opencode')), MaxInt), 'sh: just the program');
+  R.ConfigArgs := '--config {config}';
+  CheckTrue(Pos('exec ''pi'' --config ''/tmp/mcp config.json'''#10,
+    McpBuildLaunchScript(R, 'pi')) > 0, 'sh: its own flag');
+  CheckTrue(Pos('"pi.exe" --config "/tmp/mcp config.json"'#13#10,
+    McpBuildCmdScript(R, 'pi.exe')) > 0, 'cmd: its own flag');
+  CheckTrue(Pos('& ''pi.exe'' ''--config'' ''/tmp/mcp config.json'''#13#10,
+    McpBuildPs1Script(R, 'pi.exe')) > 0, 'PowerShell: its own flag');
+  R.ConfigArgs := '';
+  CheckEquals(0, Pos('mcp-config', McpBuildCmdScript(R, 'pi.exe')), 'cmd: no Claude flag');
+  CheckEquals(0, Pos('mcp-config', McpBuildPs1Script(R, 'pi.exe')), 'PowerShell: no Claude flag');
 end;
 
 procedure TTestLauncher.TestTerminalConfigured;
@@ -188,6 +270,7 @@ begin
   Result := Default(TMcpLaunchRequest);
   Result.WorkDir       := 'D:\Program Files\my proj';
   Result.McpConfigPath := 'C:\Users\Jo Doe\100%\mcp.json';
+  Result.ConfigArgs    := MCP_DEFAULT_CONFIG_ARGS;
   Result.ExtraArgs     := '--model opus';
 end;
 
